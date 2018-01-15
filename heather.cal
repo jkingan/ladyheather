@@ -1,0 +1,125 @@
+#
+#  This is the default event calendar for HEATHER.EXE
+#
+#  This file should be placed in the same directory as the HEATHER.CFG file.
+#  The proper directory is shown when you do a HEATHER /? command line
+#  or enter ? from the keyboard.
+#
+#  When the given day is seen, the message is displayed at the bottom
+#  of the plot window until erased (G G command) or the start of the next day.
+#   
+#  Fields on each line are:
+#     nth   - event happens on the n'th occurance of DAY in the month
+#             (negative values are from the end of the month)
+#             (positive values are from the start of the month)
+#             (zero means the event occurs on a fixed day number)
+#             Values >= 100 are codes for holidays that must be specially
+#             calculated.
+#
+#     day   - The DAY of the month if nth is 0
+#             The DAY of the week if n'th is not zero
+#             (0=Sunday,  1=Monday,  ...  6=Saturday)
+#
+#     month - (1=January ... 12=December  0=ignore this entry)
+#
+#             If DAY < 0 then MONTH is the day-of week code.
+#             This allows for doing days like Friday the 13th (0, -13, 5)
+#
+#
+#     text  - The text to display when the event occurs.
+#
+#  Comment lines can start with # * / or ; in column 1
+#
+#  The first matching event is displayed.
+#  All dates in this file are specified in the Gregorian calendar.
+#
+
+#  The dates for these holidays are specially calculated.  Do not change their
+#  "nth" code value (the first number on the line).  It is used to identify the
+#  message table entry to save the calculated month/day in.  The messages for
+#  the seasons and Chinese new year are ignored and are replaced by messages
+#  that contain calculated values.
+#
+100 0  3  Spring starts today
+101 0  6  Summer starts today 
+102 0  9  Autumn starts today 
+103 0 12  Winter starts today
+104 0  4  It's time to pay your dear Uncle Sam his pound of flesh! 
+129 0  6  Quarterly taxes are due! Uncle Sam wants all your quarters!
+130 0  9  Quarterly taxes are due! Uncle Sam wants all your quarters! 
+131 0  1  Quarterly taxes are due! Uncle Sam wants all your quarters! 
+132 0 10  Your income tax extension expires today!  Pay up!
+105 0 11  Vote early, vote often!  It's Throw the Bastards Out Day! 
+106 0  3  Set your clocks forward one hour tonight! 
+107 0  3  Set your clocks back one hour tonight! 
+108 0  3  It's Ash Wedneday... 
+109 0  3  It's Palm Sunday... 
+110 0  3  It's Good Friday... 
+111 0  3  Happy Easter! 
+112 0  9  It's Grandparent's day... 
+113 0  9  Rosh Hashanha starts tonight... 
+114 0  9  Yom Kippur starts tonight... 
+115 0  3  Passover starts tonight... 
+116 0 11  Chappy Chanukah! 
+117 0  3  Purim starts tonight! 
+118 0  3  It's Mardi Gras... time to party hardy! 
+119 0  1  Happy Islamic New Year! 
+120 0  1  It's Asura! 
+121 0  1  Happy Ramadan! 
+122 0  1  Eid mubarak! 
+123 0  3  Happy Chinese New Year!...
+124 0  1  Happy Mayan New Year! 
+125 0  1  Happy Aztec New Year!  Sacrifice your enemies!  Eat their hearts! 
+126 0  1  Tomorrow is the Mayan Doomday!  The world ends... wear clean underwear! 
+127 0  1  Sukkot starts tonight...
+128 0  1  Shavout starts tonight...
+133 0  1  Tomorrow is UNIX doomstime...  wear a clean pocket protector
+
+ 0  1  1  Happy New Year! 
+ 3  1  1  Happy Birthday, Martin! 
+ 0  2  2  Happy Groundhog Day! 
+ 1  0  2  Hope you didn't bet on the losers... 
+ 0 14  2  Happy Valentine's Day! 
+ 3  1  2  Greetings Mr. Presidents!  Happy Family Day! 
+ 0 18  2  Happy birthday Pluto!  You're still our favorite planet.  IAU sucks!
+ 0 14  3  Happy pi day!
+ 0 15  3  Beware the Ides of March! 
+ 0 17  3  Happy Saint Patrick's Day! 
+ 0  1  4  April Fools! 
+-1  5  4  It's Arbor Day... go hug a tree! 
+ 0 22  4  Happy Earth Day... 
+ 0  5  5  Happy Cinco de Mayo! 
+ 2  0  5  Happy Mother's Day, Mom! 
+ 3  6  5  It's Armed Forces Day! 
+-1  1  5  Happy Memorial Day! 
+ 1  1  6  Happy Birthday, Queenie! 
+ 0 14  6  Happy Flag Day! 
+ 3  0  6  Happy Father's Day, Dad! 
+ 0  1  7  Canada, Oh Canada... 
+ 0  4  7  When in the Course of human events... 
+ 0 14  7  Happy Bastille Day! 
+ 0 15  8  Happy Independence Day, India! 
+ 1  1  9  Happy Labor Day! 
+ 1  6  9  It's Vulture Awareness Day
+ 0 11  9  Another day that will live in infamy... 
+ 0 17  9  We the People of the United Sates of America... 
+ 0 19  9  Yarrr matey... it be talk like a pirate day! 
+ 0 28  9  It's National Drink Beer Day!
+ 0  2 10  Happy Birthday, Mr. Ghandi... 
+ 0  9 10  Way to go, Leif! 
+ 2  1 10  In 1492, Columbus sailed the ocean blue... 
+ 3  4 10  Woohoo! It's New Jersey Credit Union Day!
+ 0 24 10  It's United Nations Day! 
+ 0 31 10  Happy Halloween! 
+ 0  1 11  Buenos Dias Los Muertos! 
+ 0 11 11  Thanks to all the world's veterans... 
+ 4  4 11  Happy Thanksgiving! 
+ 0  5 11  Remember, remember the Fifth of November! 
+ 0 19 11  It's World Toilet Day!  
+ 0  7 12  A day that will live in infamy... 
+ 0 17 12  Congratulations to the Brothers Wright... 
+ 0 24 12  Hey kids,  he's checking his list! 
+ 0 25 12  Merry Christmas! 
+ 0 26 12  Happy Boxing Day! 
+ 0 31 12  Stay home tonight, there are too many crazy people out there... 
+ 0 -13 5  Today is Friday the 13th...  stay home!
