@@ -102,7 +102,6 @@ void init_screen(void)
     // Initialize the graphics screen
 
     config_screen(3); // initialize screen rendering variables
-    kill_screen();   // release any screen data structures currently in use
 
     // setup text drawing using WIN_VFX fonts
     if(user_font_size == 0) {
@@ -230,6 +229,25 @@ void init_screen(void)
 
 void kill_screen(void)
 {
+    if(display) {
+        SDL_FreeSurface(display);
+        display = 0;
+    }
+
+    if(ne_texture) {
+        SDL_DestroyTexture(ne_texture);
+        ne_texture = 0;
+    }
+
+    if(ne_renderer) {
+        SDL_DestroyRenderer(ne_renderer);
+        ne_renderer = 0;
+    }
+
+    if(ne_window) {
+        SDL_DestroyWindow(ne_window);
+        ne_window = 0;
+    }
 }
 
 void refresh_page(void)
