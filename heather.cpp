@@ -11,22 +11,22 @@
 // (and Glonass, Beidou, Galileo, etc) devices.
 //
 //
-// Permission is hereby granted, free of charge, to any person obtaining 
+// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the "Software"),
-// to deal in the Software without restriction, including without limitation 
-// the rights to use, copy, modify, merge, publish, distribute, sublicense, 
-// and/or sell copies of the Software, and to permit persons to whom the 
+// to deal in the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
 // Software is furnished to do so, subject to the following conditions:
 //
-// The above copyright notice and this permission notice shall be included 
+// The above copyright notice and this permission notice shall be included
 // in all copies or substantial portions of the Software.
 //
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
-// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 //
 //
@@ -73,8 +73,8 @@
 //
 //
 //
-// This file contains most of the operating system dependent routines, 
-// initialization routines,  serial port I/O,  and the screen I/O and 
+// This file contains most of the operating system dependent routines,
+// initialization routines,  serial port I/O,  and the screen I/O and
 // plotting routines.
 //
 //
@@ -90,16 +90,16 @@
 //   with an invalid command line option such as "/?".  This will bring up
 //   a scroll box of commands on Windows and several pages of commands on
 //   other operating systems.  You can also enter "?" from the keyboard to
-//   bring up the command line help information.  
+//   bring up the command line help information.
 //
-//   Command line options can begin with either a '/' (Windows standard) 
+//   Command line options can begin with either a '/' (Windows standard)
 //   or a '-' (Linux / macOS standard).  Either is acceptable no matter what
 //   operating system you are using.  Options must be separated by a space.
 //   Note that file names may not contain spaces and quoted options are not
 //   supported!
 //
-//   Once Heather has started, you can enter command line options from the 
-//   keyboard using the "/"  keyboard command.  There are a few command line 
+//   Once Heather has started, you can enter command line options from the
+//   keyboard using the "/"  keyboard command.  There are a few command line
 //   options that cannot be changed from the keyboard once Heather has started.
 //
 //
@@ -107,25 +107,25 @@
 //   The second set of commands are the keyboard commands. You can get a list
 //   of the primary keyboard commands and menus by pressing SPACE.  Note that
 //   not all receivers support all of the keyboard commands.  Keyboard menu
-//   commands are shown in this documentation in upper case characters, but 
+//   commands are shown in this documentation in upper case characters, but
 //   either upper case or lower case are acceptable.
 //
 //   Pressing the first key of a command menu will show a sub-menu of commands
 //   available under that menu.  Pressing the second key of a menu command
 //   will either execute the command or, more commonly, prompt for a value
 //   to enter.  The default value offered as the input is either the current
-//   setting or a common value to use.  You can press ENTER to accept the 
-//   offered value, ESC or ESC ESC to abort the command, enter a new value, 
+//   setting or a common value to use.  You can press ENTER to accept the
+//   offered value, ESC or ESC ESC to abort the command, enter a new value,
 //   or edit the offered value.
 //
 //   LEFT and RIGHT arrows move the cursor within the string. INSERT
-//   toggles insert mode.  HOME moves to the start of the string.  END moves 
-//   the end of the string.  DEL deletes the character at the cursor.  DOWN 
+//   toggles insert mode.  HOME moves to the start of the string.  END moves
+//   the end of the string.  DEL deletes the character at the cursor.  DOWN
 //   arrow deletes to the end of the line.  UP arrow deletes to the start
 //   of the line. BACKSPACE deletes the character before the cursor.
 //
-//   If a keyboard command suggests an input value and the first character 
-//   that you enter is a not an  editing character,  the offered value is 
+//   If a keyboard command suggests an input value and the first character
+//   that you enter is a not an  editing character,  the offered value is
 //   erased so that you don't have to backspace over it to enter a new value.
 //
 //
@@ -135,7 +135,7 @@
 //      First is a hard coded configuration in the program.
 //      Next is from the file "heather.cfg"
 //      Finally is from the command line that starts the program.
-//  
+//
 //   The location of "heather.cfg" depends upon the operating system and how
 //   Heather was started (from a command line or from a desktop icon).  You
 //   can determine where to place the file by bringing up the command line
@@ -143,7 +143,7 @@
 //   the help information.  There will be a line that says:
 //     "Put heather.cfg file in directory ..."
 //
-//   Note that if you rename the "heather" executable file,  the .cfg and .cal 
+//   Note that if you rename the "heather" executable file,  the .cfg and .cal
 //   file names that Heather uses will also change to match the new executable
 //   file name.
 //
@@ -151,12 +151,12 @@
 //   for all of its support files (sound files, log files, screen dumps, etc).
 //
 //   If you launch Heather from a WINDOWS desktop icon, you can set the command
-//   line options by right clicking on the icon and selecting PROPERTIES. 
+//   line options by right clicking on the icon and selecting PROPERTIES.
 //   The TARGET field will show the command command line to use.
 //
 //   Note that in this file a lot of command line options are described as
 //   "toggle" options.  Toggle options are like on/off switches.  For instance:
-//      /gw  - will toggle the watch display between on and off and back on 
+//      /gw  - will toggle the watch display between on and off and back on
 //             each time it is seen.
 //
 //   You can override this toggle action and explictly set the state.
@@ -170,7 +170,7 @@
 //
 //   Place the command line options that you want to use in this file
 //   with one command line option per line.  Each option MUST start in column
-//   one with a '/', '-', '@', or '$' otherwise the line will be treated as 
+//   one with a '/', '-', '@', or '$' otherwise the line will be treated as
 //   a comment.
 //
 //   Lines that begin with '/' or '-' set command line option values.
@@ -178,7 +178,7 @@
 //   Lines that begin with '$' send hex values to the receiver.
 //
 //   Lines that begin with '@' send keyboard commands (all '@' lines are copied
-//   to temporary keyboard script file "heathtmp.scr" which is then processed 
+//   to temporary keyboard script file "heathtmp.scr" which is then processed
 //   once heather has finished initializing the hardware, etc).  See the
 //   description of keyboard script files below.
 //
@@ -193,7 +193,7 @@
 //   At a minimum most users will want to configure the com port, receiver
 //   type, and time zone in their default configuration.
 //
-//   If an error is detected in a command line option in the .cfg file, 
+//   If an error is detected in a command line option in the .cfg file,
 //   processing of the file is stopped and the command line help screen is
 //   shown.  The offending option is listed at the end of the help info.
 //
@@ -206,11 +206,11 @@
 //      from the keyboard.  Script file names must be less than 128 characters
 //      long.
 //
-//      Commands that would normally suggest an input do not 
+//      Commands that would normally suggest an input do not
 //      do it when read from a script file.  They behave
-//      like you first entered ESC to erase the suggestion.  
+//      like you first entered ESC to erase the suggestion.
 //
-//      Commands that normally toggle a flag may be followed 
+//      Commands that normally toggle a flag may be followed
 //      by a "1" or "0" to set the flag value directly. e.g.
 //      you can use GW0 in a script file to force the watch display
 //      OFF. A few commands (like GS) do not toggle a specific value
@@ -218,19 +218,19 @@
 //
 //      You can put more than one command on a line (separated
 //      by spaces) until you do a command that expects a
-//      parameter value or string.  
+//      parameter value or string.
 //
-//      A '~' in a script file pauses reading from the script 
+//      A '~' in a script file pauses reading from the script
 //      and starts reading from the keyboard until a carriage
 //      return is seen.  This is useful for entering a parameter
 //      value or string.  e.g.  GG~ will pause the script and
 //      prompt for a graph title.
 //
-//      Any text following a ';' or a '#' in a script file 
+//      Any text following a ';' or a '#' in a script file
 //      is a comment and is ignored.
 //
-//      Script files abort upon the first error detected or any 
-//      unrecognized command is seen.  
+//      Script files abort upon the first error detected or any
+//      unrecognized command is seen.
 //
 //      Script files can be nested up to 5 levels deep.
 //      Scripts can be stopped by pressing any key.
@@ -242,14 +242,14 @@
 //      To read a script file use the "R" keyboard command or "/r" command
 //      line option and specify a file name with an extension of ".scr"
 //
-//      
+//
 //
 //
 //
 //-CONFIGURING THE COM PORT:
 //
 //   Lady Heather talks to the GPS device via a serial port (hardware or USB)
-//   or an internet TCP/IP connection.  You need to tell Heather which 
+//   or an internet TCP/IP connection.  You need to tell Heather which
 //   communications device to use.  For serial ports you use the "/#" command
 //   line option (where # is the com port number to use):
 //      /1 says to use COM1
@@ -274,19 +274,19 @@
 //      /2u says to use /dev/ttyUSB1 on Linux systems and
 //      /1u says to use /dec/tty.usbserial1 on macOS.
 //
-//   If your system does not use these standard device names, you can specify 
+//   If your system does not use these standard device names, you can specify
 //   the input device name to use with the "/id=" command line option:
 //      /id=/dev/your_device_name
 //
 //   Heather also supports using a TCP/IP connection to talk to your receiver.
 //      /ip=addr:port
 //      addr can be be either a numeric address like 192.168.10.20 or a web
-//      address like ke5fx.dyndns.org   
+//      address like ke5fx.dyndns.org
 //
 //      If the :port number is not given Heather uses port 45000
 //
 //   Note that if the specified IP address is not valid or cannot be reached
-//   Heather may appear to hang for quite a while until/if the connection 
+//   Heather may appear to hang for quite a while until/if the connection
 //   attempt times out.  This is particularly true for numeric IP addresses.
 //
 //   On Linux and macOS Heather supports IPv6 addresses. If the specified
@@ -299,7 +299,7 @@
 //   serial port baud rate and data format with the "/br=" command line option:
 //      /br=9600:8:N:1   (9600 baud, 8 data bits, no parity, 1 stop bit)
 //      /br=19200:7:E:1  (19200 baud, 7 data bits even parity, one stop bit)
-//      /br=57600:8:O:2  (57600 baud, 8 data bits odd parity, two stop bits) 
+//      /br=57600:8:O:2  (57600 baud, 8 data bits odd parity, two stop bits)
 //   If a baud rate parameter is not given, Heather will use a default value
 //   that is most commonly used for the receiver type it is using... which may
 //   not be the same as what your receiver is configured for!
@@ -316,7 +316,7 @@
 //   Auto-detection requires the receiver to be actively sending data that
 //   can be analyzed.  Some receivers power up "mute" and do not automatically
 //   send data.  You must "wake up" these receivers first by specifying the
-//   receiver type.  
+//   receiver type.
 //
 //   If the receiver can work in both a NMEA and a native
 //   binary format, it probably powers up in NMEA.  Use the
@@ -336,14 +336,14 @@
 //      /rxg - GPSD interface (mainly a Linux thing - /ip=localhost:2947)
 //      /rxj - Jupiter-T  (aka Zodiac)
 //      /rxk - Lucent KS24361 REF0/Z3811A (19200:8:N:1)
-//      /rxm - Motorola binary 
+//      /rxm - Motorola binary
 //      /rxn - NMEA
 //      /rxr - Trimble Resolution T family with odd parity
 //      /rxs - Sirf binary
-//      /rxt - Trimble TSIP binary, 
-//      /rxu - Ublox UBX binary, 
-//      /rxv - Venus mixed binary / NMEA (115200:8:N:1), 
-//      /rxx - No receiver, uses system clock. 
+//      /rxt - Trimble TSIP binary,
+//      /rxu - Ublox UBX binary,
+//      /rxv - Venus mixed binary / NMEA (115200:8:N:1),
+//      /rxx - No receiver, uses system clock.
 //      /rxy - SCPI - Nortel telecom GPSDOs like NTWB and NTPX
 //      /rxz - SCPI (Z3801A style. 19200:7:O:1)
 //      /rx5 - SCPI (HP5xxxx style)
@@ -378,14 +378,14 @@
 //   (REF1) unit talks SCPI at /br=19200:8:N:1 and the
 //   Z3812A (REF0) unit talks at /br=9600:8:N:1 over the
 //   DIAGNOSTIC ports.  Lady Heather's auto detect routine
-//   works with the REF0, but to talk to the REF1/Z3811A 
+//   works with the REF0, but to talk to the REF1/Z3811A
 //   you MUST force the baud rate with /br=19200:8:N:1
 //   or it will try to use 19200:7:O:1. If you use the
 //   /rxz command with these units you MUST first use the
 //   /br= command to force the baud rate (since /rxz
 //   defaults to 19200:7:O:1). For the Z3811A/REF1 you
 //   should use the /rxk command to force SCPI at 19200:8:N:1
-//  
+//
 //   The Datum STARLOC II cannot be auto-detected. Firmware
 //   bugs cause it to stop outputting time messages. Always
 //   specify "/rxd" when running STARLOC II receivers.  Also
@@ -401,7 +401,7 @@
 //   The Acron Zeit WWVB receiver cannot be auto-detected.  Always use
 //   the /rxa command.  Support for this receiver is a hack.  Heather shows
 //   it as tracking sat PRN 1. You should manually enter your lat/lon/altitude
-//   (/po=lat,lon,alt command line option or the SL keyboard command) and 
+//   (/po=lat,lon,alt command line option or the SL keyboard command) and
 //   the utc offset (like /rxa=17 or /uo=17 command line options). If you
 //   don't enter your position, sat PRN 1 is shown at az=1, el=89.
 //   Technically the Acron Zeit speaks at 300:7:O:2, but works with
@@ -421,9 +421,9 @@
 //   to detect this when it thinks it sees a Resolution-T by issuing commands
 //   and if it does not see expected responses, it toggles the parity mode and
 //   tries again.  This repeats every 30 seconds or so.
-//   The "/rxr" command sets parity to ODD.  
-//   Also Resolution-T devices can have firmware that makes identifying the 
-//   exact model number impossible. If you have problems, you can force the 
+//   The "/rxr" command sets parity to ODD.
+//   Also Resolution-T devices can have firmware that makes identifying the
+//   exact model number impossible. If you have problems, you can force the
 //   model type:
 //      /rxr=1  - original Resolution-T
 //      /rxr=2  - Resolution-T-SMT
@@ -438,7 +438,7 @@
 //   If no recognizable device is auto-detected,
 //   Heather assumes that no receiver is connected and
 //   defaults to a time-only mode using the system clock.
-//   This will also happen if you specify the wrong com device or 
+//   This will also happen if you specify the wrong com device or
 //   it is in use by another program.
 //
 //
@@ -455,14 +455,14 @@
 //
 //   The lat/lon values can either be decimal values or degrees/minutes/seconds
 //   format like: 30d40m50.2s   Negative values are west longitude, southern
-//   latitude.  
+//   latitude.
 //
 //   The altitude value is normally in meters, but can be in feet if the value
 //   is followed by an "f" or "'" like  500f or 500'
 //
-//   In "/rxx" receiver-less mode most of the keyboard commands are 
+//   In "/rxx" receiver-less mode most of the keyboard commands are
 //   meaningless (mostly the the "T" and "G" menus have relevant options)
-//  
+//
 //
 //
 //
@@ -470,14 +470,14 @@
 //-CONFIGURING THE TIME ZONE:
 //
 //   You should tell Heather what time zone you are in so that the
-//   proper local time can be displayed. You can set the time zone 
+//   proper local time can be displayed. You can set the time zone
 //   with the command line option:
 //       "/tz=#sssss/ddddd" where # is the standard
 //   time zone offset in hours from GMT and "sssss" is up to 5
 //   characters of standard time zone ID and "ddddd"
-//   is the daylight savings time zone id.  
+//   is the daylight savings time zone id.
 //
-//   Fractional time zone offsets can be specified 
+//   Fractional time zone offsets can be specified
 //   like "/tz=9:30ACST".  NOTE THAT WESTERN HEMISPHERE
 //   TIME ZONES ARE NEGATIVE NUMBERS! (i.e. /tz=-6CDT/CST)
 //
@@ -486,7 +486,7 @@
 //   time zone ID is given,  the program does not do
 //   any daylight savings time conversions.
 //
-//   If a standard time zone in use,  the time shows in 
+//   If a standard time zone in use,  the time shows in
 //   BLUE.  If a daylight savings time is in use, it shows
 //   in CYAN.  If no local time zone is in use, it shows
 //   in WHITE.
@@ -496,14 +496,14 @@
 //   hemisphere time zone offset values are POSITIVE values in
 //   this format)
 //
-//   Time zones can also be set from the keyboard with 
+//   Time zones can also be set from the keyboard with
 //   the TZ command
 //
 //
 //   If the user does not specify a time zone on the command line or in the
-//   "heather.cfg" file, Heather attempts to get the time zone from the "TZ=" 
-//   environment variable. Heather only checks the "TZ=" environment variable 
-//   when starting up.  If you change it while Heather is running, the change 
+//   "heather.cfg" file, Heather attempts to get the time zone from the "TZ="
+//   environment variable. Heather only checks the "TZ=" environment variable
+//   when starting up.  If you change it while Heather is running, the change
 //   will not be seen.
 //
 //
@@ -514,10 +514,10 @@
 //   normally automatically gets this value from the GPS receiver.  It is part
 //   of the GPS almanac data which can take over 15 minutes to arrive from the
 //   GPS satellites.  Until the UTC offset is received, Heather will display
-//   a "NO UTC OFFSET" warning.  
+//   a "NO UTC OFFSET" warning.
 //
 //   Some receiver data formats (like NMEA) do not provide the UTC offset value.
-//   You can specify the value to use with the "/uo=" command line option. You 
+//   You can specify the value to use with the "/uo=" command line option. You
 //   can also force the UTC offset value with the "/rx#=offset" command line
 //   option.  For instance with a NMEA receiver use "/rxn=17"  User specified
 //   UTC offset values are shown in YELLOW.
@@ -536,14 +536,14 @@
 //   only affect the displayed time unless you specify OT from the keyboard.
 //   Note that there can be multiple names for the same special time zone.
 //
-//       GPS      - GPS time  
-//       GPST     - GPS time  
-//       UTC      - UTC time  
-//       UT1      - UT1 time  
-//       UT       - UT1 time  
+//       GPS      - GPS time
+//       GPST     - GPS time
+//       UTC      - UTC time
+//       UT1      - UT1 time
+//       UT       - UT1 time
 //
 //       LOR      - Loran time (9 seconds ahead of GPS)
-//       LORAN    - Loran time (9 seconds ahead of GPS) 
+//       LORAN    - Loran time (9 seconds ahead of GPS)
 //
 //       SST/SDT  - Solar time
 //       SOL      - Solar time
@@ -569,19 +569,19 @@
 //       AMT        Mars date and time (official)
 //
 //       VEN      - Venus date and time (referenced to J1900 epoch, GPS time scale)
-//       MER      - Mercury date and time (referenced to J1900 epoch, GPS time scale) 
-//       PLU      - Pluto date and time (referenced to J1900 epoch, GPS time scale) 
+//       MER      - Mercury date and time (referenced to J1900 epoch, GPS time scale)
+//       PLU      - Pluto date and time (referenced to J1900 epoch, GPS time scale)
 //
 //   Note that when setting one of these astronomical time
 //   scales you should still specify your local time zone
 //   offset (e.g.  /tz=-6LAST/LAST) so that the various
 //   features (like the audible clocks and alarms) that work
-//   with local time will know the correct local time.  
-//   You can use the (rather obscure) OT keyboard command 
+//   with local time will know the correct local time.
+//   You can use the (rather obscure) OT keyboard command
 //   to cause Heather to use the displayed time for these
 //   features.  See the description of the audible clocks for more details.
 //
-//   You can also start up in Solar Time mode with the "/bs" command line 
+//   You can also start up in Solar Time mode with the "/bs" command line
 //   option.
 //
 //
@@ -589,7 +589,7 @@
 //   depend upon the current utc "delta-T" value.  This
 //   is normally derived +/- 0.5 seconds from the receiver
 //   UTC time using the current leap second offset:
-//      delta-T = UTC offset + 51.184 seconds. 
+//      delta-T = UTC offset + 51.184 seconds.
 //
 //   Delta-T actually changes constantly in an unpredictable manner
 //   and if a more precise value is desired, you can specify it
@@ -598,14 +598,14 @@
 //   "deltat.dat". It tries to do this on startup and at
 //   00:00:16 UTC every day.
 //
-//   You can set up a operating system chron job or script to fetch 
-//   the current delta-T value from the net and write it to 
+//   You can set up a operating system chron job or script to fetch
+//   the current delta-T value from the net and write it to
 //   the file "deltat.dat".  On startup or at 00:00:16 UTC every day
 //   Heather will try to read the current delta-T value from the file.
 //
 //   The special time zone name "UT1" can only be set
 //   using the "-6UT1/UT1" format... the Linux format cannot
-//   be used (since the "1" int "UT1" looks like a time zone offset).  
+//   be used (since the "1" int "UT1" looks like a time zone offset).
 //   Use the equivalent time zone name "UT" instead.
 //
 //   Also supported are various planetary times: Mars ("MAR" or "MSD"),
@@ -622,15 +622,15 @@
 //
 //   Besides specifying your time zone you should also specify your
 //   Daylight Savings Time (aka Summer Time) calculation method.
-//   The default daylight savings time switching dates are 
+//   The default daylight savings time switching dates are
 //   the US standard.  The "/b=" command line option lets you specify
 //   your daylight savings time calculation.
 //
 //   Use "/b=1" for USA, "/b=2" for UK/Europe, "/b=3" for
 //   Australia or "/b=4" for New Zealand.  "/b=0" turns off
-//   daylight savings time conversions.  
+//   daylight savings time conversions.
 //
-//   If the rules change or you live in a backwater,  you can 
+//   If the rules change or you live in a backwater,  you can
 //   specify a custom daylight saving time rule:
 //       /b=nth1,start_dow,start_month,nth2,end_dow,end_month,hour
 //
@@ -652,7 +652,7 @@
 //
 //       hour - local time hour of switchover (default = 2)
 //
-//     Example:  /b=-1,0,9,2,3,4,6 says to start daylight 
+//     Example:  /b=-1,0,9,2,3,4,6 says to start daylight
 //               savings time on the last Sunday in September
 //               and return to standard time on the second
 //               Wednesday in April at 6:00 local time.
@@ -667,23 +667,23 @@
 //   This is the default screen mode.  You can specify other fixed screen modes
 //   or a custom screen size with the "/v#" command line option or via the '$'
 //   keyboard menu.  The keyboard menu also allows you to tweak the size of the
-//   text font (Tiny=8x8  Small=8x12  Medium=8x14  Large=8x16). 
+//   text font (Tiny=8x8  Small=8x12  Medium=8x14  Large=8x16).
 //
 //
-//   WARNING: under Windows the F11 key is used to maximize the display 
+//   WARNING: under Windows the F11 key is used to maximize the display
 //            true full screen mode (no title bar or edge decoration).
-//            This will ONLY work if your MONITOR size is supported by 
-//            old-style DirectDraw (i.e. 640x480, 800x600,1024x768,1280x1024).  
+//            This will ONLY work if your MONITOR size is supported by
+//            old-style DirectDraw (i.e. 640x480, 800x600,1024x768,1280x1024).
 //
-//            If your system does not support DirectDraw and/or your monitor 
-//            size is not supported, HEATHER WILL CRASH.  If this happens, 
-//            Use CTRL-ALT_DEL to bring up the Windows Task Manager and 
+//            If your system does not support DirectDraw and/or your monitor
+//            size is not supported, HEATHER WILL CRASH.  If this happens,
+//            Use CTRL-ALT_DEL to bring up the Windows Task Manager and
 //            kill the heather.exe process.  If your system does support it,
-//            you can start Heather in true full-screen mode with the /fu 
+//            you can start Heather in true full-screen mode with the /fu
 //            command line option. The MAXIMIZE button on the Windows title
-//            bar is only enabled in "/fu" mode.  
+//            bar is only enabled in "/fu" mode.
 //
-//            Pressing F11 in maximized true full screen mode will restore 
+//            Pressing F11 in maximized true full screen mode will restore
 //            the screen size.
 //
 //
@@ -716,7 +716,7 @@
 //   command letters are the same as used with the "/v" commands.  Note that
 //   under Windows if you select a display size that is larger than your
 //   screen, Heather will down-scale the screen by dropping pixels/lines...
-//   which usually looks awful.  
+//   which usually looks awful.
 //
 //   Changing the screen size from the keyboard may cause Heather to drop / add
 //   items from the display depending upon if it can find space to show them.
@@ -725,10 +725,10 @@
 //   BLACK on the screen.  It looks horrible, but can be useful for doing
 //   screen dumps that will be printed on paper... you remember paper, don't you?
 //
-//   The "G~" keyboard command lets you configure the global screen color 
-//   palette. Heather uses a palette of 14 colors plus BLACK and WHITE.  
+//   The "G~" keyboard command lets you configure the global screen color
+//   palette. Heather uses a palette of 14 colors plus BLACK and WHITE.
 //
-//   The color palette entry assigned to each of the the various plots can be 
+//   The color palette entry assigned to each of the the various plots can be
 //   changed on a plot-by-plot basis.  See the PLOTTING section for details...
 //
 //
@@ -740,26 +740,26 @@
 //   Lady Heather records several data values from the GPS receiver into
 //   a circular buffer (called the "plot queue").  Once the plot queue
 //   fills up, the oldest values are replaced with the newest values.
-//   The default value for the plot queue size is 3 days of data (at one 
+//   The default value for the plot queue size is 3 days of data (at one
 //   second per point).
-//   
+//
 //   You can change the plot queue size with the "/q=" command line option.
 //      /q=100000   - 100,000 second queue size
 //      /q=2000m    - 2000 minute queue size
 //      /q=300h     - 300 hour queue size
 //      /q=40d      - 40 day queue size
 //      /q=5w       - 5 week queue size
-//      
+//
 //   Normally the plot queue is updated once a second.  You can change the
 //   queue update interval with the "/i=" command line option.  For queue
-//   update intervals longer than 1 second, the GPS receiver data values are 
+//   update intervals longer than 1 second, the GPS receiver data values are
 //   averaged over the queue update interval and the averaged value is stored.
 //     /i=60       - averages 60 GPS device readings and stores the result
 //                   in the plot queue.
 //
 //   These values assume that your GPS receiver outputs data once per second.
 //   If your GPS device outputs data faster than once per second (see the "!r"
-//   keyboard command),  then these values must be scaled.  For instance, if 
+//   keyboard command),  then these values must be scaled.  For instance, if
 //   your receiver is sending 10 updates per second, "/q=100000" would hold
 //   10000 seconds of data and "/i=60" would update every six seconds.
 //
@@ -781,12 +781,12 @@
 //
 //
 //-GPS WEEK ROLLOVER ISSUES
-//   
+//
 //   The GPS system does not actually broadcast a date.  It does broadcast the
 //   number of weeks that have elapsed since the GPS system was first activated.
 //   However this week counter is only 1024 weeks (around 19 years) long.  Once
 //   the week counter passes 1024 weeks, the date sent by the GPS receiver will
-//   be wrong (like 20 years in the past wrong).  
+//   be wrong (like 20 years in the past wrong).
 //
 //   Modern GPS receivers attempt to get around this limitation in various ways
 //   which may delay when the rollover error occurs, but it will eventually
@@ -794,22 +794,22 @@
 //   attempt to fix it by adding 1024 weeks to the GPS date/time until the date
 //   appears to be reasonable.  If Lady Heather has "fixed" the GPS date, the
 //   letters "ro" appear after the date in the upper left corner of the string
-//   and the date will be shown in YELLOW.  Before Heather will attempt to 
+//   and the date will be shown in YELLOW.  Before Heather will attempt to
 //   automatically adjust the date for rollover errors, the bogus date must
-//   persist for at least 15 seconds AND the GPS receiver must have the 
+//   persist for at least 15 seconds AND the GPS receiver must have the
 //   "UTC offset" value from the GPS receiver.
 //
 //   You can force a rollover compensation value with the "/ro=" command line
 //   option.  The rollover correction value can be either the number of 1024
-//   week cycles to add to the date, or the number of SECONDS to add to 
+//   week cycles to add to the date, or the number of SECONDS to add to
 //   the date.
 //
-//        /ro        - apply 1 1024 week rollover to the date 
+//        /ro        - apply 1 1024 week rollover to the date
 //        /ro=1*     - apply 1 1024 week rollover to the date
 //        /ro=2*     - apply 2 1024 week rollovers to the date
 //        /ro=12345  - add 12345 seconds to the date
 //        /ro=0      - disable automatic GPS date rollover correction
-//  
+//
 //
 //
 //
@@ -833,7 +833,7 @@
 //
 //     /fd=# - display filter - the display filter averages # consecutive plot
 //             queue values to produce a plot point.  This display filter does
-//             not change the raw values stored in the plot queue so can be 
+//             not change the raw values stored in the plot queue so can be
 //             changed freely.
 //
 //             If the display filter is turned on,  the values shown
@@ -841,17 +841,17 @@
 //
 //             Be careful when using large display filter values
 //             with long view time displays.  It can take a lot
-//             of time to process the data on slower machines.  
+//             of time to process the data on slower machines.
 //
-//             If the filter count is a negative value (including -0 
+//             If the filter count is a negative value (including -0
 //             or 0-) then the PPS and TEMPerature plots are inverted.
-//             If the display filter value includes a "+" the PPS 
+//             If the display filter value includes a "+" the PPS
 //             and TEMPerature plots are shown in their regular polarity.
-//             If no "+" or "-" sign is included the plot polarities are 
-//             not altered. Inverting the PPS and TEMPerature plots makes 
+//             If no "+" or "-" sign is included the plot polarities are
+//             not altered. Inverting the PPS and TEMPerature plots makes
 //             all the Thunderbolt plots track in the same direction.
 //             You can also do this with the MI keyboard command.
-//             Also,  you can append the '-' or '+' to the filter count 
+//             Also,  you can append the '-' or '+' to the filter count
 //             value (i.e. -10 and 10- are treated the same).
 //
 //   There are also some filter settings only changeable via keyboard commands
@@ -865,7 +865,7 @@
 //      FF - foliage filter
 //      FI - set Motorola ionosphere filter
 //      FJ - jamming mode filter
-//      FL - satellite signal level mask - satellites with signals below this 
+//      FL - satellite signal level mask - satellites with signals below this
 //           setting will not be used
 //      FM - movement / marine filter
 //      FT - set Motorola troposphere filter
@@ -877,7 +877,7 @@
 //      /gy - toggle filter display from the command line
 //
 //
-//     GX  - toggle the DOP (dilution of precision) value display in the 
+//     GX  - toggle the DOP (dilution of precision) value display in the
 //           receiver status information column.
 //     /gx - toggle DOP display from the command line
 //
@@ -885,11 +885,11 @@
 //   The Thunderbolt GPSDO firmware smooths the output of the
 //   temperature sensor with a filtering algorithm. This
 //   filtering can mask and prolong the occasional single
-//   point glitches that the temperature sensor produces.  Lady 
+//   point glitches that the temperature sensor produces.  Lady
 //   Heather's default action is to reverse the filtering
-//   that the Thunderbolt firmware does.  
+//   that the Thunderbolt firmware does.
 //   Removal of the temperature sensor filter makes the sensor
-//   glitches much more obvious in the temperature plots and 
+//   glitches much more obvious in the temperature plots and
 //   minimizes their effect in the active temperature
 //   control mode.  It also makes the temperature display
 //   a little less smooth since you now see the raw sensor
@@ -899,7 +899,7 @@
 //   un-filtering mode and the smoothed temperature data is used.
 //
 //   On Thunderbolts and other Trimble receivers you can save the filter
-//   configuration into EEPROM using the "EE" keyboard command.  
+//   configuration into EEPROM using the "EE" keyboard command.
 //   This will write the complete current receiver configuration into EEPROM.
 //
 //
@@ -925,11 +925,11 @@
 //              data types.
 //      .gpx  - a standard GPX 1.0 format file (a standardized XML file oriented
 //              towards time and location data.
-//      .kml  - a Google KML format location file (only stores time and 
+//      .kml  - a Google KML format location file (only stores time and
 //              lat/lon/alt)
 //
 //   Note that .gpx / .xml / .kml files are larger than the .log ASCII files.
-//   The .xml (GPX 1.1) log format contains the most comprehensive data 
+//   The .xml (GPX 1.1) log format contains the most comprehensive data
 //   including pretty much the compete receiver configuration.
 //
 //
@@ -945,11 +945,11 @@
 //
 //   You can write a log file from data in the plot queue:
 //      WA  - writes ALL data in the plot queue to a log file
-//      WP  - writes the data from the area of the plot queue that is 
+//      WP  - writes the data from the area of the plot queue that is
 //            being displayed on the screen.
 //
-//            Note that the *tow* time-of-week field in logs generated from 
-//            queue data is not the official GPS time-of-week,  but is just 
+//            Note that the *tow* time-of-week field in logs generated from
+//            queue data is not the official GPS time-of-week,  but is just
 //            a sequential number.
 //
 //            If writing the plot window queue data to a log file
@@ -957,7 +957,7 @@
 //            updates are not paused AND the plot window covers
 //            all of the queue data,  then there may be a glitch
 //            at the beginning of the log output file.  Several
-//            seconds of the latest data can appear at the start 
+//            seconds of the latest data can appear at the start
 //            of the log data.
 //
 //
@@ -965,7 +965,7 @@
 //      WD  - deletes a file
 //
 //
-//   Normally Heather updates the log file every second (or every time a 
+//   Normally Heather updates the log file every second (or every time a
 //   new receiver data point come in).  You can configure the log update
 //   interval.
 //      WLI or LI     - set the log update interval  -or-
@@ -977,7 +977,7 @@
 //   of the satellite constellation data:
 //      WLC or LC - toggle logging of satellite constellation data
 //      /ld       - from the command line
-//                  Note that the sun is logged as satellite PRN 256 and 
+//                  Note that the sun is logged as satellite PRN 256 and
 //                  the moon as PRN 257.
 //
 //
@@ -1010,12 +1010,12 @@
 //             calculate the date of a log entry or the log data interval
 //             because these values are stored as special comments.
 //
-//             ALSO: to read a log file that was written without comments, 
-//             the /lc command must be in effect,  otherwise the file will not 
+//             ALSO: to read a log file that was written without comments,
+//             the /lc command must be in effect,  otherwise the file will not
 //             be recognized as a log file because Heather uses the "#" comment
 //             line on the first line of the file to help it recognize the file
 //             as a potential log file.  XML/GPX logs don't have this limitation.
-// 
+//
 //
 //
 //   You can disable logging of detected errors with:
@@ -1028,12 +1028,12 @@
 //   the logged data using the normal plot viewing commands.  You can resume
 //   processing of receiver data using the "U" keyboard command.,, you might
 //   want to first clear the plot queue data ("C" keyboard menu).
-//  
+//
 //      R       - read a file (with .log .xml .gpx file extension)
 //      /r=file - from the command line
 //
 //                Note that If you  read in a log file, Heather should first
-//                be configured ("/rx#" command line option) for the receiver 
+//                be configured ("/rx#" command line option) for the receiver
 //                type that created the log file.
 //
 //
@@ -1046,11 +1046,11 @@
 //
 //
 //   The "/rs=filename" command line option can be used to read data from
-//   a simulation file (a raw receiver data capture image). For simulation 
+//   a simulation file (a raw receiver data capture image). For simulation
 //   mode to work there MUST be a GPS receiver connected to the computer.
-//   The receiver data is ignored, but the data stream is needed to provide 
-//   pacing to Lady Heather.  The receiver can be a different type than the 
-//   simulation file as long as it is providing some sort of data stream and 
+//   The receiver data is ignored, but the data stream is needed to provide
+//   pacing to Lady Heather.  The receiver can be a different type than the
+//   simulation file as long as it is providing some sort of data stream and
 //   the baud rate has been set to match the connected receiver.
 //   Simulation mode may not work correctly with some receiver type (mainly
 //   SCPI devices that require two-way polling to get data from the receiver)
@@ -1066,7 +1066,7 @@
 //
 //
 //
-//-TIME DISPLAYS 
+//-TIME DISPLAYS
 //
 //   Lady Heather has three main time displays:
 //      1) The date/time block in the upper left hand corner of the screen
@@ -1074,7 +1074,7 @@
 //      3) An analog watch display.
 //
 //
-//   The date/time block is always shown. It contains the time / time zone, 
+//   The date/time block is always shown. It contains the time / time zone,
 //   the date,  the GPS week number,  the GPS time-of-week, and the "UTC offset"
 //   leap second count.  It also indicates whether the GPS receiver is running
 //   in GPS time mode or UTC time mode and the validity of the receiver time.
@@ -1099,7 +1099,7 @@
 //      GZ  - from the keyboard toggles the digital clock on/off
 //      /gz - from the command line
 //
-//   Clicking on the digital clock display (or just under the satellite 
+//   Clicking on the digital clock display (or just under the satellite
 //   information display) will zoom the digital clock display to full screen.
 //   Cicking again will restore the screen to its previous state.
 //   Note that short clicks might be ignored... particularly on devices like
@@ -1116,8 +1116,8 @@
 //
 //      TJ   - toggles between a Julian date.time clock and a normal clock
 //      /tsz - from the command line
-//      
-//   
+//
+//
 //
 //
 //   The watch display is located either in the upper right hand corner of
@@ -1128,7 +1128,7 @@
 //      GW  - from the keyboard toggles the watch on/off
 //      /gw - from the command line
 //
-//   Clicking on the watch display on the screen will zoom it to full 
+//   Clicking on the watch display on the screen will zoom it to full
 //   screen.  Clicking again will restore the screen to its previous state.
 //   Note that short clicks might be ignored... particularly on devices like
 //   UCCM receivers that only output time updates every two seconds.  It can
@@ -1140,12 +1140,12 @@
 //      /tb      - toggles labeling of the watch face
 //      /tb=name - sets a brand name on the watch face. Any "_" in the brand
 //                 name is converted into a space.  The brand name can be two
-//                 lines long.  Separate the lines with a "/".  A two line 
+//                 lines long.  Separate the lines with a "/".  A two line
 //                 watch name does not show the date in the clock face.
 //      /tb=     - sets the watch "brand name" to the day of the week
 //
 //
-//   You can specify the watch face style with the "O" keyboard command. 
+//   You can specify the watch face style with the "O" keyboard command.
 //   Enter "O" from the keyboard and then, on the edit line, enter:
 //     W0  - normal Roman numeral clock
 //     W1  - decimal hours clock
@@ -1168,7 +1168,7 @@
 //      /kj=1 - disable sun drawing
 //      /kj=2 - disable moon drawing
 //      /kj=3 - disable sun and moon drawing
-//   
+//
 //
 //   Note that the watch display is not updated while a keyboard command
 //   menu is being displayed and the "GB" option is in effect that allows
@@ -1177,15 +1177,15 @@
 //
 //   The ZC keyboard command will zoom the clock display to full screen.
 //   The ZW keyboard command will zoom the watch display to full screen.
-//      Clicking the mouse will toggle between the zoomed watch and digital 
-//      clock displays. 
+//      Clicking the mouse will toggle between the zoomed watch and digital
+//      clock displays.
 //      Clicking in the upper left hand corner of the screen will restore
 //      the screen to normal mode.
 //      Note that short clicks might be ignored... particularly on devices
 //      like UCCM receivers that only output time updates every two seconds.
 //      It can help to hold down the mouse button until the screen changes.
 //
-//   The ZB keyboard command will zoom the watch and satellite map displays 
+//   The ZB keyboard command will zoom the watch and satellite map displays
 //   to full screen overlayed on each other.
 //      Clicking the mouse will switch to the ZV display where you can then
 //      click again to select another display to zoom to full screen.
@@ -1197,7 +1197,7 @@
 //
 //
 //   Note that the watch or clock do not have to be enabled on the main
-//   screen for the zoomed displays to work.  Pressing any key (except '\') 
+//   screen for the zoomed displays to work.  Pressing any key (except '\')
 //   will restore the main display screen if it has been zoomed. '\' will
 //   dump a .GIF image of the zoomed screen to the file "xxxx.gif" where xxxx
 //   is the receiver type (if you press SPACE to bring up the keyboard help
@@ -1206,7 +1206,7 @@
 //
 //   The "/ta" toggle command line option shows dates in the European
 //             the European dd.mm.yyyy format instead of the normal 12 Oct 2016
-//             format. 
+//             format.
 //
 //
 //
@@ -1216,11 +1216,11 @@
 //
 //   Many GPS devices report when a leapsecond adjustment has been announced.
 //   Heather shows this in the receiver status column. Leapsecond announcements
-//   are generally made 6 months in advance.  
+//   are generally made 6 months in advance.
 //
 //      If the receiver supports leapsecond announcements but no leapsecond
-//      is pending it shows "No leap pend" in GREEN.  If a leapsecond 
-//      adjustment has been announced it shows "Leap pending" in YELLOW.  
+//      is pending it shows "No leap pend" in GREEN.  If a leapsecond
+//      adjustment has been announced it shows "Leap pending" in YELLOW.
 //
 //      Many receivers send enough enough information to determine the date of
 //      the leapsecond event.  If this information is available the leapsecond
@@ -1230,11 +1230,11 @@
 //      by "Leap 45 days?".
 //
 //      As the time of the leapsecond nears, the countdown clock starts showing
-//      hours, then minutes, then seconds until the leapsecond.  When showing 
+//      hours, then minutes, then seconds until the leapsecond.  When showing
 //      hours, any fractional hour count is rounded up,  so the countdown
 //      clock will show 2 hours then 59 minutes.
 //
-//      Some receivers (like the Z3801A and Z3812A have firmware bugs that 
+//      Some receivers (like the Z3801A and Z3812A have firmware bugs that
 //      expect a leapsecond announcement no more than 3 months in advance.
 //      These receivers will display an invalid leapsecond date while the
 //      pending leapsecond is more than three months in the future and may
@@ -1246,7 +1246,7 @@
 //
 //
 //
-//--DATE AND CALENDAR DISPLAYS 
+//--DATE AND CALENDAR DISPLAYS
 //
 //   Lady Heather can display the date in various calendar formats. The
 //   calendar type is selected by a command line option:
@@ -1282,7 +1282,7 @@
 //      /dv=days   -  Bolivian
 //      /dx=days   -  Xiuhpohualli
 //      /dy=days   -  MAYAN
-//      /dz=days   -  AZTEC Tonalpohualli 
+//      /dz=days   -  AZTEC Tonalpohualli
 //
 //
 //   Heather has a "greetings" calendar function.  This displays a message
@@ -1295,15 +1295,15 @@
 //      /gn  - toggles the greetings calendar from the command line
 //
 //
-//   The calendar file should be placed in the same directory as the 
-//   "heather.cfg" file.  The proper directory is shown when you do a 
+//   The calendar file should be placed in the same directory as the
+//   "heather.cfg" file.  The proper directory is shown when you do a
 //   "HEATHER /?" command line or enter ? from the keyboard.
 //
-//   When a calendar file date is matched to the current date, the message is 
-//   displayed at the bottom  of the plot window until erased (G G command) 
+//   When a calendar file date is matched to the current date, the message is
+//   displayed at the bottom  of the plot window until erased (G G command)
 //   or the start of the next day.  If multiple calendar entries match the
 //   current date, only the first match is shown.
-//    
+//
 //   Fields on each line in "heather.cal" are:
 //      nth   - event happens on the n'th occurance of DAY in the month
 //              (negative values are from the end of the month)
@@ -1360,9 +1360,9 @@
 //        /th=#h  - from the command line
 //
 //     The "heather_chime.wav" file is played x times on the hour (where x is
-//     the current hour).  In addition the file is played once (#-1) times 
-//     during hour.  For instance /th=4h says to play the file x times at the 
-//     hour and  3 more times times during the hour (every 15 minutes).  The 
+//     the current hour).  In addition the file is played once (#-1) times
+//     during hour.  For instance /th=4h says to play the file x times at the
+//     hour and  3 more times times during the hour (every 15 minutes).  The
 //     file "heather_chime.wav" should be less than once second long.
 //
 //     If # is 0 or not given, the chime clock is disabled.
@@ -1386,13 +1386,13 @@
 //
 //
 //    Note that the Windows versions of Heather plays sound files via the
-//    PlaySound() system call,  the Linux versions use system() to spawn a 
-//    /bin/sh command to the "aplay" program,  and macOs spawns a /bin/sh 
-//    command to the "afplay" program.  If your system does not support these 
-//    sound file player programs,  modify the function "play_tune()" 
+//    PlaySound() system call,  the Linux versions use system() to spawn a
+//    /bin/sh command to the "aplay" program,  and macOs spawns a /bin/sh
+//    command to the "afplay" program.  If your system does not support these
+//    sound file player programs,  modify the function "play_tune()"
 //    in file heather.cpp
 //
-//  
+//
 //  EGG TIMER ALARMS
 //
 //  Heather supports two types of alarms:
@@ -1424,11 +1424,11 @@
 //
 //
 //  ALARM CLOCK MODE:
-//    Heather has an alarm clock mode where you specify a time (and optional 
+//    Heather has an alarm clock mode where you specify a time (and optional
 //    date) for the alarm to sound. The commands are the same as for the egg
-//    timer, but you specify a specific time (and optional date) for the 
+//    timer, but you specify a specific time (and optional date) for the
 //    alarm instead of an interval.  Alarm clocks always a repeating alarm
-//    amd must be manually canceled.  
+//    amd must be manually canceled.
 //
 //    TA 14:15:16   - sound the alarm continuously every day at 14:15:16
 //    TA 14:15:16o  - sound the alarm once every day at 14:15:16
@@ -1437,7 +1437,7 @@
 //
 //    You also set the alarm from the command line with the "/na=" command
 //    line option:
-//      /na=14:15:16  
+//      /na=14:15:16
 //      /na=14:15:16,2016/12/15 (note non-space char between time and date
 //      /na=14:15:16o2016/12/15  is needed on command line alarms)
 //
@@ -1447,39 +1447,39 @@
 //    If an alarm clock is enabled and the watch display is shown, a
 //    RED tick mark is shown at the edge of the watch face.
 //
-//    Note that if you have one of the astronomical time zones set (such 
-//    as GMST) alarms are normally based upon your LOCAL time zone time and  
+//    Note that if you have one of the astronomical time zones set (such
+//    as GMST) alarms are normally based upon your LOCAL time zone time and
 //    NOT the displayed astronomical time.  You can force the alarms to be
-//    triggered based upon the displayed astronomical time with the "OT" 
-//    keyboard command. This is the reason you should include your time zone 
+//    triggered based upon the displayed astronomical time with the "OT"
+//    keyboard command. This is the reason you should include your time zone
 //    hour offset when using an astronomical time scale. e.g.  /tz=GMST6GMST
 //
 //
 //  KEYBOARD SCRIPT FILE WAITS
-//    If, in a keyboard script file, you follow and egg timer or alarm clock 
+//    If, in a keyboard script file, you follow and egg timer or alarm clock
 //    time with the letter "W",  the processing of the script file will
 //    be paused until the alarm triggers.
-//    
-//    
+//
+//
 //
 //  AUTOMATIC PROGRAM EXIT
 //
 //    You can configure Heather to automatically quit at a given time or after
 //    a given time interval.  This works just like the egg timer mode or alarm
 //    clock mode.  The commands to do this are:
-//       TX   - from the keyboard - see TA command for details 
-//       /nx  - from the command line  - see /na command for details  
+//       TX   - from the keyboard - see TA command for details
+//       /nx  - from the command line  - see /na command for details
 //
 //
 //
 //  AUTOMATIC LOG FILE DUMPS
 //
 //    You can configure Heather to automatically write the plot queue data
-//    to a log file at a given time or after given time interval.  This works 
-//    just like the egg timer mode or alarm clock mode.  The commands to do 
+//    to a log file at a given time or after given time interval.  This works
+//    just like the egg timer mode or alarm clock mode.  The commands to do
 //    this are:
-//       TL   - from the keyboard  - see TA command for details  
-//       /nl  - from the command line  - see /na command for details  
+//       TL   - from the keyboard  - see TA command for details
+//       /nl  - from the command line  - see /na command for details
 //
 //    The format for the scheduled log dump files defaults to ASCII.  You
 //    can change this with command line options:
@@ -1488,12 +1488,12 @@
 //
 //    If the command setting contains the 'o' character
 //    the file "tblog.log" is re-written each time a dump
-//    occurs.  Without the 'o' character,  the file 
+//    occurs.  Without the 'o' character,  the file
 //    "tbyyyy-mm-dd-#.log" is written (where #) is an incrementing
 //    sequence number.  See the /fg and /fx commands for using .gpx and .xml
 //    log formats.
 //
-//    Example:  to write the log dump to the file "tblog.log" every 30 minutes 
+//    Example:  to write the log dump to the file "tblog.log" every 30 minutes
 //    use the command line option "/nl=30mor" or "TL 30mor" from the keyboard.
 //    (the 30m says do it every 30 minutes, the "o" says to do it to
 //     one file,  the "r" says to do it on a repeating basis).
@@ -1503,17 +1503,17 @@
 //  AUTOMATIC SCREEN IMAGE FILE DUMPS
 //
 //    You can configure Heather to automatically write a screen dump image
-//    to a .GIF file at a given time or after given time interval.  This works 
-//    just like the egg timer mode or alarm clock mode.  The commands to do 
+//    to a .GIF file at a given time or after given time interval.  This works
+//    just like the egg timer mode or alarm clock mode.  The commands to do
 //    this are:
-//       TD   - from the keyboard  - see TA command for details  
-//       /nd  - from the command line - see /na command for details  
+//       TD   - from the keyboard  - see TA command for details
+//       /nd  - from the command line - see /na command for details
 //
 //    If the command setting contains the 'o' character
 //    the file "tbdump.gif" is re-written each time a dump
-//    occurs.  Without the 'o' character,  the file 
+//    occurs.  Without the 'o' character,  the file
 //    "tbyyyy-mm-dd-#.gif" is written (where #) is an incrementing
-//    sequence number.  
+//    sequence number.
 //
 //    Example:  to write the screen image to the
 //    file "tbdump.gif" every 30 minutes use the command
@@ -1526,15 +1526,15 @@
 //    line of the screen.
 //
 //
-//  If a leap-second is observed (seconds value = 60) then Heather 
-//  automatically does a screen dump to the file "leap_sec.gif"  On some 
+//  If a leap-second is observed (seconds value = 60) then Heather
+//  automatically does a screen dump to the file "leap_sec.gif"  On some
 //  receivers this might capture the previous second (xx:xx:59)... such is life.
 //
 //
 //  Note that when a screen or log dump happens, Heather first creates the
 //  the file "tblock", next the image/log file is written, and then the
-//  "tblock" file is deleted.  This can be used by external scripts to 
-//  minimize (but not totally eliminate) the chances of an external 
+//  "tblock" file is deleted.  This can be used by external scripts to
+//  minimize (but not totally eliminate) the chances of an external
 //  script/program accessing the dump file while it is being written.
 //
 //
@@ -1571,8 +1571,8 @@
 //      /tsa - from the command line - set the system clock anytime the system
 //             clock differs from the GPS time by over 40 milliseconds (Windows)
 //             or 10 milliseconds (Linux, macOS)
-//      /tsa=msecs - from the command line - set the system clock anytime the 
-//             system clock differs from the GPS time by over "msecs" 
+//      /tsa=msecs - from the command line - set the system clock anytime the
+//             system clock differs from the GPS time by over "msecs"
 //             milliseconds
 //
 //   Most operating systems require program that manipulate the system clock
@@ -1584,12 +1584,12 @@
 //   makes no attempt to keep the clock monotonically increasing.  This can
 //   be a bad thing for some systems, but, well, beggars can't be choosers.
 //
-//   
+//
 //   GPS receivers typically send out a message once per second that contains
-//   the time.  Heather uses when the last character of this message arrives 
+//   the time.  Heather uses when the last character of this message arrives
 //   to set the system clock.  One problem is that different receivers send the
 //   the time message at different offsets from the true time.  Also variations
-//   in the computer, operating system, receiver configuration, etc used can 
+//   in the computer, operating system, receiver configuration, etc used can
 //   affect when the message actually arrives.
 //
 //   You can set the message offset time (in milliseconds) with the command
@@ -1598,46 +1598,46 @@
 //      /tsx=milliseconds
 //
 //   Milliseconds can be positive (message arrives AFTER the true time value
-//   encoded in the receiver time message) or negative (message arrives BEFORE 
+//   encoded in the receiver time message) or negative (message arrives BEFORE
 //   the true time)
 //
 //   If you do not set a message offset value, Heather uses a default value
 //   for a typical model of that receiver.  For maximum accuracy you
 //   you should set the message timing offset adjustment factor for your
-//   particular system and receiver configuration.  Heather can help determine 
+//   particular system and receiver configuration.  Heather can help determine
 //   the message offset adjustment to use.
 //
 //   For this to work, your system time must be set accurately.  If you are
 //   using a network time protocol like NTP, you should be good to go.
 //   Otherwise let Heather set the system time with a "TS" command from the
-//   keyboard.  
+//   keyboard.
 //
 //   Then issue the "TK" keyboard command.  This starts measuring the
 //   difference between the system clock and the receiver timing message times.
 //   It builds a histogram table and also calculates an average value of the
-//   message offset time.  For the histogram to work, the system and GPS time 
+//   message offset time.  For the histogram to work, the system and GPS time
 //   need to be within two seconds of each other.
 //
-//   When measuring the message timing the timing jitter is plotted in the G0 
+//   When measuring the message timing the timing jitter is plotted in the G0
 //   plot and the message offset time is shown in the G9 plot.  Also ADEV
 //   (Allan variance) tables are shown for the message offset time and jitter.
 //   The G0 and G9 plots do not show up as options in the "G" keyboard menu,
 //   but are available...
 //
-//   Let the system run for a minute or so.  Then issue the "TK" command 
+//   Let the system run for a minute or so.  Then issue the "TK" command
 //   again.  This should print a message at the bottom of the plot area like:
 //
 //      # msg offset time: /tsx=246.00 msec   max hits:10 points:34   avg:254.35 sdev:10.16
 //
 //   There are two values of interest in this message:
-//      /tsx=246.00   and   avg:254.35 
+//      /tsx=246.00   and   avg:254.35
 //
 //   These values should be close to each other.  The "/tsx" value is the
 //   most common value in the histogram and the "avg:" value is the average
 //   value seen.  Some receivers do not send the timing message in a consistent
 //   manner.  If the "/tsx" value and the "avg:" value are not close or the
 //   "SDEV:" (standard deviation) value is large then using the receiver for
-//   setting the time may give optimum performance.  The "TK" measurement 
+//   setting the time may give optimum performance.  The "TK" measurement
 //   mode also writes a ".jit" file with the histogram values and measurement
 //   results.
 //
@@ -1654,7 +1654,7 @@
 //   Tell Heather what your system message offset is with the command line
 //   option:
 //      /tsx=msecs  - msecs is the value shown the the measurement results
-//                    described above.  
+//                    described above.
 //
 //   Note that the "TK" timing measurement mode flogs the system CPU rather
 //   hard.  You can see CPU usage stats approaching 100% in this mode. This can
@@ -1674,12 +1674,12 @@
 //   The various values shown by Lady Heather are reported to a decimal
 //   point precision represented by the data fields that the receiver
 //   messages contain.  Just because your receiver says the altitude is
-//   123.4567890 meters does NOT mean the altitude is actually ACCURATE to 
+//   123.4567890 meters does NOT mean the altitude is actually ACCURATE to
 //   that many decimal places... Heather just shows what the receiver is
 //   sending out...  garbage in, garbage out.
-//   
 //
-//   Lady Heather shows the latitude/longitude/altitude position that the 
+//
+//   Lady Heather shows the latitude/longitude/altitude position that the
 //   receiver is currently reporting.  It can show the position in various
 //   formats.  From the keyboard:
 //
@@ -1711,14 +1711,14 @@
 //
 //   Heather also records the lat / lon / alt data in the plot queue and
 //   can display the location data in the plot area or as an X-Y "scattergram"
-//   of distance from a reference point.  The plot queue locations are saved 
-//   as single precision floating point numbers are limited to a resolution 
+//   of distance from a reference point.  The plot queue locations are saved
+//   as single precision floating point numbers are limited to a resolution
 //   of around 5-10 feet.
 //
 //     G1  - from the keyboard - toggle the latitude plot on and off
 //     G2  - from the keyboard - toggle the longitude plot on and off
 //     G3  - from the keyboard - toggle the altitude plot on and off
-//     GV  - from the keyboard - toggle the lat/lon/alt (G1 / G2 /G3) plots 
+//     GV  - from the keyboard - toggle the lat/lon/alt (G1 / G2 /G3) plots
 //           on and off
 //
 //
@@ -1730,16 +1730,16 @@
 //     automatically enabled if a position survey is started.  Every hour the
 //     color of the dots in the scattergram changes (14 colors are used).
 //
-//     The scattergram grid defaults to a resolution 3 meters or 10 feet 
-//     per division (with +/- 5 divisions from the center reference point. 
-//     You can change the scattergram grid scale factor with a command 
+//     The scattergram grid defaults to a resolution 3 meters or 10 feet
+//     per division (with +/- 5 divisions from the center reference point.
+//     You can change the scattergram grid scale factor with a command
 //     line option:
 //        /tm=meters_per_division
 //        /t'=feet_per_division
 //
 //     Normally the scattergram image is created from the double precision
-//     location data as it comes in from the receiver.  If you change the 
-//     resolution scale factor of the scattergram then the scattergram is image 
+//     location data as it comes in from the receiver.  If you change the
+//     resolution scale factor of the scattergram then the scattergram is image
 //     is re-created from the single precision plot queue data.  The resulting
 //     scattergram image will be very "sparse" because the plot queue locations
 //     have a resolution of 5-10 feet per point.
@@ -1766,7 +1766,7 @@
 //     in a "position hold" mode or a "3D fix / navigation" mode.  Position
 //     hold mode is also called "overdetermined clock" mode.
 //
-//     The accurate fixed location can be input manually by the user or the 
+//     The accurate fixed location can be input manually by the user or the
 //     receiver can automatically determine it by doing a "self-survey" where
 //     it collects data for a period of time and averages/filters the readings
 //     to come up with an accurate location.  Most receiver self-surveys last
@@ -1775,7 +1775,7 @@
 //
 //     Lady Heather can also do a precision median survey to determine the
 //     location.  This collects data for several hours (48 hours is the default)
-//     and statically processed the data using medians and averages over 
+//     and statically processed the data using medians and averages over
 //     several time intervals to come up with a precise location that is usually
 //     better than the standard receiver position survey.  The GPS satellite
 //     orbits repeat on a roughly 12 hour basis (with 6 hours of visibility
@@ -1784,7 +1784,7 @@
 //     a lot of signal problems such as multi-path distortion.  If you cannot
 //     wait for 48 hours,  24 hours works well, and 12 hours is OK.
 //
-//     If a precision survey is done, Heather logs the readings and results in 
+//     If a precision survey is done, Heather logs the readings and results in
 //     a ".lla" file. Precision surveys can be done on receivers that do not
 //     support a "position hold" mode.  After the survey completes you can
 //     check the ".lla" file for the results.  The calculated position will be
@@ -1797,23 +1797,23 @@
 //     of the desired location.  This process takes an indeterminate amount
 //     of time!
 //
-//     Interrupting a standard survey or precise position survey save 
-//     will save the current location using the lower precision 
+//     Interrupting a standard survey or precise position survey save
+//     will save the current location using the lower precision
 //     TSIP command.  So will exiting the program while a survey is
 //     in progress.
 //
 //     Some GPSDO devices (mainly telecom surplus devices) do not have a
-//     "navigation" mode that lets them output 3D fixes. You cannot do a 
+//     "navigation" mode that lets them output 3D fixes. You cannot do a
 //     precision survey on these devices.
 //
 //
 //     To enter a location manually and set position hold mode:
-//        SL   - from the keyboard.  The latitude and longitude can be in 
+//        SL   - from the keyboard.  The latitude and longitude can be in
 //               decimal or degrees/minutes/seconds format like 30d40m50.60s
 //
 //     To start a native receiver self survey:
 //        SS   - from the keyboard.  It will request a value for the length
-//               of the survey.  Depending upon the receiver type the length 
+//               of the survey.  Depending upon the receiver type the length
 //               will be in samples, seconds, minutes, or hours.  A few
 //               receivers can only perform a fixed length survey.  If a survey
 //               is in progress, issuing SS again tries to stop the survey.
@@ -1839,9 +1839,9 @@
 //     To force 3D navigation mode mode:
 //        SN   - from the keyboard
 //
-//     Trimble Thunderbolt and related devices support several other positioning 
+//     Trimble Thunderbolt and related devices support several other positioning
 //     modes.  See the device manual for more information (0xBB packet).
-//      
+//
 //        S0   - automatic 2D/3D navigation mode selection
 //        S1   - single satellite mode
 //        S2   - 2D mode (S2 actually sets receiver mode 3)
@@ -1855,7 +1855,7 @@
 //
 //   INCLUDING and EXCLUDING SATELLITES
 //
-//     Several receivers let the user exclude certain satellites from being 
+//     Several receivers let the user exclude certain satellites from being
 //     tracked,  force or restore the inclusion of satellites, or operating
 //     the receiver in a single satellite mode.
 //
@@ -1864,7 +1864,7 @@
 //            automatically select the highest elevation satellite.  For
 //            other receivers Heather offers to track the highest satellite
 //            or the use can select a particular satellite... eventually
-//            that satellite will fall below the horizon and the receiver 
+//            that satellite will fall below the horizon and the receiver
 //            won't be tracking anything...  Non-timing receivers are not able
 //            to work in a single-satellite mode.
 //
@@ -1878,12 +1878,12 @@
 //     with more than one satellite system: GPS/GLONASS/BEIDOU/GALILEO/SBAS/
 //     QZSS/IMES, etc.  Heather lets you control which satellite systems to
 //     track.  Note that most GNSS receivers have limits on which systems can
-//     be enabled at the same time. Consult your receiver manual for 
+//     be enabled at the same time. Consult your receiver manual for
 //     information on what it can do.
 //
 //
 //     SG   - from the keyboard controls the GNSS satellite system configuration.
-//            You will be prompted to input a string of characters that 
+//            You will be prompted to input a string of characters that
 //            indicate which systems to use.  The currently enabled systems
 //            will be offered as the default entry.
 //
@@ -1929,20 +1929,20 @@
 //   It can help to hold down the mouse button until the screen changes.
 //
 //
-//   If you don't use the SI commands to specify the maximum number of 
+//   If you don't use the SI commands to specify the maximum number of
 //   satellites to show information for, Heather will show up to 14 satellites.
 //   The satellite information display size automatically adjusts as more
 //   satellites are seen.  If you set a value, Heather forces the display size
-//   to that value.  
+//   to that value.
 //
-//   If you input a number without a +/- sign, Heather displays all the 
+//   If you input a number without a +/- sign, Heather displays all the
 //   information it has for up to the specified number of satellites.
 //
 //   If you input a negative number,  Heather shows the short form of the
 //   info for up to that number of satellites.  The short form display frees
 //   up enough space to the right of the satellite info display to show
 //   the sun / moon information display.  If the receiver type in use does
-//   not report any extended information,  the sun/moon info display is 
+//   not report any extended information,  the sun/moon info display is
 //   automatically enabled.
 //
 //   If you input a number with a "+" sign, Heather shows the short form
@@ -1979,8 +1979,8 @@
 //             the plot window.  Each minor division equals one satellite.
 //             For screen resolutions less than 800x600, each minor division
 //             represents two satellites.
-//   
-//   
+//
+//
 //   You can sort the satellite information table using the following
 //   keyboard commands.  You can sort in descending order by including
 //   "-" character.  Ascending sort is the default.
@@ -2003,14 +2003,14 @@
 //
 //   THE SATELLITE POSITION MAP:
 //
-//   The satellite map shows a map of the currently visible / tracked 
+//   The satellite map shows a map of the currently visible / tracked
 //   satellites. It is enabled by:
 //       GM   - from the keyboard
 //       /gm  - from the command line
 //       ZM   - zoom the satellite map to full-screen
 //       ZB   - zoom the satellite map and watch to full-screen
 //
-//   Clicking on the map/watch display on the screen will zoom it to full 
+//   Clicking on the map/watch display on the screen will zoom it to full
 //   screen.  Clicking again will restore the screen to its previous state.
 //   Note that short clicks might be ignored... particularly on devices
 //   like UCCM receivers that only output time updates every two seconds.
@@ -2031,8 +2031,8 @@
 //             satellite trails
 //
 //
-//   The satellite position map includes a representation of the sun at its 
-//   current location in the sky.  The sun is shown in solid YELLOW if it is 
+//   The satellite position map includes a representation of the sun at its
+//   current location in the sky.  The sun is shown in solid YELLOW if it is
 //   visible and as a hollow yellow circle if it is below the horizon. The sun
 //   symbol is shown surrounded by sun rays in order to distinguish it from
 //   satellites.
@@ -2040,8 +2040,8 @@
 //
 //
 //   If both the satellite position map and the watch display are enabled they
-//   will overlay each other on the screen if there are not two places 
-//   available to draw them (the GB and /gb commands allow one of the displays 
+//   will overlay each other on the screen if there are not two places
+//   available to draw them (the GB and /gb commands allow one of the displays
 //   to be drawn to the right of the plot area).
 //
 //   The GB command is labeled "Both map and adev tables" in the keyboard menu
@@ -2049,12 +2049,12 @@
 //
 //
 //
-//   Note that on SCPI, UCCM, STAR, and ACRON receivers the message that sends 
+//   Note that on SCPI, UCCM, STAR, and ACRON receivers the message that sends
 //   the satellite position and signal data takes a long time for the receiver
 //   to send.  Heather only requests it once per minute at hh:mm:33.  These
 //   satellite information messages block the sending of time code messages
 //   and causes time code skip errors... Heather automatically ignores any
-//   time code errors caused by these messages.  Heather also adjusts any 
+//   time code errors caused by these messages.  Heather also adjusts any
 //   alarm times so that they will not occur during the interval where the
 //   receiver may not be sending time codes.
 //
@@ -2071,24 +2071,24 @@
 //                        level seen across the sky.  Data is interpolated
 //                        to fill in spaces between observed positions.
 //
-//   data               - this is similar to the signal level map, but the map 
+//   data               - this is similar to the signal level map, but the map
 //                        is not interpolated between missing points.
 //
 //   azimuth            - shows a map of the relative signal level seen at
 //                        each azimuth angle.
-//       
+//
 //   elevation weighted - shows a map of the relative signal level seen at
 //                        each azimuth angle weighted by 1.0/elevation.
 //                        Weighting the signal levels by the inverse of the
 //                        satellite elevation compensates for the normal
-//                        behavior of satellite signals being better at 
+//                        behavior of satellite signals being better at
 //                        higher angles and better shows the effects of
 //                        antenna obstructions.
 //
 //   elevation          - shows a map of the relative signal level seen at
 //                        each elevation angle.  Note that a YELLOW tick mark
-//                        appears at the edge of this map.  This is the 
-//                        elevation angle where satellite signal levels begin 
+//                        appears at the edge of this map.  This is the
+//                        elevation angle where satellite signal levels begin
 //                        to rapidly drop off.  A BLUE tick mark indicates the
 //                        satellite elevation mask setting.
 //
@@ -2108,7 +2108,7 @@
 //       /gqa - toggle signal level vs azimuth map on and off
 //       /gqe - toggle signal vs elevation map on and off
 //       /gqd - toggle raw signal level data map on and off
-//         
+//
 //    SAA - displays relative signal level seen at each
 //          azimuth angle
 //    SAW - displays relative signal level seen at each
@@ -2118,16 +2118,16 @@
 //          low orbit angles that have no satellites.
 //    SAE - displays relative signal level seen at each
 //          elevation angle
-//    SAS - displays color coded map of the absolute signal 
+//    SAS - displays color coded map of the absolute signal
 //          level seen at each azimuth/elevation point.
 //    SAD - shows raw satellite signal level data points
 //          (much like the GM satellite position map)
-//    SAC - clears the old signal level data and starts 
+//    SAC - clears the old signal level data and starts
 //          collecting new data. You can also do this with
 //          the CM keyboard command
 //
 //
-//   You can zoom the various satellite maps to full screen from the "Z" 
+//   You can zoom the various satellite maps to full screen from the "Z"
 //   keyboard menu.  Any keypress (except '\') will exit the zoom screen mode.
 //   A '\' will dump the screen image to a .gif file.
 //
@@ -2142,7 +2142,7 @@
 //      ZR - zoom the Relative signal level map to full screen
 //      ZE - zoom the signal level vs Elevation map to full screen
 //      ZD - zoom the raw signal level Data map to full screen
-//           If once of the signal quality maps is shown you can click the 
+//           If once of the signal quality maps is shown you can click the
 //           mouse to show all the signal quality maps (ZU command)
 //
 //      ZU - zoom the all signal level maps to full screen
@@ -2167,7 +2167,7 @@
 //
 //
 //   You can reset the satellite map and signal data with the keyboard command:
-//       CM   - clear out the satellite map data 
+//       CM   - clear out the satellite map data
 //
 //   You can write the current signal level information to a ".sig" file.
 //   The signal level file contains some comments and a list of az/el/snr
@@ -2184,8 +2184,8 @@
 //
 //-SUN and MOON INFORMATION DISPLAY
 //
-//   Besides displaying information about the GPS satellites, Lady Heather 
-//   calculates the position of and other relevant information about the sun 
+//   Besides displaying information about the GPS satellites, Lady Heather
+//   calculates the position of and other relevant information about the sun
 //   and moon:
 //
 //     Sun azimuth and elevation in the sky
@@ -2209,10 +2209,10 @@
 //      Astronomical - when the sun crosses 18 degrees below the horizon
 //      Islamic  - when the sun crosses 18 degrees below the horizon at sunrise
 //                 or 17 degrees below the horizon at sunset
-//      User defined - you can specify any angle above (positive) or 
+//      User defined - you can specify any angle above (positive) or
 //                     below (negative) the horizon.
 //
-//   Sun/moon times are shown as local time zone times for the current date.  
+//   Sun/moon times are shown as local time zone times for the current date.
 //
 //
 //   To display the sun (or moon) rise/set times use:
@@ -2249,21 +2249,21 @@
 //   horizon type always appears next to the set time.
 //
 //   The standard rise/set sound is a rooster crowing and the noon sound is
-//   a church bell.  
+//   a church bell.
 //
-//   If moon rise/set times are selected (TRM) the sound files are played at 
+//   If moon rise/set times are selected (TRM) the sound files are played at
 //   moon rise/transit/set and not sun rise/noon/set.  They are the same files
 //   used for sun times... there are not separate moon files.
 //
 //
 //   Normally Heather assumes that the GPS receiver is at a fixed position
 //   and the sun/moon rise/set times are only recalculated when Heather
-//   starts up or once per hour at xx:00:26 local time.  If you are 
-//   working with a moving receiver you can cause Heather to continuously 
+//   starts up or once per hour at xx:00:26 local time.  If you are
+//   working with a moving receiver you can cause Heather to continuously
 //   recalculate the times:
 //      Include an "!" after the command.
 //         TR C!
-//         /sr=c!  
+//         /sr=c!
 //
 //   You can use both "*" and "!" on the same command.
 //
@@ -2279,12 +2279,12 @@
 //
 //   The plot area is divided into a header area at the top and a plot
 //   grid below it.  The header shows the various plot scale factors and
-//   reference (center line) values along with a statistical value for each  
-//   plot. 
+//   reference (center line) values along with a statistical value for each
+//   plot.
 //
 //   Clicking on the plot header area will zoom the plot display to full
-//   screen Cicking on the zoomed plot header area will restore the screen 
-//   to its previous state. 
+//   screen Cicking on the zoomed plot header area will restore the screen
+//   to its previous state.
 //   Note that short clicks might be ignored... particularly on devices
 //   like UCCM receivers that only output time updates every two seconds.
 //   It can help to hold down the mouse button until the screen changes.
@@ -2300,10 +2300,10 @@
 //   You can put a title string at the bottom of the plot window with the
 //   keyboard command:
 //      GG  - label the plot window with a title.
-//      Titles are also saved to/loaded from log file comments.  
+//      Titles are also saved to/loaded from log file comments.
 //
 //      If a plot title contains an '&&' then the '&&' is replaced
-//      with the current oscillator disciplining parameters. 
+//      with the current oscillator disciplining parameters.
 //
 //      If a plot title contains an '&t' then the '&t' is replaced
 //      with the current time
@@ -2316,7 +2316,7 @@
 //   calendar events, errors, and certain status information.  Setting a user
 //   defined title usually inhibits these automatic titles.
 //
-//   Heather usually only updates the parts of the screen that have changed. 
+//   Heather usually only updates the parts of the screen that have changed.
 //   You can force Heather to fully redraw the screen from the keyboard:
 //      GR  - redraw the screen
 //
@@ -2362,15 +2362,15 @@
 //   The "V" (view) keyboard command controls the view window into the plot
 //   data queue.  This sets how much data is shown in the plots.  The
 //   view value can be either in minutes per (major) division or the time
-//   interval to be shown.  Note that the specified view interval is 
+//   interval to be shown.  Note that the specified view interval is
 //   automatically tweaked/rounded to fit a multiple of the plot grid size.
 //
 //   If the selected plot view interval is larger than one plot queue sample
 //   per pixel, the plot queue data is down-scaled by dropping values.
-//   Note that if down-scaling is in use the display of time skip markers, etc 
-//   may not be accurate / complete.  Markers or other events that do not 
-//   happen on a displayed sample may not always be shown because all 
-//   non-displayed  samples are skipped over while processing the plot queue 
+//   Note that if down-scaling is in use the display of time skip markers, etc
+//   may not be accurate / complete.  Markers or other events that do not
+//   happen on a displayed sample may not always be shown because all
+//   non-displayed  samples are skipped over while processing the plot queue
 //   data for display.
 //
 //
@@ -2378,7 +2378,7 @@
 //            scale factor (time per division) is adjusted to fit the data
 //            onto the screen. The data is down-scaled by dropping values.
 //
-//      VT  - auto scale the time axis as data comes in.  The plot view 
+//      VT  - auto scale the time axis as data comes in.  The plot view
 //            interval is automatically adjusted as data come in.  Once the
 //            plot window fills, it is scrolled left a few major divisions
 //            and a new scale factor is calculated.
@@ -2418,7 +2418,7 @@
 //   as new data comes in.  You can "review" older data using keyboard commands
 //   to change the starting point in the plot.  When you are in plot review
 //   mode the plot header shows:
-//       "Review (DEL to stop):"  or "All (DEL to stop):"  
+//       "Review (DEL to stop):"  or "All (DEL to stop):"
 //   and scrolling of the plot data is inhibited.
 //
 //
@@ -2437,13 +2437,13 @@
 //      DEL   - exit plot review mode and return to normal scrolling
 //
 //
-//   If you are in VIEW ALL mode and click the LEFT mouse button at a point in 
+//   If you are in VIEW ALL mode and click the LEFT mouse button at a point in
 //   the plot, the plot will be centered at that point and the view interval
 //   will be set to 1 minute per division.  The clicked point will be marked
 //   with a "v" at the top of the plot area and a '^' at the bottom.  You can
 //   return to the marked point by pressing '0' or '@'.
 //
-//   When in "auto" or "all" mode, clicking on the plot to zoom in to a point 
+//   When in "auto" or "all" mode, clicking on the plot to zoom in to a point
 //   on the plot will cancel that mode and set normal PLOT REVIEW mode.
 //
 //   If you (QUICKLY) right click on the graph it will mark the point
@@ -2478,10 +2478,10 @@
 //      marker (from 1 to 9) will show at the top of the plot area.
 //
 //      To center the plot on a marker, press that number on the keyboard.
-//      Pressing '0' or '@' centers the plot on the last place you 
+//      Pressing '0' or '@' centers the plot on the last place you
 //      left-clicked in the plot area.
 //
-//      If you have just gone to a marker, pressing '+' will center the plot 
+//      If you have just gone to a marker, pressing '+' will center the plot
 //      where where the cursor was previously located.
 //
 //      To delete a marker, select that marker from the keyboard and press '-'
@@ -2500,7 +2500,7 @@
 //      Heather expects to see a time message from the GPS device every
 //      second.  The time code in the message should always increment
 //      by one second.  If an error is detected in the time code sequence
-//      (like skipped or duplicated time codes) these are flagged by a 
+//      (like skipped or duplicated time codes) these are flagged by a
 //      RED tick mark at the top of the plot.  If you place the mouse cursor
 //      in the plot area and press '%' the plot will jump to the next time
 //      sequence error.
@@ -2532,7 +2532,7 @@
 //
 //        G6 - average DOP (dilution of precision) value
 //        G7 - (currently unused)
-//        G8 - (currently unused) 
+//        G8 - (currently unused)
 //
 //        G9 - message timing offset
 //        G0 - message timing jitter
@@ -2584,11 +2584,11 @@
 //
 //        GpC  - select the color to display the plot in
 //
-//        GpL  - toggles a linear regression trend line for the plot.  The 
+//        GpL  - toggles a linear regression trend line for the plot.  The
 //               trend line is drawn and it's equation (as a function of time)
 //               is shown as the plot title.
 //
-//        Gp=  - removes drift from a plot by subtracting the linear regression  
+//        Gp=  - removes drift from a plot by subtracting the linear regression
 //               trend line slope from the plot
 //
 //        GpS  - set the plot scale factor in units per division  -or-
@@ -2618,7 +2618,7 @@
 //                 the plot window and end when the max fft size points
 //                 or the end of the plot data are reached.  The
 //                 data is sampled from the plot data at the viewing
-//                 interval (seconds/pixel). 
+//                 interval (seconds/pixel).
 //
 //                 The calculated FFT bins are shown as seconds with the
 //                 lowest frequencies to the left and highest to the right.
@@ -2632,7 +2632,7 @@
 //                 the FFT size, the FFT size is reduced accordingly.
 //
 //                 Note that a FFT requires the input data to be bandwidth
-//                 limited to below the sample frequency or else you will.  
+//                 limited to below the sample frequency or else you will.
 //                 get spurious values due to aliasing.  Set the display
 //                 display filter count to at least the value shown as
 //                 the "view interval" in minutes/division.
@@ -2647,7 +2647,7 @@
 //                 format between raw values (default) and dB's.
 //
 //                 Whenever an FFT is calculated, the first point of the plot
-//                 queue data analyzed by the FFT is marked with MARKER 1 and 
+//                 queue data analyzed by the FFT is marked with MARKER 1 and
 //                 the last point is marked with MARKER 2.
 //
 //
@@ -2657,7 +2657,7 @@
 //
 //
 //      Normally Heather displays the OSC related parameter values in ppb
-//      (parts-per-billion) or ppt (parts-per-trillion) which can cause 
+//      (parts-per-billion) or ppt (parts-per-trillion) which can cause
 //      Europeans to wander off in a daze of confusion and angst.
 //      You can display the OSC related value with an exponent using:
 //         /tx - toggle OSC value displays with eXponent
@@ -2666,7 +2666,7 @@
 //   TEMPERATURE DISPLAYS
 //
 //      Lady Heather can display the temperature readings in several
-//      different temperature scales (I bet you didn't know there are 
+//      different temperature scales (I bet you didn't know there are
 //      so many!) by using one of the following command line options:
 //
 //           /tc    - show Celcius temperatures (default)
@@ -2689,29 +2689,29 @@
 //   or just the plot area.  Dumps can be either as the screen appears or
 //   in "reverse video" where BLACK and WHITE are swapped.  Reverse video
 //   dumps are useful for printing.
-//  
+//
 //     WS  - write screen to image file
 //     WR  - write reverse video screen to image file
 //
 //     WG  - write plot (graph) area of the screen to image file
 //     WI  - write reverse video plot (graph) area of the screen to image file
 //
-//   You get a beep at the start and end of the dump.  
+//   You get a beep at the start and end of the dump.
 //
-//     
+//
 //   The '\' keyboard command can be used to do a quick full screen .GIF dump
-//   with a single keystroke.  It does not bring up a menu that prompts for a 
-//   file name.  This can be useful because redrawing of the plot area after 
+//   with a single keystroke.  It does not bring up a menu that prompts for a
+//   file name.  This can be useful because redrawing of the plot area after
 //   entering the file name from the normal screen dump menu can cause
-//   problems with some parts of the screen not being updated before the 
+//   problems with some parts of the screen not being updated before the
 //   screen dump happens. The "quick" screen dump is done to file
 //     "xxxxx.gif"
 //   where "xxxxx" is dependent upon the receiver type.
 //
 //
-//   If you start to select a reverse video screen dump (even if you do not 
-//   complete it by using the ESC key) the reverse video attribute will 
-//   will be used for any following '\' initiated screen dumps. The same 
+//   If you start to select a reverse video screen dump (even if you do not
+//   complete it by using the ESC key) the reverse video attribute will
+//   will be used for any following '\' initiated screen dumps. The same
 //   applies to normal polarity screen dumps.
 //
 //   If the mouse cursor is in the plot area when a screen dump is done, an
@@ -2723,39 +2723,39 @@
 //
 //-GPSDO and HOLDOVER CONFIGURATION
 //
-//   GPS Disciplined Oscillators (GPSDOs) use the GPS satellite signals to 
-//   steer a precision oscillator to a precise frequency (usually 10.0 MHz) 
-//   over long periods of time.  This "discipling" process corrects for normal 
-//   oscillator frequency drift, aging, and temperature effects.  
+//   GPS Disciplined Oscillators (GPSDOs) use the GPS satellite signals to
+//   steer a precision oscillator to a precise frequency (usually 10.0 MHz)
+//   over long periods of time.  This "discipling" process corrects for normal
+//   oscillator frequency drift, aging, and temperature effects.
 //
-//   The steering of the oscillator frequency is usually done by a phase locked 
-//   loop (PLL) circuit in the GPSDO that compares the current frequency to 
-//   the GPS timing signals.  A GPSDO controls the oscillator frequency by 
-//   using a digital to analog converter (DAC) to drive the oscillator's 
-//   electronic frequency control (EFC) signal.  
+//   The steering of the oscillator frequency is usually done by a phase locked
+//   loop (PLL) circuit in the GPSDO that compares the current frequency to
+//   the GPS timing signals.  A GPSDO controls the oscillator frequency by
+//   using a digital to analog converter (DAC) to drive the oscillator's
+//   electronic frequency control (EFC) signal.
 //
 //   If a GPSDO loses lock on the GPS satellites it can enter a HOLDOVER mode
 //   where it attempts to guess the compensation that it needs to apply to the
-//   oscillator in order to keep it on frequency.  Many GPSDOs can be 
-//   forced into HOLDOVER mode manually by the user for testing, etc. 
+//   oscillator in order to keep it on frequency.  Many GPSDOs can be
+//   forced into HOLDOVER mode manually by the user for testing, etc.
 //
-//   Heather has some keyboard commands for controlling holdover mode and 
+//   Heather has some keyboard commands for controlling holdover mode and
 //   oscillator disciplining:
-//    
+//
 //      HE - enable manual holdover
 //      HX - exit manual holdover
 //      HH - toggle holdover mode on/off
 //
 //
-//   Besides HOLDOVER mode, some GPSDOs let the user manually control the 
-//   oscillator EFC signal.  
+//   Besides HOLDOVER mode, some GPSDOs let the user manually control the
+//   oscillator EFC signal.
 //
 //      DD - completely disable oscillator disciplining
 //      DE - re-enable oscillator disciplining
 //      DS - set the oscillator EFC DAC to a given value.
 //
 //
-//   The plot area normally shows when the device is in holdover by a RED 
+//   The plot area normally shows when the device is in holdover by a RED
 //   line at the top of the plot. You can turn this off with:
 //      GH  - from the keyboard toggles the holdover plot display
 //      /gh - command line option toggles display of holdover events
@@ -2763,9 +2763,9 @@
 //
 //
 //   Heather shows the amount of time of the current ot last holdover event.
-//   The value is shown in GREEN if the holdover event ended before Heather 
-//   was started. It is shown in YELLOW if a holdover event occured after 
-//   Heather was started.  It is shown in RED if holdover mode is currently 
+//   The value is shown in GREEN if the holdover event ended before Heather
+//   was started. It is shown in YELLOW if a holdover event occured after
+//   Heather was started.  It is shown in RED if holdover mode is currently
 //   active.
 //
 //
@@ -2788,7 +2788,7 @@
 //
 //       &d  - sets the PLL damping factor
 //       &t  - sets the PLL time constant
-//       &g  - sets the PLL gain (i.e. Hz change per volt of EFC) 
+//       &g  - sets the PLL gain (i.e. Hz change per volt of EFC)
 //       &p  - sets the pullin range (for UCCM devices)
 //
 //       &i  - sets the DAC initial voltage
@@ -2821,38 +2821,38 @@
 //       The &L (/ul) and &H (/uh) commands use an undocumented TSIP command
 //       for reading and setting the what appears to be the allowable EFC DAC.
 //       range.  You can alter the low and high values with the UNDOCUMENTED
-//       &L and &H keyboard commands.  These values might just be for reporting 
-//       the allowable DAC range to the software or they might do something 
-//       else!  Also, /ul and /uh on the command line may not always work... 
+//       &L and &H keyboard commands.  These values might just be for reporting
+//       the allowable DAC range to the software or they might do something
+//       else!  Also, /ul and /uh on the command line may not always work...
 //       it seem to work from the keyboard, though.
 //
 //                  CAVEAT EMPTOR IF YOU USE/CHANGE THEM!
 //
 //
-//     When you write a log file an OSC_GAIN comment is written to the log 
-//     file.  This allows the computation of osc drift and tempco from logged 
-//     data acquired on a unit that does not have the same osc gain (or that 
-//     is not connected to a tbolt).  If the osc gain has been loaded from a 
+//     When you write a log file an OSC_GAIN comment is written to the log
+//     file.  This allows the computation of osc drift and tempco from logged
+//     data acquired on a unit that does not have the same osc gain (or that
+//     is not connected to a tbolt).  If the osc gain has been loaded from a
 //     log file,  it is shown in YELLOW.
 //
 //
 //
 //  OSCILLATOR DRIFT RATE and TEMPERATURE COEFFICIENT VALUES
 //
-//     For Trimble GPSDO devices, the '&' screen display shows an oscillator 
-//     drift rate and temperature coefficient value.  These are calculated 
+//     For Trimble GPSDO devices, the '&' screen display shows an oscillator
+//     drift rate and temperature coefficient value.  These are calculated
 //     from the data points shown in the plot window.
 //
 //     For the best results,  select a plot display interval
-//     that covers a fairly long time interval with well 
-//     behaved DAC and/or TEMP values.  
+//     that covers a fairly long time interval with well
+//     behaved DAC and/or TEMP values.
 //
-//     You should be able to get a decent value for the drift rate 
-//     with 24 hours of data. The oscillator drift rate value makes the most 
-//     sense if the temperature is stable so that temperature effects on the 
+//     You should be able to get a decent value for the drift rate
+//     with 24 hours of data. The oscillator drift rate value makes the most
+//     sense if the temperature is stable so that temperature effects on the
 //     oscillator frequency are minimized.
 //
-//     The oscillator temperature coefficient value makes the most sense if 
+//     The oscillator temperature coefficient value makes the most sense if
 //     the temperature is allowed to change in a linear ramp.  This is
 //     easy to achieve with Heather's active temperature control mechanism.
 //
@@ -2860,17 +2860,17 @@
 //
 //  AUTOMATICALLY SETTING GPSDO OSCILLATOR PARAMETERS:
 //
-//     Heather can automatically configure Thunderbolt style GPSDO parameters 
+//     Heather can automatically configure Thunderbolt style GPSDO parameters
 //     to values better suited for precision time and frequency applications
 //     that their default "telecom" values.
 //
 //     The "&a" keyboard command sequence starts the "auto-tune" process.
 //
-//     Before running auto-tune you should: 
-//        1) Wait for the unit to stabilize with (relatively) 
-//        steady DAC, OSC, and PPS values. 
+//     Before running auto-tune you should:
+//        1) Wait for the unit to stabilize with (relatively)
+//        steady DAC, OSC, and PPS values.
 //
-//        2) Set your antenna elevation mask angle (F E keyboard command) 
+//        2) Set your antenna elevation mask angle (F E keyboard command)
 //        to 0 and signal level mask (F L keyboard command) to 1.  This allows
 //        collection of signal level data across the full sky.
 //
@@ -2887,7 +2887,7 @@
 //     osc gain and initial dac voltage.  The time constant
 //     will be set to 500 seconds,  and the damping to 1.0
 //     Also the AMU (signal level) mask will be set to 1.0
-//     and the satellite elevation mask to midway between the horizon 
+//     and the satellite elevation mask to midway between the horizon
 //     and where your average signal level begins to fall off.
 //
 //     The values will be written to the configuration EEPROM.
@@ -2895,7 +2895,7 @@
 //     that may not suit your needs.
 //
 //     Note that non-Thunderbolt GPSDOs (such as the NTBW and NTPx telecom
-//     devices) do not all support saving disciplining parameters to EEPROM 
+//     devices) do not all support saving disciplining parameters to EEPROM
 //     and some do not allow users to change the disciplining parameters.
 //     You can use "/d" command line options for setting the PLL parameters
 //     from the command line.
@@ -2915,7 +2915,7 @@
 //     in these values.
 //
 //     Heather has the ability to actively control the environmental
-//     temperature of GPSDO devices that regularly (like every second) report 
+//     temperature of GPSDO devices that regularly (like every second) report
 //     their temperature to a high level of resolution (like less than 0.1C).
 //     The Trimble Thunderbolt series of devices is particularly good at this.
 //     Early models have a temperature sensor with a resolution of around
@@ -2931,7 +2931,7 @@
 //        TT          - from the keyboard
 //        /tt=degrees - from the command line
 //
-//     When temperature control is activated an DOWN_ARROW, EQUAL_SIGN, or 
+//     When temperature control is activated an DOWN_ARROW, EQUAL_SIGN, or
 //     UP_ARROW is shown next to the temperature reading at the top of the
 //     screen.  They mean that the temperature control PID is calling for
 //     cooling, holding temperature, or heating.
@@ -2942,43 +2942,43 @@
 //     be activated to work with a parallel port).
 //
 //     RTS is the temperature controller enable (+12=off, -12=on)
-//     DTR is the heat (-12V) / cool (+12V) line.  
+//     DTR is the heat (-12V) / cool (+12V) line.
 //     (note that some serial ports may have different voltage ranges like
 //      +/- 6V)
 //
 //     The DTR line is updated once a second with a pulse whose width is
 //     proportional to how hard to drive the fan/peltier. Use the line to
 //     control a transistor or solid state relay.  The RTS line can be
-//     used to enable the temperature control device.  RTS and DTR will be 
+//     used to enable the temperature control device.  RTS and DTR will be
 //     set to +12V when Heather exits.
 //
-//     Simple implementation:  
+//     Simple implementation:
 //        Isolate the Thunderbolt in a box (I use a corrugated cardboard box),
 //        set the control temperature below the typical unit operating temp
 //        but above normal room temp.  When Heather signals COOL turn
-//        send power to a fan to move room air into the box.  You want the 
+//        send power to a fan to move room air into the box.  You want the
 //        fan to move enough air to cool the unit,  but not so
 //        much air that the temperature drops by more than 0.01C
-//        per second.  The indicator of too much airflow is a 
+//        per second.  The indicator of too much airflow is a
 //        temperature curve that spikes down around 0.1C several
 //        times per minute.  Too little airflow shows up as a
 //        curve that oscillates around 0.25C about set point over
-//        a couple of minutes.  Good airflow should show a 
+//        a couple of minutes.  Good airflow should show a
 //        temperature curve stable to with 0.01C with a period of
 //        between 1 and 3 minutes.   Generally you do not want
 //        the fan to blow directly on the unit (mine is surrounded
-//        by foam).  You want to gently move air through the 
-//        box.  It can help to include a large thermal mass in 
-//        the box (I use a 2kg scale weight, other people use water).  
+//        by foam).  You want to gently move air through the
+//        box.  It can help to include a large thermal mass in
+//        the box (I use a 2kg scale weight, other people use water).
 //
 //        Placing the GPSDO power supply in the same controlled environment
 //        as the GPSDO can improve system performance.  BE AWARE OF WHAT
 //        MIGHT HAPPEN IF A POWER SUPPLY OR CONTROL SYSTEM FAULT CAUSES
-//        OVERHEATING OR A FIRE!  
+//        OVERHEATING OR A FIRE!
 //
 //        One thing to try is to disable the fan and closely monitor the
-//        temperature see how warm the device becomes in the event of a fan 
-//        failure. Try and use an enclosure that keeps the maximum device 
+//        temperature see how warm the device becomes in the event of a fan
+//        failure. Try and use an enclosure that keeps the maximum device
 //        temperature to safe levels.  An enclosure with too much insulation
 //        is not a good thing here...
 //
@@ -3053,9 +3053,9 @@
 //        K= P D F I   (sets all four PID "B" terms (P D F I))
 //
 //        N  use pre-configured PID #1 values
-//        W  use pre-configured PID #2 values 
-//        X  use pre-configured PID #3 values 
-//        Y  use pre-configured PID #4 values 
+//        W  use pre-configured PID #2 values
+//        X  use pre-configured PID #3 values
+//        Y  use pre-configured PID #4 values
 //
 //        H  show PID debug info
 //        L= Load disturbance test value
@@ -3088,15 +3088,15 @@
 //
 //     To precisely align the PPS output to GPS or UTC time, the receiver
 //     needs to know the delay of the GPS signal through the antenna cable
-//     (plus the delay through the PPS output cable).  The cable delay 
-//     adjustment can also be used to shift the PPS output relative to 
+//     (plus the delay through the PPS output cable).  The cable delay
+//     adjustment can also be used to shift the PPS output relative to
 //     GPS/UTC time for other reasons.
 //
-//     Note that some devices (like the Trimble Thunderbolt and the 
-//     OSCILLOQUARTZ STAR) use a NEGATIVE number for compensating for cable 
-//     delay compensation, other devices use a  positive number.  Consult 
+//     Note that some devices (like the Trimble Thunderbolt and the
+//     OSCILLOQUARTZ STAR) use a NEGATIVE number for compensating for cable
+//     delay compensation, other devices use a  positive number.  Consult
 //     the device manual for details (but good look finding them!)
-//     
+//
 //        PC         - sets the cable delay
 //        /c=75      - sets the cable delay (in nanoseconds) from the command
 //                     line
@@ -3104,7 +3104,7 @@
 //                     coaxial cable
 //        /c=70m     - sets the cable delay in 70 meters of 0.66 velocity
 //                     factor coaxial cable
-//        /c=50m,.8v - sets the cable delay to 50 meters of 0.80 velocity 
+//        /c=50m,.8v - sets the cable delay to 50 meters of 0.80 velocity
 //                     factorcoaxial cable
 //
 //     The "PC" keyboard command lets you specify the cable delay in
@@ -3134,7 +3134,7 @@
 //        /+   - select falling edge PPS signal from the command line
 //
 //
-//      Some devices let you set the oscillator signal polarity referenced 
+//      Some devices let you set the oscillator signal polarity referenced
 //      to the PPS signal:
 //        PO   - toggle the oscillator signal polarity from the keyboard
 //        /^f  - sync OSC signal falling edge to time
@@ -3152,7 +3152,7 @@
 //        P2   - disable TOD output
 //
 //
-//      Some devices let you adjust the PPS timing offset in relation to 
+//      Some devices let you adjust the PPS timing offset in relation to
 //      UTC/GPS time (much like the antenna cable delay parameter):
 //        PO   - set the PPS pulse timing offset in relation to UTC/GPS time
 //               (the times are in nanoseconds and can usually be positive or
@@ -3160,8 +3160,8 @@
 //
 //
 //      Some devices let you reference the PPS pulse to either UTC time or
-//      GPS time (and usually this also changes the time reported by the 
-//      receiver to GPS or UTC time).  
+//      GPS time (and usually this also changes the time reported by the
+//      receiver to GPS or UTC time).
 //        TG   - configure the receiver for GPS time
 //        /tg  - configure the receiver for GPS time from the command line
 //
@@ -3221,11 +3221,11 @@
 //
 //
 //      EE      - from the keyboard, writes the complete current receiver
-//                configuration to EEPROM/BBRAM/FLASH.  
+//                configuration to EEPROM/BBRAM/FLASH.
 //
-//                For Venus receivers this command toggles the enable of 
-//                writing configuration changes to flash memory.  If writing 
-//                to flash is enabled, the receiver status column will 
+//                For Venus receivers this command toggles the enable of
+//                writing configuration changes to flash memory.  If writing
+//                to flash is enabled, the receiver status column will
 //                show "FLASH: WRT" instead of "FLASH: OK".  Writing to flash
 //                defaults to OFF for Venus receivers.
 //
@@ -3241,9 +3241,9 @@
 //-ADEV CALCULATIONS and DISPLAYS
 //
 //   Lady Heather can calculate and display various ADEV (Allan Variance/
-//   Deviation) values from the receiver readings.  ADEVs are a way of 
+//   Deviation) values from the receiver readings.  ADEVs are a way of
 //   characterizing how stable a signal is over various time intervals.
-//   Heather supports ADEV, MDEV, HDEV, and TDEV calculation.  
+//   Heather supports ADEV, MDEV, HDEV, and TDEV calculation.
 //
 //   --------------------------  WARNING --------------------------
 //
@@ -3253,13 +3253,13 @@
 //   (other than the GPS signal) and may not agree with ADEVs calculated
 //   by measurements against an external reference signal. ADEVs calculated
 //   when the oscillator is undisciplined are more meaningful than when
-//   the oscillator is being disciplined.  For proper ADEV values, you could 
+//   the oscillator is being disciplined.  For proper ADEV values, you could
 //   modify the code to support reading time intervals from a proper external
 //   Time Interval Counter.
 //
-//   Not all devices report values that are even suitable for ADEV 
+//   Not all devices report values that are even suitable for ADEV
 //   calculations... Mostly the Trimble GPSDO devices are usable.
-// 
+//
 //   ---------------------------------------------------------------
 //
 //
@@ -3270,7 +3270,7 @@
 //   value and an OSCillator related value.  The size of the ADEV queue
 //   determines the maximum "tau" time interval that the ADEVs can show.
 //   The default is 33,000 points which is suitable for values of TAU out
-//   to around 10,000 seconds.  
+//   to around 10,000 seconds.
 //
 //   You can set the size of the ADEV queue from the command line:
 //      /a=size - sets the number of points to save in the ADEV queue.
@@ -3279,7 +3279,7 @@
 //
 //   Normally Heather collects a new ADEV entry every second.  You can adjust
 //   the ADEV interval with:
-//      /j=secs - sets the ADEV sample interval 
+//      /j=secs - sets the ADEV sample interval
 //
 //
 //   You can clear the ADEV queue from the keyboard:
@@ -3293,7 +3293,7 @@
 //
 //
 //   Heather can also read ADEV information from files using the "R"
-//   keyboard command.  ADEV files must have an extension of .ADV  
+//   keyboard command.  ADEV files must have an extension of .ADV
 //   These files can have two independent values per line.  The first value
 //   if the "PPS" value and the second one is the "OSC" value. These values
 //   don't have to be actual PPS and OSC values, but that is how Heather
@@ -3303,14 +3303,14 @@
 //      # text comments
 //      #title: title text (note that the ': ' is required)
 //      #period seconds_between_readings (default=1)
-//      #scale  pps_scale_factor  osc_scale_factor  
+//      #scale  pps_scale_factor  osc_scale_factor
 //
 //   The first line of an ADV file must be a '#' line.
 //
-//   The scale factor value multiplied by the data values should yield 
+//   The scale factor value multiplied by the data values should yield
 //   nanoseconds.
 //
-//   Note that the #period command erases any data values that appeared 
+//   Note that the #period command erases any data values that appeared
 //   before it in the file.
 //
 //   Reading an ADEV file pauses the processing of data from the receiver.
@@ -3329,23 +3329,23 @@
 //   If the ADEV plot is enabled, then the division markers in the plot area
 //   that represent decades are highlighted in CYAN.  Each highlighted
 //   vertical division represents a power of 10.  Each minor division marker
-//   is a linear division of that decade.  The decade value of the top line of 
+//   is a linear division of that decade.  The decade value of the top line of
 //   the plot area is determined from the largest ADEV value seen in any
 //   of the ADEV tables.  All ADEV types are scaled the same.
 //
-//   Each highlighted horizontal division represents TAU with divisions a power 
+//   Each highlighted horizontal division represents TAU with divisions a power
 //   of 10 seconds (TAU 1,10,100,1000,10000,,..)  The horizontal major
-//   divisions between the highlighted ones are a 1:2:5 division of 
+//   divisions between the highlighted ones are a 1:2:5 division of
 //   that time decade (like 1,2,5,10,20,50,100...).
 //
-//   For screen resolutions 800x600 and below,  the ADEV plot decades 
-//   are scaled to single VERT_MAJOR divisions (not to every two major 
+//   For screen resolutions 800x600 and below,  the ADEV plot decades
+//   are scaled to single VERT_MAJOR divisions (not to every two major
 //   divisions)
 //
 //
 //   The ADEV table is always shown on the screen if there is space for it
 //   (in the upper right corner of the screen).  The "GB" keyboard command
-//   allows for one of the satellite maps or the watch display to be shown 
+//   allows for one of the satellite maps or the watch display to be shown
 //   in the plot area.
 //
 //   If more than one of the map displays and/or watch display is enabled
@@ -3365,17 +3365,17 @@
 //   values.  The "A" keyboard menu is used to configure the ADEV information
 //   to display:
 //      AA - Show ADEVs for the OSC and PPS values
-//      AH - Show HDEVs for the OSC and PPS values 
-//      AM - Show MDEVs for the OSC and PPS values 
-//      AT - Show TDEVs for the OSC and PPS values 
+//      AH - Show HDEVs for the OSC and PPS values
+//      AM - Show MDEVs for the OSC and PPS values
+//      AT - Show TDEVs for the OSC and PPS values
 //      AO - Show all ADEV types for the OSC value
 //      AP - Show all ADEV types for the PPS value
 //
 //   You can also select the ADEV type(S) from the command line:
 //      /oa - Show ADEVs for the OSC and PPS values
-//      /oh - Show HDEVs for the OSC and PPS values 
-//      /om - Show MDEVs for the OSC and PPS values 
-//      /ot - Show TDEVs for the OSC and PPS values 
+//      /oh - Show HDEVs for the OSC and PPS values
+//      /om - Show MDEVs for the OSC and PPS values
+//      /ot - Show TDEVs for the OSC and PPS values
 //      /oo - Show all ADEV types for the OSC value
 //      /op - Show all ADEV types for the PPS value
 //
@@ -3386,11 +3386,11 @@
 //      two different things),  or the two regular
 //      ADEV plots and graphs:
 //         AOA - show all four OSC ADEVs tables and all ADEV plots
-//         APA - show all four PPS ADEVs tables and all ADEV plots 
+//         APA - show all four PPS ADEVs tables and all ADEV plots
 //         AOG - show all four OSC ADEVs tables and all plots
 //         APG - show all four PPS ADEVs tables and all plots
 //         AOR - show all four OSC ADEVs tables and regular ADEV plots
-//         APR - show all four PPS ADEVs tables and regular ADEV plots 
+//         APR - show all four PPS ADEVs tables and regular ADEV plots
 //
 //
 //
@@ -3406,8 +3406,8 @@
 //      !H  - hard reset the receiver to factory defaults
 //
 //            Note that on many receivers doing warm/cold/factory resets may
-//            take a long time and Heather may take a long time to 
-//            re-establish communications or Heather may not be able to 
+//            take a long time and Heather may take a long time to
+//            re-establish communications or Heather may not be able to
 //            re-establish communications, or may change the receiver language
 //            type.  You may need to exit and restart Heather.
 //
@@ -3422,11 +3422,11 @@
 //      !P  - set operating system serial port parameters (like the /br
 //            command line option)  Note this changes the operating system
 //            serial port configuration.  In order to guard against
-//            accidentally "bricking" a receiver by setting a 
-//            hard-to-recover-from configuration,  
+//            accidentally "bricking" a receiver by setting a
+//            hard-to-recover-from configuration,
 //
-//            Currently Heather does not ever change the receiver serial port 
-//            configuration. (someday this command might be able to configure 
+//            Currently Heather does not ever change the receiver serial port
+//            configuration. (someday this command might be able to configure
 //            the receiver serial port parameters)
 //
 //      !B  - send a 300-500 msec BREAK to the serial port
@@ -3442,15 +3442,15 @@
 //
 //   RUNNING RECEIVER DIAGNOSTICS
 //      !D  - command the receiver to run its internal self-tests.  Note that
-//            on many devices this takes a long time and/or resets the receiver 
-//            and Heather may take a long time (or forever) to re-establish 
+//            on many devices this takes a long time and/or resets the receiver
+//            and Heather may take a long time (or forever) to re-establish
 //            communications.
 //
 //
 //   SWITCHING RECEIVER MESSAGE FORMATS
 //      !M  - If a receiver can speak NMEA, but is currently running in its
 //            native binary mode,  this will switch the receiver back to NMEA.
-//            On receiver that are speaking Motorola binary data, this command 
+//            On receiver that are speaking Motorola binary data, this command
 //            usually switches the receiver from Motorola mode to some other
 //            (device dependent) language.
 //
@@ -3472,7 +3472,7 @@
 //               jittery watch or digital clock displays.
 //
 //               Sometimes a high navigation rate produces enough serial port
-//               traffic that Heather never sees an idle time in the data 
+//               traffic that Heather never sees an idle time in the data
 //               stream where it can process keyboard commands.  The keyboard
 //               will stop responding.  You can recover from this by killing
 //               the program and restarting it with the /nr=1 command line
@@ -3492,7 +3492,7 @@
 //
 //      The terminal emulator mode has several keyboard commands for
 //      controlling it:
-//        
+//
 //         END    - exit terminal emulator
 //         HOME   - erase the screen
 //         UP     - re-sends the last keyboard line to the receiver
@@ -3502,7 +3502,7 @@
 //                  data log file is open, it is closed.  If it not open, it
 //                  is opened in "append, binary" mode.
 //         F3     - toggle HEX binary data display mode.  In HEX mode
-//                  bytes that could be part of a start/end-of-message 
+//                  bytes that could be part of a start/end-of-message
 //                  sequence are shown in YELLOW
 //         F4     - toggle writing to the screen
 //         F5     - CR-LF mode - adds a CR after any LF or add an LF after
@@ -3534,7 +3534,7 @@
 //
 //      GS      - toggle all sounds from the keyboard.  If beeps OR sound
 //                files are enabled, they will both be disabled.  If beeps
-//                AND sound files were disabled, they will both be enabled 
+//                AND sound files were disabled, they will both be enabled
 //                and a BEEP will be sounded as confirmation.
 //
 //
@@ -3565,7 +3565,7 @@
 //
 //   Heather can output some debug information (mainly on Linux and macOS).
 //   This debug information is independent of the debug log file and most
-//   goes to stdout. This command line option sets the level of debug 
+//   goes to stdout. This command line option sets the level of debug
 //   information that is shown.
 //      /de[=#] - set debug information level
 //
@@ -3615,14 +3615,14 @@
 //   if the command line help dialog box is active or the screen is
 //   being dragged, etc.  At one time, this timer had the potential to
 //   cause very intermittent, random "unhandled exception"
-//   aborts, but this seems to have been fixed.  You can still disable the 
+//   aborts, but this seems to have been fixed.  You can still disable the
 //   timer feature with the:
 //      /kt     - toggle Windows dialog/message timer
 //
 //
 //   The "/bs" command line option will adjust the displayed time by the
-//   solar Equation of Time.  The only indication that solar time is in use 
-//   is on the analog watch display. The watch name/day of week will 
+//   solar Equation of Time.  The only indication that solar time is in use
+//   is on the analog watch display. The watch name/day of week will
 //   be "Solar".  Using solar time is now best done with the "TZ" and "/tz"
 //   time zone commands.
 //
@@ -3647,22 +3647,22 @@
 //   the a dropped connection or device.  If you had
 //   previously set an IP connection address/port, you
 //   don't have to type the "=addr:portnum" after the /ip
-// 
+//
 //   You can also use the "/rx" commands from the keyboard to change
 //   the input device type.
 //
 //
 //
-//   Added '$' and '=' command line/.CFG file  options for 
+//   Added '$' and '=' command line/.CFG file  options for
 //   building lists of hex bytes to send to the receiver
 //   The '=' list is sent when the program starts.  The '$'
 //   list is sent when a primary timing message is received
 //   (i.e. once each second).  For example with a TSIP receiver:
-//       $10,3a,00,10,03   would request doppler/code phase 
-//                         data every second. 
+//       $10,3a,00,10,03   would request doppler/code phase
+//                         data every second.
 //       $10,3C,00,10,03   would request satellite status
-//                         and position data every second. 
-//   Note that the '$' and '=' command line options should 
+//                         and position data every second.
+//   Note that the '$' and '=' command line options should
 //   not be preceeded by a '/'.
 //
 //
@@ -3694,7 +3694,7 @@
 //    OR   - reset ADEV bins and recalculate ADEVs
 //    OS   - toggle temperature spike filter mode
 //    OT   - toggle alarm/dump/exit time triggers to be based upon local time
-//           (default) or displayed time which can be in one of the 
+//           (default) or displayed time which can be in one of the
 //           astronomical time scales.  Previous versions used OT to toggle
 //           12/24 hour clock mode which is now available from the T menu.
 //--- OU # - set daylight savings time area number (0 .. 5)
@@ -3709,7 +3709,7 @@
 //
 //  This program requires the following operating system dependent routines:
 //
-//  init_hardware() - put screen in a high res graphics mode or open a 
+//  init_hardware() - put screen in a high res graphics mode or open a
 //                    graphics window and open the com port (9600,8,N,1)
 //
 //  dot(x,y, color) - draw a colored dot
@@ -3720,7 +3720,7 @@
 //
 //  sendout(c)  - send byte 'c' to the serial port
 //
-//  SERIAL_DATA_AVAILABLE() - a routine or macro that returns true if 
+//  SERIAL_DATA_AVAILABLE() - a routine or macro that returns true if
 //                            there is serial port data available
 //
 //  get_serial_char()  - get a character from the serial port.  You should check
@@ -3729,7 +3729,7 @@
 //  kill_com()    - close down serial port
 //
 //  SetDtrLine(state) - used for PWM fan control for temerature control PID
-//  SetRtsLine(state) - used for PWM fan control for temerature control PID 
+//  SetRtsLine(state) - used for PWM fan control for temerature control PID
 //  SetBreak(state)   - used to wake up Nortel GPSDO's by sending a BREAK condition
 //
 //  KBHIT() - a routine or macro that returns true if a keyboard key has
@@ -3824,7 +3824,7 @@ static char degc[] = { DEGREES, 'C', 0 };
 static char degk[] = { DEGREES, 'K', 0 };
 static char degs[] = { DEGREES, 0 };
 
-struct PLOT_DATA plot[NUM_PLOTS+DERIVED_PLOTS] = {  // plot configurations 
+struct PLOT_DATA plot[NUM_PLOTS+DERIVED_PLOTS] = {  // plot configurations
 //  ID        units   ref scale  show  float  plot color
    {"OSC",    "ppt",  1000.0F,   0,    0,     OSC_COLOR    },
    {"PPS",    "ns",   1.0F,      1,    0,     PPS_COLOR    },
@@ -3888,7 +3888,7 @@ int f11_flag;             // set if F11 pressed
          ++s;
       }
    }
-#endif 
+#endif
 
 
 void config_rcvr_plots()
@@ -3989,7 +3989,7 @@ plot[FIVE].float_center = 1;
       if(user_set_dac_float == 0) plot[DAC].float_center = 1;
 
       plot[PPS].plot_id = "Accu";
-      plot[PPS].units = "ns";  
+      plot[PPS].units = "ns";
       plot[PPS].ref_scale = 1.0; // !!!!! 1.0F/1000.0F;
       if(user_set_pps_plot == 0) plot[PPS].show_plot = 1;
       if(user_set_pps_float == 0) plot[PPS].float_center = 1;
@@ -4051,7 +4051,7 @@ plot[FIVE].float_center = 1;
    plot[MSGOFS].ref_scale = 1.0F;
    plot[MSGOFS].float_center = 1;
    plot[MSGOFS].show_stat = AVG;      // SHOW_SPAN;
-   
+
 
    if(user_set_adev_plot == 0) plot_adev_data = 0;
 
@@ -4262,7 +4262,7 @@ plot[LUX2].show_stat = SHOW_SPAN;
       plot[REDHZ].units = "uW";
       plot[WHITEHZ].units = "uW";
    }
-                   
+
    plot[AUXV].plot_id = "AUXv";
    plot[AUXV].units = "V";
    plot[AUXV].ref_scale = 1.0F;
@@ -4363,13 +4363,13 @@ char tune[MAX_PATH+1];
    #ifdef __linux__
       char shell_cmd[MAX_PATH+64];
       sprintf(shell_cmd, "/bin/sh -c \"aplay -q %s\" &", tune);
-      system(shell_cmd); 
+      system(shell_cmd);
    #endif
-   
+
    #ifdef __MACH__
       char shell_cmd[MAX_PATH+64];
       sprintf(shell_cmd, "afplay %s &", tune);
-      system(shell_cmd); 
+      system(shell_cmd);
    #endif
 }
 
@@ -4435,21 +4435,21 @@ HANDLE hSerial = INVALID_HANDLE_VALUE;
 DCB dcb = { 0 };
 
 void SetDtrLine(u08 on)
-{   
+{
    if(hSerial != INVALID_HANDLE_VALUE) {
       EscapeCommFunction(hSerial, on ? SETDTR : CLRDTR);
    }
 }
 
 void SetRtsLine(u08 on)
-{   
+{
    if(hSerial != INVALID_HANDLE_VALUE) {
       EscapeCommFunction(hSerial, on ? SETRTS : CLRRTS);
    }
 }
 
 void SetBreak(u08 on)
-{   
+{
    if(hSerial != INVALID_HANDLE_VALUE) {
       EscapeCommFunction(hSerial, on ? SETBREAK : CLRBREAK);
    }
@@ -4497,7 +4497,7 @@ void init_com(void)
 
    if((com_port == 0) && IP_addr[0]) {
       //
-      // TCP: In Windows, COM0 with process_com=TRUE means we're using TCP/IP 
+      // TCP: In Windows, COM0 with process_com=TRUE means we're using TCP/IP
       //
       if(process_com) {
          init_tcpip();
@@ -4506,22 +4506,22 @@ void init_com(void)
          com_data_lost = 0;
          last_com_time = this_msec = GetMsecs();
       }
-      return;    
+      return;
    }
 if(com_port == 0) return;
 
    // kd5tfd hack to handle comm ports > 9
-   // see http://support.microsoft.com/default.aspx?scid=kb;%5BLN%5D;115831 
+   // see http://support.microsoft.com/default.aspx?scid=kb;%5BLN%5D;115831
    // for the reasons for the bizarre comm port syntax
 
    char com_name[20];
    sprintf(com_name, "\\\\.\\COM%d", com_port);
    hSerial = CreateFile(com_name,
-                        GENERIC_READ | GENERIC_WRITE, 
+                        GENERIC_READ | GENERIC_WRITE,
                         0,
                         0,
-                        OPEN_EXISTING, 
-                        FILE_ATTRIBUTE_NORMAL, 
+                        OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL,
                         0
    );
 
@@ -4605,7 +4605,7 @@ if(hSerial == INVALID_HANDLE_VALUE) return FALSE;
       ReadFile(hSerial, &rcvr_buf[0], sizeof(rcvr_buf), &rcvr_byte_count, NULL);
       if(rcvr_byte_count == 0) return FALSE;  // no serial port data is available
    }
-   else {                     // TCP connection: read a byte from Winsock 
+   else {                     // TCP connection: read a byte from Winsock
       if(!IPC->status()) {
           error_exit(22, IPC->message);
       }
@@ -4653,7 +4653,7 @@ if(hSerial == INVALID_HANDLE_VALUE) return FALSE;
 //            refresh_page();
          }
       }
-      else {                     // TCP connection: read a byte from Winsock 
+      else {                     // TCP connection: read a byte from Winsock
          if(!IPC->status()) {
             error_exit(23, IPC->message);
          }
@@ -4683,11 +4683,11 @@ void sendout(unsigned char val)
 {
 DWORD written;
 int flag;
-static U8 xmit_buffer[RCVR_BUF_SIZE]; 
-static S32 x = 0;    
+static U8 xmit_buffer[RCVR_BUF_SIZE];
+static S32 x = 0;
 
-   // send data to the receiver.  
-   // we queue up data until end of message to reduce per-packet overhead 
+   // send data to the receiver.
+   // we queue up data until end of message to reduce per-packet overhead
 
    if(rcvr_type == NO_RCVR) { //rxx
       return;
@@ -4717,7 +4717,7 @@ if(FAKE_ACRON_RCVR && (rcvr_type == ACRON_RCVR)) {  // simulate echo by sticking
       if(written == x) written = 1;
       else             written = 0;
    }
-   else {                    // TCP connection: send byte via Winsock 
+   else {                    // TCP connection: send byte via Winsock
       IPC->send_block(xmit_buffer, x);
 
       if(!IPC->status()) {
@@ -4752,14 +4752,14 @@ void SendBreak()
    Sleep(100);
 }
 
-void init_hardware(void) 
+void init_hardware(void)
 {
    init_com();
    init_screen();
 
-   if(NO_SCPI_BREAK && (rcvr_type == SCPI_RCVR)) ; else 
+   if(NO_SCPI_BREAK && (rcvr_type == SCPI_RCVR)) ; else
    if(nortel == 0) {    // To wake up a Nortel NTGS55A receiver
-      SendBreak(); 
+      SendBreak();
    }
 
    // Arrange to call serve_gps() 5x/second while dragging or displaying the
@@ -4768,7 +4768,7 @@ void init_hardware(void)
    // !!!  note:  this seems to cause random unhandled exception aborts
    //             maybe due to recursive calls to serve_gps().  Use the /kt
    //             command line option to not use this timer.
-   if(enable_timer) {   
+   if(enable_timer) {
       SetTimer(hWnd, 0, 200, NULL);
       timer_set = 1;
    }
@@ -4806,7 +4806,7 @@ double t,f;
       return (double) (unsigned long) GetTickCount();
    }
    else {
-      QueryPerformanceFrequency(&Frequency); 
+      QueryPerformanceFrequency(&Frequency);
       QueryPerformanceCounter(&ElapsedMicroseconds);
 
       //
@@ -4826,7 +4826,7 @@ double t,f;
 //****************************************************************************
 //
 // Window message receiver procedure for application
-// 
+//
 // We implement a small keystroke queue so that the DOS kbhit()/getch()
 // keyboard i/o model works with the Windows message queue i/o model.
 // Keystrokes are put into the queue by the Windows message reciever proc.
@@ -4860,7 +4860,7 @@ int win_kbhit(void)
 
 int win_getch(void)
 {
-int key;   
+int key;
 
    // return the next get from the keystroke queue
    if(kbd_in == kbd_out) return 0;            // no keys in the queue
@@ -4885,7 +4885,7 @@ void outp(unsigned port, unsigned val)
 }
 
 void SetDtrLine(u08 on)
-{   
+{
 int val;
 
    if(com_fd < 0) return;  // !!!! zork what if TCPIP connected
@@ -4896,7 +4896,7 @@ int val;
 }
 
 void SetRtsLine(u08 on)
-{   
+{
 int val;
 
    if(com_fd < 0) return;  // !!!! zork what if TCPIP connected
@@ -4907,7 +4907,7 @@ int val;
 }
 
 void SetBreak(u08 on)
-{   
+{
    if(com_fd < 0) return;  // !!!! zork what if TCPIP connected
 
    if(on) ioctl(com_fd, TIOCSBRK, 0);
@@ -4959,7 +4959,7 @@ printf("init tcpip to %s\n", IP_addr);  // zork - show_debug_info
 
    //see if this is a bracketed IPv6 address
    eb = strstr(ip_string, "]");
-   if(eb && (ip_string[0]=='[')) { //bracketed IPv6 address. 
+   if(eb && (ip_string[0]=='[')) { //bracketed IPv6 address.
 printf("bracketed IPv6 address\n");      // zork - show_debug_info
       //Remove the brackets and leave a zero terminated address.
       *eb=0;
@@ -5049,7 +5049,7 @@ printf("Attempting to connect() to socket\n");
 printf("connected!\n");
    x = fcntl(com_fd, F_GETFL, 0);
    fcntl(com_fd, F_SETFL, x | O_NONBLOCK);
-printf("set ip connection to non-blocking\n");   
+printf("set ip connection to non-blocking\n");
 }
 
 
@@ -5069,7 +5069,7 @@ int sync;
 
    if((com_port == 0) && (usb_port == 0) && IP_addr[0]) {
       //
-      // TCP: In Windows, COM0 with process_com=TRUE means we're using TCP/IP 
+      // TCP: In Windows, COM0 with process_com=TRUE means we're using TCP/IP
       //
       if(process_com) {
          init_tcpip();
@@ -5078,7 +5078,7 @@ int sync;
          com_data_lost = 0;
          last_com_time = this_msec = GetMsecs();
       }
-      return;    
+      return;
    }
 
    if((usb_port == 9999) && com_dev[0]) {  // user set com device name with -id=xxx command line option
@@ -5110,15 +5110,15 @@ int sync;
 printf("opening com device:%s\n", com_dev); // zork - show_debug_info
 fflush(stdout);
 
-// 
+//
 // we init the com device here
-// 
+//
 
    #ifndef O_RSYNC
       sync = O_SYNC;
    #else
       sync = O_RSYNC;
-   #endif 
+   #endif
    sync = O_DSYNC | sync;
 sync = 0;
 
@@ -5279,8 +5279,8 @@ void sendout(unsigned char val)
 {
 unsigned long written;
 int flag;
-static unsigned char xmit_buffer[RCVR_BUF_SIZE]; 
-static long x = 0; 
+static unsigned char xmit_buffer[RCVR_BUF_SIZE];
+static long x = 0;
 
    // buffer up serial output chars until end of message is seen, then send the buffer
 
@@ -5363,9 +5363,9 @@ double nsecs;
 
 //   nsecs = ((double) t.tv_sec) - time_zero;
 //   nsecs *= 1000.0;
-//   nsecs += (((double) t.tv_nsec));           
+//   nsecs += (((double) t.tv_nsec));
    nsecs = (wall_time - time_zero);
-        
+
    return nsecs;
 }
 
@@ -5386,19 +5386,23 @@ void Sleep(int time)
 }
 
 
-void init_hardware(void) 
+void init_hardware(void)
 {
    init_com();
    init_screen();
 
-   if(NO_SCPI_BREAK && (rcvr_type == SCPI_RCVR)) ; 
+   if(NO_SCPI_BREAK && (rcvr_type == SCPI_RCVR)) ;
    else if(nortel == 0) {    // To wake up a Nortel NTGS55A, etc receiver
-      SendBreak(); 
+      SendBreak();
    }
 
    need_screen_init = 0;
 }
 #endif  // WINDOWS
+
+#ifdef USE_SDL
+#define get_kbd() sdl_getch()
+#endif // SDL
 
 
 
@@ -5411,7 +5415,6 @@ XWMHints *wm_hints;
 XClassHint *class_hints;
 XWindowAttributes wattr;
 Atom wmDeleteMessage;
-
 
 #define get_kbd() x11_getch()
 #define KBD_Q_SIZE 16
@@ -5427,7 +5430,7 @@ void refresh_page(void)
    if(display == 0) return;
 
    if(pix_map && x11_io_done) {
-      XCopyArea(display,pix_map,screen,gc, 0,0, SCREEN_WIDTH,SCREEN_HEIGHT, 0,0);   
+      XCopyArea(display,pix_map,screen,gc, 0,0, SCREEN_WIDTH,SCREEN_HEIGHT, 0,0);
    }
 
    XFlush(display);
@@ -5476,7 +5479,7 @@ void kill_screen(void)
 
    x11_io_done = 0;
    last_x11_color = 0x80;
-   Sleep(X11_sleep); 
+   Sleep(X11_sleep);
 }
 
 
@@ -5613,7 +5616,7 @@ printf("Bad color code (%s) in pixmap! Using black.\n", name);
 
             found_color:
 //printf("%d: %s(%02X,%02X,%02X) \n", x, name, r,g,b);
-            XSetForeground(display,gc, RGB_NATIVE(r,g,b)); 
+            XSetForeground(display,gc, RGB_NATIVE(r,g,b));
             XDrawPoint(display,icon_map, gc, x,y);
 
          }
@@ -5724,20 +5727,20 @@ unsigned int j;
    /*  Display variables  */
 
    char *       display_name = NULL;
-   
+
 
    /*  Miscellaneous X11 variables  */
 
    XTextProperty windowName, iconName;
    XGCValues     values;
-   
+
    if(luxor) appname = "LUXOR";  // !!!argv[0];
    else      appname = "HEATHER";  // !!!argv[0];
 
 
    /*  Allocate memory for X11 structures  */
 
-   if ( !( size_hints  = XAllocSizeHints() ) || 
+   if ( !( size_hints  = XAllocSizeHints() ) ||
         !( wm_hints    = XAllocWMHints()   ) ||
         !( class_hints = XAllocClassHint() )    ) {
        sprintf(out, "%s: couldn't allocate memory.\n", appname);
@@ -5911,9 +5914,9 @@ printf("pixmap created\n");
 //lla clear_lla_points();
    #endif
 
-printf("screen configured\n");   
+printf("screen configured\n");
    erase_rectangle(0,0, SCREEN_WIDTH,SCREEN_HEIGHT);
-printf("screen init done\n");   
+printf("screen init done\n");
 }
 
 void set_x11_color(u08 color)
@@ -5921,7 +5924,7 @@ void set_x11_color(u08 color)
    // set the graphics context color
 
    if(color != last_x11_color) {  // color has changed, update context
-      last_x11_color = color;    
+      last_x11_color = color;
       if(color == 0xFF) XSetForeground(display, gc, RGB_NATIVE(0,0,35)); // special plot area background color highlight
       else              XSetForeground(display, gc, palette[color]);
    }
@@ -5935,7 +5938,7 @@ void dot(int x, int y, u08 color)
    set_x11_color(color);
    XDrawPoint(display,win, gc, x,y);
    flush_x11();
-}  
+}
 
 u08 get_pixel(COORD x,COORD y)
 {
@@ -5957,7 +5960,7 @@ int i;
 //****************************************************************************
 //
 // X11 / Linux message receiver procedure for application
-// 
+//
 // We implement a small keystroke queue so that the DOS kbhit()/getch()
 // keyboard i/o model works with the Linux message queue i/o model.
 // Keystrokes are put into the queue by the Linux message reciever proc.
@@ -5987,7 +5990,7 @@ int x11_kbhit(void)
 
 int x11_getch(void)
 {
-int key;   
+int key;
 
    // get a keystroke from the keyboard queue
 
@@ -6042,20 +6045,20 @@ if(show_debug_info) printf("configure:  wh%d %d  tl:%d %d  mouse:%d\n", new_widt
          buf[0] = 0;
          i = XLookupString(&report.xkey, &buf[0],20, &key, 0);
          if     (key ==  XK_Home)      add_kbd(HOME_CHAR);
-         else if(key ==  XK_Up)        add_kbd(UP_CHAR);   
-         else if(key ==  XK_Page_Up)   add_kbd(PAGE_UP);   
-         else if(key ==  XK_Left)      add_kbd(LEFT_CHAR); 
+         else if(key ==  XK_Up)        add_kbd(UP_CHAR);
+         else if(key ==  XK_Page_Up)   add_kbd(PAGE_UP);
+         else if(key ==  XK_Left)      add_kbd(LEFT_CHAR);
          else if(key ==  XK_Right)     add_kbd(RIGHT_CHAR);
-         else if(key ==  XK_End)       add_kbd(END_CHAR);  
-         else if(key ==  XK_Down)      add_kbd(DOWN_CHAR); 
-         else if(key ==  XK_Page_Down) add_kbd(PAGE_DOWN); 
-         else if(key ==  XK_Insert)    add_kbd(INS_CHAR);  
-         else if(key ==  XK_Delete)    add_kbd(DEL_CHAR);  
-         else if(key ==  XK_BackSpace) add_kbd(0x08);  
-         else if(key ==  XK_Tab)       add_kbd(0x09);  
-         else if(key ==  XK_Linefeed)  add_kbd(0x0A);  
-         else if(key ==  XK_Clear)     add_kbd(0x0B);  
-         else if(key ==  XK_Return)    add_kbd(0x0D);  
+         else if(key ==  XK_End)       add_kbd(END_CHAR);
+         else if(key ==  XK_Down)      add_kbd(DOWN_CHAR);
+         else if(key ==  XK_Page_Down) add_kbd(PAGE_DOWN);
+         else if(key ==  XK_Insert)    add_kbd(INS_CHAR);
+         else if(key ==  XK_Delete)    add_kbd(DEL_CHAR);
+         else if(key ==  XK_BackSpace) add_kbd(0x08);
+         else if(key ==  XK_Tab)       add_kbd(0x09);
+         else if(key ==  XK_Linefeed)  add_kbd(0x0A);
+         else if(key ==  XK_Clear)     add_kbd(0x0B);
+         else if(key ==  XK_Return)    add_kbd(0x0D);
          else if(key ==  XK_Escape)    add_kbd(0x1B);
          else if(i && (key >= ' ') && (key < 0x7F)) add_kbd(buf[0]);
          else if(key ==  XK_Break)     break_flag = 1;
@@ -6104,14 +6107,14 @@ if(0) {  // we now use XQueryPointer to do this
              last_button = this_button;
              this_button = 0;
           }
-if(show_debug_info) printf("Press: this:%d  last:%d!\n", this_button, last_button);      
+if(show_debug_info) printf("Press: this:%d  last:%d!\n", this_button, last_button);
           return 5;
           break;
-          
+
        case ButtonRelease:
-if(show_debug_info) printf("Release\n"); 
-          return 6;      
-          break; 
+if(show_debug_info) printf("Release\n");
+          return 6;
+          break;
 #endif
 
 
@@ -6122,16 +6125,13 @@ if(show_debug_info) printf("Client message:%ld\n", report.xclient.data.l[0]); //
         }
         return 6;
         break;
-   }   
+   }
 
    return 0;
 }
 
 
 #endif  // USE_X11
-
-
-
 
 #ifdef WIN_VFX   // WINDOWS video drawing routines
 
@@ -6267,7 +6267,7 @@ void init_screen(void)
    stage = VFX_pane_construct(stage_window,
                               0,
                               0,
-                              SCREEN_WIDTH-1, 
+                              SCREEN_WIDTH-1,
                               SCREEN_HEIGHT-1);
 
    VFX_assign_window_buffer(stage_window, NULL, -1);
@@ -6277,7 +6277,7 @@ void init_screen(void)
    screen = VFX_pane_construct(screen_window,
                                0,
                                0,
-                               SCREEN_WIDTH-1, 
+                               SCREEN_WIDTH-1,
                                SCREEN_HEIGHT-1);
 
 
@@ -6293,7 +6293,7 @@ void init_screen(void)
 }
 
 void refresh_page(void)
-{  
+{
    // copies the virtual screen buffer to the physical screen
    // (or othwewise flips pages, etc for double buffered graphics)
 
@@ -6311,7 +6311,7 @@ void refresh_page(void)
 
    //
    // Copy entire staging pane to screen_window
-   // 
+   //
    VFX_pane_copy(stage,0,0,screen,0,0,NO_COLOR);
 
    //
@@ -6356,7 +6356,7 @@ int p;
 int xx,yy;
 int xl;
 
-   // draw a VFX font character using the line drawing routine 
+   // draw a VFX font character using the line drawing routine
    // (useful if porting Heather to a differnt operating system)
 
    if(dot_font == 0) dot_font = &h_font_12[0];
@@ -6399,7 +6399,7 @@ int xl;
 
 
 int plusminus_char(COORD row, COORD col, u08 color)
-{  
+{
    // erase the old character cell
    erase_rectangle(col,row, TEXT_WIDTH,TEXT_HEIGHT);
 
@@ -6410,7 +6410,7 @@ int plusminus_char(COORD row, COORD col, u08 color)
    dot(col+3, row+3, color);
    dot(col+3, row+4, color);
    dot(col+3, row+5, color);
-   dot(col+4, row+0, color);  
+   dot(col+4, row+0, color);
    dot(col+4, row+1, color);
    dot(col+4, row+2, color);
    dot(col+4, row+3, color);
@@ -6445,7 +6445,7 @@ int plusminus_char(COORD row, COORD col, u08 color)
 
 #define DEG_WIDTH (5+1)
 int deg_char(COORD row, COORD col, u08 color)
-{  
+{
    // erase the old character cell (and probably a little extra)
    erase_rectangle(col,row, TEXT_WIDTH,TEXT_HEIGHT);
 
@@ -7011,8 +7011,8 @@ u08 *vgen[256] PROGMEM = {
 
 
 void vchar(int xoffset,int yoffset, u08 erase, u08 color, u08 c)  // draw a vector character
-{ 
-int x1,y1, x2,y2;  
+{
+int x1,y1, x2,y2;
 u08 VByte;
 u08 *VIndex;  // char gen table offset
 
@@ -7024,7 +7024,7 @@ u08 *VIndex;  // char gen table offset
    x2 = y2 = 0;
 
    VIndex = vgen[c];  // pointer to strokes for the char
-  
+
    while(1) {  // draw the character strokes
       VByte = *VIndex;
       if(VByte == 0xFF) break;
@@ -7044,12 +7044,12 @@ u08 *VIndex;  // char gen table offset
          if((VByte & 0x07) == (VCHAR_H-1)) y1 += (VCharHeight-1);
       }
       y1 /= VCHAR_H;
-   
+
       if((VByte & 0x80) == 0x00) {  // move to point and draw a dot
          x2 = x1;   // we do dots as a single point line
          y2 = y1;
       }
-       
+
       thick_line(x1+xoffset,y1+yoffset, x2+xoffset,y2+yoffset, color, VCharThickness);
 
       if(VByte & 0x08) break;  // end of list
@@ -7057,7 +7057,7 @@ u08 *VIndex;  // char gen table offset
       x2 = x1;  // prepare for next stroke in the character
       y2 = y1;
    }
-}  
+}
 
 
 void vchar_string(int row, int col, u08 color, char *s)
@@ -7181,7 +7181,7 @@ void erase_vchar(int x, int y)
    erase_rectangle(x,y, VCharWidth+VCharThickness,VCharHeight+VCharThickness);
 }
 
-void erase_help() 
+void erase_help()
 {
    // erase the help area on the screen
 
@@ -7193,7 +7193,7 @@ void erase_help()
 }
 
 
-void erase_lla() 
+void erase_lla()
 {
    // erase the lat/lon scattergram area on the screen
 
@@ -7208,12 +7208,12 @@ void erase_lla()
 void erase_watch()
 {
    // erase the analog watch area on the screen
-   erase_rectangle(aclock_x-ACLOCK_SIZE/2,aclock_y-ACLOCK_SIZE/2, 
+   erase_rectangle(aclock_x-ACLOCK_SIZE/2,aclock_y-ACLOCK_SIZE/2,
                                 ACLOCK_SIZE,ACLOCK_SIZE);
 }
 
 
-void erase_azel() 
+void erase_azel()
 {
    // erase the satellite map area on the screen
    if((zoom_screen == 0) && ((AZEL_ROW+AZEL_SIZE) >= PLOT_ROW)) {  // az/el map is in the normal plot window
@@ -7231,14 +7231,13 @@ void erase_screen()
 {
    // erase the screen
    erase_rectangle(0,0, SCREEN_WIDTH,SCREEN_HEIGHT);
-
    #ifdef PRECISE_STUFF
       plot_lla_axes(10);
    #endif
 }
 
 
-void erase_plot(int full_plot) 
+void erase_plot(int full_plot)
 {
    // erase the plot area on the screen
 
@@ -7250,7 +7249,7 @@ void erase_plot(int full_plot)
    }
 
    if(full_plot < 0) ;
-   else if(rcvr_type == NO_RCVR) return; 
+   else if(rcvr_type == NO_RCVR) return;
    else if(no_plots) return;
 
    if(zoom_screen == 'P');
@@ -7277,7 +7276,7 @@ void erase_plot(int full_plot)
 
 void draw_circle(int x,int y, int r, int color, int fill)
 {
-   // draw a filled/hollow circle on the screen 
+   // draw a filled/hollow circle on the screen
 
    #ifdef USE_X11
       if(display == 0) return;
@@ -7296,6 +7295,11 @@ void draw_circle(int x,int y, int r, int color, int fill)
 
       if(fill) VFX_ellipse_fill(stage, x,y, r,r, palette[color]);
       else     VFX_ellipse_draw(stage, x,y, r,r, palette[color]);
+   #endif
+
+   #ifdef USE_SDL
+      if(fill)  filledCircleColor(display,x,y,r, get_sdl_color(color));
+      circleColor(display,x,y,r, get_sdl_color(color));
    #endif
 }
 
@@ -7316,8 +7320,14 @@ void line(COORD x1,COORD y1, COORD x2,COORD y2, u08 color)
    if(display == 0) return;
 
    set_x11_color(color);
-   XDrawLine(display,win,gc, x1,y1, x2,y2);  
+   XDrawLine(display,win,gc, x1,y1, x2,y2);
    flush_x11();
+#endif
+
+#ifdef USE_SDL
+//   set_sdl_color(color);
+//   SDL_RenderDrawLine(ne_renderer, x1,y1,x2,y2);
+   lineColor(display, x1,y1,x2,y2,get_sdl_color(color));
 #endif
 
 }
@@ -7341,32 +7351,39 @@ void erase_rectangle(int x,int y, int width,int height)
       XFillRectangle(display,win,gc, x,y, width,height);
       flush_x11();
    #endif
+
+   #ifdef USE_SDL
+      SDL_Rect r;
+      r.x = x;
+      r.y = y;
+      r.w = width;
+      r.h = height;
+      //set_sdl_color(BLACK);
+      //SDL_RenderFillRect(ne_renderer, &r);
+      SDL_FillRect(display, &r, palette[BLACK]);
+   #endif
 }
-
-
-
-
 
 struct CMAP {   // Lady Heather standard color map (R,G,B)
   int r, g, b;
 } cmap[16] = {
-   {0,     0,   0 },      //0  - black                              
+   {0,     0,   0 },      //0  - black
    {64,   64, 255 },      //1  - dim blue (now a little brighter for better visibility)
-   {0,    96,   0 },      //2  - dim green                          
-   {0,   192, 192 },      //3  - dim cyan                           
-   {128,   0,   0 },      //4  - dim red                            
-// {192,   0, 192 },      //5  - dim magenta                        
-   {140,  96,   0 },      //5  - dim magenta is now grotty yellow   
-   {255,  64,  64 },      //6  - brown                                     
-   {192, 192, 192 },      //7  - dim white                          
-   {96,   96,  96 },      //8  - grey                                    
+   {0,    96,   0 },      //2  - dim green
+   {0,   192, 192 },      //3  - dim cyan
+   {128,   0,   0 },      //4  - dim red
+// {192,   0, 192 },      //5  - dim magenta
+   {140,  96,   0 },      //5  - dim magenta is now grotty yellow
+   {255,  64,  64 },      //6  - brown
+   {192, 192, 192 },      //7  - dim white
+   {96,   96,  96 },      //8  - grey
    {128, 128, 255 },      //9  - blue (now purple, for better visibility)
-   {0,   255,   0 },      //10 - green                                    
-   {0,   255, 255 },      //11 - cyan                                    
-   {255,   0,   0 },      //12 - red                                    
-   {255,   0, 255 },      //13 - magenta                                    
-   {255, 255,   0 },      //14 - yellow                                    
-   {255, 255, 255 }       //15 - white                              
+   {0,   255,   0 },      //10 - green
+   {0,   255, 255 },      //11 - cyan
+   {255,   0,   0 },      //12 - red
+   {255,   0, 255 },      //13 - magenta
+   {255, 255,   0 },      //14 - yellow
+   {255, 255, 255 }       //15 - white
 };
 
 u08 bmp_pal[256];  // .BMP file color palette blue, green, red, filler for 16+1 colors
@@ -7381,7 +7398,7 @@ int j;
    j = 0;
    for(i=0; i<16; i++) {  // setup native device and .BMP file palettes
       palette[i] = RGB_NATIVE(cmap[i].r, cmap[i].g, cmap[i].b);
-        
+
       bmp_pal[j++] = cmap[i].b;   // bitmap palette is BGRx format
       bmp_pal[j++] = cmap[i].g;
       bmp_pal[j++] = cmap[i].r;
@@ -7412,8 +7429,8 @@ void invert_screen()
    invert_display ^= 1;
    if(invert_display) {  // inverted
       cmap[YELLOW].b = 96;  // bmp_yellow - special color used to print yellow on white background
-      cmap[YELLOW].g = 96;  
-      cmap[YELLOW].r = 255; 
+      cmap[YELLOW].g = 96;
+      cmap[YELLOW].r = 255;
 
       cmap[BLACK].b = 255;
       cmap[BLACK].g = 255;
@@ -7526,7 +7543,7 @@ int x, y, c;
    dump_dword(0L);              // no compression
    dump_dword(SCREEN_WIDTH*(SCREEN_HEIGHT-top_line)/2L);// picture size in bytes
    dump_dword(0L);              // horizontal resolution
-   dump_dword(0L);              // vertical resolution 
+   dump_dword(0L);              // vertical resolution
    dump_dword(16L);             // number of used colors
    dump_dword(16L);             // number of important colors
 
@@ -7573,7 +7590,7 @@ int do_gif;
 
    bmp_file = topen(out, "wb");
    if(bmp_file == 0) return 0;
-   
+
    strlwr(out);
    if(strstr(out, ".gif") || strstr(out, ".GIF")) do_gif = 1;
    else do_gif = 0;
@@ -7614,12 +7631,12 @@ int do_gif;
    if(capture_image) XDestroyImage(capture_image);
    capture_image = XGetImage(display,win, 0,0, SCREEN_WIDTH,SCREEN_HEIGHT, AllPlanes,XYPixmap);
 #endif
-   
+
    #ifdef GIF_FILES
       if(do_gif) {
          dump_gif_file(invert, top_line, bmp_file);
       }
-      else 
+      else
    #endif
    {
       dump_bmp_file(invert, top_line);
@@ -7646,7 +7663,7 @@ int do_gif;
 
 
 void find_endian(void)
-{ 
+{
 u08 s[2];
 u16 v;
 
@@ -7657,7 +7674,7 @@ u16 v;
    s[1] = 0x12;
    v = *((u16 *) (void *) &s[0]);
    v &= 0xFFFF;
-   if((v&0xFFFF) != (0x1234&0xFFFF)) ENDIAN = 1; 
+   if((v&0xFFFF) != (0x1234&0xFFFF)) ENDIAN = 1;
    else ENDIAN = 0;  // intel byte ordering
 
    if(rcvr_type == UBX_RCVR) {  // messages use little endian format
@@ -7762,12 +7779,12 @@ char err[1024];
    else  sprintf(err, "Error exit %d!", num);
 
    #ifdef __MACH__
-      break_flag = 1; 
+      break_flag = 1;
       printf("*** ERROR: %s\n", err);
    #endif
 
    #ifdef __linux__
-      break_flag = 1; 
+      break_flag = 1;
       printf("*** ERROR: %s\n", err);
    #endif
 
@@ -7814,9 +7831,9 @@ float color_sum;
          }
          else {
             q.data[REDHZ] = 0.0F;
-            q.data[GREENHZ] = 0.0F;             
-            q.data[BLUEHZ] = 0.0F;             
-            q.data[WHITEHZ] = 0.0F;             
+            q.data[GREENHZ] = 0.0F;
+            q.data[BLUEHZ] = 0.0F;
+            q.data[WHITEHZ] = 0.0F;
          }
       }
       else if(show_color_uw) {
@@ -7855,7 +7872,7 @@ int j;
    put_plot_q(i, q);
 
    if(i) {   // clear q entry marker, if set
-      for(j=0; j<MAX_MARKER; j++) { 
+      for(j=0; j<MAX_MARKER; j++) {
          if(mark_q_entry[j] == i) mark_q_entry[j] = 0;
       }
    }
@@ -7875,7 +7892,7 @@ void alloc_adev()
 #ifdef ADEV_STUFF
 long i;
 
-   // allocate memory for the adev data queue 
+   // allocate memory for the adev data queue
    free_adev();
    if(adev_q) return;  // memory already allocated
 
@@ -7904,7 +7921,7 @@ void alloc_plot()
 {
 long i;
 
-   // allocate memory for the plot data queue 
+   // allocate memory for the plot data queue
    free_plot();
    if(plot_q) return; // plot queue memory already allocated
 
@@ -7961,26 +7978,26 @@ void alloc_fft()
 #ifdef FFT_STUFF
 long i;
 
-   // allocate memory for the FFT routine 
+   // allocate memory for the FFT routine
    free_fft();
    if(max_fft_len == 0) max_fft_len = 1024;
 
-   if(tsignal == 0) {  
+   if(tsignal == 0) {
       i = sizeof (float);
       i *= (max_fft_len+2);
       tsignal = (float *) (void *) calloc(i, 1);
    }
-   if(fft_out == 0) {  
+   if(fft_out == 0) {
       i = sizeof (COMPLEX);
       i *= (max_fft_len/2+2);
       fft_out = (COMPLEX *) (void *) calloc(i, 1);
    }
-   if(w == 0) {  
+   if(w == 0) {
       i = sizeof (COMPLEX);
       i *= (max_fft_len/2+2);
       w = (COMPLEX *) (void *) calloc(i, 1);
    }
-   if(cf == 0) {  
+   if(cf == 0) {
       i = sizeof (COMPLEX);
       i *= (max_fft_len/2+2);
       cf = (COMPLEX *) (void *) calloc(i, 1);
@@ -8128,19 +8145,19 @@ long next_q_point(long i, int stop_flag)
 long j;
 int wrap;
 
-   // locate the next data point in the plot queue 
+   // locate the next data point in the plot queue
    // based upon the display view interval
 
    plot_column += plot_mag;
    if(stop_flag && (plot_column >= PLOT_WIDTH)) {  // we are at end of plot area
       plot_column -= plot_mag;
-      return (-2L); 
+      return (-2L);
    }
    wrap = 0;
 
    if(slow_q_skips) { //!!! ineffcient way to step over multiple queue entries,  but bug resistant
       j = view_interval;
-      while(j--) { 
+      while(j--) {
          if(++i == plot_q_in) return (-1L);
          while(i >= plot_q_size) i -= plot_q_size;
       }
@@ -8239,7 +8256,7 @@ int j;
 
       count += 1.0F;
    }
-      
+
    for(j=0; j<NUM_PLOTS; j++) {  // derived_plots OK
       if(j != FFT) {
          avg.data[j] /= count;
@@ -8269,7 +8286,7 @@ void config_undersized()
    COUNT_SCALE = (VERT_MAJOR/2);
 
    if(rcvr_type == NO_RCVR) {  // nnnnnn size of the analog watch area
-      AZEL_SIZE = LLA_SIZE = (160); 
+      AZEL_SIZE = LLA_SIZE = (160);
    }
 
    if(user_font_size && (user_font_size <= 8)) PLOT_ROW = SCREEN_HEIGHT-VERT_MAJOR*8;
@@ -8470,7 +8487,7 @@ int lla_margin;
       if(reading_lla) lla_margin = 20;
       LLA_ROW = lla_margin;
       LLA_COL = lla_margin;
-   } 
+   }
    else if(WIDE_SCREEN) {
       if(all_adevs) {
          if(plot_lla) LLA_COL = WATCH_COL + WATCH_SIZE;
@@ -8498,7 +8515,7 @@ int lla_margin;
       else                LLA_COL += (TEXT_WIDTH*12);
    }
    else if(SCREEN_WIDTH >= MEDIUM_WIDTH) {
-      LLA_COL += (4*TEXT_WIDTH); 
+      LLA_COL += (4*TEXT_WIDTH);
    }
    else if(SCREEN_WIDTH >= 800) {
       LLA_COL += (2*TEXT_WIDTH);
@@ -8578,7 +8595,7 @@ void config_zoom()
    if(plot_watch) return;
    if(plot_digital_clock) return;
    if(plot_azel) return;
-   if(plot_lla && (zoom_screen == 'L')) return; 
+   if(plot_lla && (zoom_screen == 'L')) return;
 
    if(text_mode) zoom_screen = 0;
    if(zoom_screen == 'L') zoom_screen = 0;
@@ -8670,7 +8687,7 @@ int i;
    else if(screen_type == 'v') { // very large screen
       GRAPH_MODE  = 327;        //!!!!!
       SCREEN_WIDTH = 1400;  //1440;
-      SCREEN_HEIGHT = 1050; // 900; 
+      SCREEN_HEIGHT = 1050; // 900;
 
       PLOT_ROW = (PLOT_TOP+VERT_MAJOR*2);
 
@@ -8686,8 +8703,8 @@ int i;
    }
    else if(screen_type == 'x') { // extra large screen
       GRAPH_MODE  = 304;     // 325
-      SCREEN_WIDTH = 1680;  
-      SCREEN_HEIGHT = 1050; 
+      SCREEN_WIDTH = 1680;
+      SCREEN_HEIGHT = 1050;
 
       PLOT_ROW = (PLOT_TOP+VERT_MAJOR*2);
 
@@ -8702,7 +8719,7 @@ int i;
       else day_plot = 0;
    }
    else if(screen_type == 'h') { // huge screen
-      GRAPH_MODE  = 319;   
+      GRAPH_MODE  = 319;
       SCREEN_WIDTH = 1920;
       SCREEN_HEIGHT = 1080;
 
@@ -8719,7 +8736,7 @@ int i;
       else day_plot = 0;
    }
    else if(screen_type == 'z') { // really huge screen
-      GRAPH_MODE  = 338;   
+      GRAPH_MODE  = 338;
       SCREEN_WIDTH = 2048;
       SCREEN_HEIGHT = 1536;
 
@@ -8820,7 +8837,7 @@ if(sat_cols > 1) i = (sat_rows-8) * TEXT_HEIGHT;
    }
 
    if(small_sat_count) {  // compress sat count to VERT_MINOR ticks per sat
-      COUNT_SCALE = VERT_MINOR; 
+      COUNT_SCALE = VERT_MINOR;
    }
    else {                 // expand sat count to VERT_MAJOR ticks per sat
       COUNT_SCALE = VERT_MAJOR;
@@ -9067,7 +9084,7 @@ int old_extra;
    old_extra = extra_plots;
 
    extra_plots = 0;  // this flag gets set if any extra plots are enabled
-   for(i=FIRST_EXTRA_PLOT; i<NUM_PLOTS+DERIVED_PLOTS; i++) {  
+   for(i=FIRST_EXTRA_PLOT; i<NUM_PLOTS+DERIVED_PLOTS; i++) {
       extra_plots |= 1;  // plot[i].show_plot;
    }
 
@@ -9121,7 +9138,7 @@ float show_time;
 
    if(review_mode) {
       if(review_home)  sprintf(out, "  ");
-      else             sprintf(out, "%c ", LEFT_ARROW); 
+      else             sprintf(out, "%c ", LEFT_ARROW);
    }
    else {
       if(((plot_q_count*(long)plot_mag)/view_interval) >= PLOT_WIDTH) sprintf(out, "%c ", LEFT_ARROW);
@@ -9135,9 +9152,9 @@ float show_time;
    minutes = pri_minutes;
    seconds = pri_seconds;
    frac    = pri_frac;
-   day     = pri_day;   
-   month   = pri_month; 
-   year    = pri_year;  
+   day     = pri_day;
+   month   = pri_month;
+   year    = pri_year;
    old_utc = jd_utc;
    old_gps = jd_gps;
 
@@ -9160,21 +9177,21 @@ float show_time;
          show_time /= nav_rate;
          sprintf(out, "Cursor time: %02d:%02d:%02d.%03d %s  %s     View: %.1f min/div    ",
              pri_hours,pri_minutes,pri_seconds, (int) ((pri_frac*1000.0)+0.5),
-             time_zone_set?tz_string:((q.sat_flags & UTC_TIME) ? "UTC":"GPS"), 
-             fmt_date(0), show_time 
+             time_zone_set?tz_string:((q.sat_flags & UTC_TIME) ? "UTC":"GPS"),
+             fmt_date(0), show_time
          );
       }
       else if(nav_rate && plot_mag) {
 //         sprintf(out, "Cursor time: %02d:%02d:%02d %s  %s           ",
-//             pri_hours,pri_minutes,pri_seconds, 
-//             time_zone_set?tz_string:((q.sat_flags & UTC_TIME) ? "UTC":"GPS"), 
-//             fmt_date(0) 
+//             pri_hours,pri_minutes,pri_seconds,
+//             time_zone_set?tz_string:((q.sat_flags & UTC_TIME) ? "UTC":"GPS"),
+//             fmt_date(0)
 //         );
          val = ((float) (view_interval * mouse_x) / nav_rate) / (float) plot_mag;
          sprintf(out, "Cursor time: %02d:%02d:%02d.%03d %s  %s  %s       ",
-             pri_hours,pri_minutes,pri_seconds,  (int) ((pri_frac*1000.0)+0.5), 
-             time_zone_set?tz_string:((q.sat_flags & UTC_TIME) ? "UTC":"GPS"), 
-             fmt_date(0), 
+             pri_hours,pri_minutes,pri_seconds,  (int) ((pri_frac*1000.0)+0.5),
+             time_zone_set?tz_string:((q.sat_flags & UTC_TIME) ? "UTC":"GPS"),
+             fmt_date(0),
              fmt_secs(val)
          );
       }
@@ -9187,9 +9204,9 @@ float show_time;
       pri_minutes = minutes;
       pri_seconds = seconds;
       pri_frac    = frac;
-      pri_day     = day;   
-      pri_month   = month; 
-      pri_year    = year;  
+      pri_day     = day;
+      pri_month   = month;
+      pri_year    = year;
       jd_utc      = old_utc;
       jd_gps      = old_gps;
    }
@@ -9209,150 +9226,150 @@ float show_time;
       if(id == TEMP) {
          if(luxor) {
             if(plot[id].scale_factor >= 100.0F) {
-               sprintf(out, "%s%c(%ld %c%c/div)",  
+               sprintf(out, "%s%c(%ld %c%c/div)",
                             plot[id].plot_id, c, (long) (val+0.5F), DEGREES,DEG_SCALE);
             }
             else if(plot[id].scale_factor < 1.0F) {
-               sprintf(out, "%s%c(%.2f %c%c/div)", 
+               sprintf(out, "%s%c(%.2f %c%c/div)",
                              plot[id].plot_id, c, val, DEGREES,DEG_SCALE);
             }
             else {
-               sprintf(out, "%s%c(%.1f %c%c/div)", 
+               sprintf(out, "%s%c(%.1f %c%c/div)",
                              plot[id].plot_id, c, val, DEGREES,DEG_SCALE);
             }
          }
          else if((rcvr_type == UCCM_RCVR) && (scpi_type == 'P')) {
             val /= 1000.0;
             if(plot[id].scale_factor >= 100.0F) {
-               sprintf(out, "%s%c(%ld %s/div)",  
+               sprintf(out, "%s%c(%ld %s/div)",
                             "TCOR", c, (long) (val+0.5F), ppt_string);
             }
             else if(plot[id].scale_factor < 1.0F) {
-               sprintf(out, "%s%c(%.2f %s/div)", 
+               sprintf(out, "%s%c(%.2f %s/div)",
                              "TCOR", c, val, ppt_string);
             }
             else {
-               sprintf(out, "%s%c(%.1f %s/div)", 
+               sprintf(out, "%s%c(%.1f %s/div)",
                              "TCOR", c, val, ppt_string);
             }
          }
          else {
             if(plot[id].scale_factor >= 100.0F) {
-               sprintf(out, "%s%c(%ld m%c%c/div)",  
+               sprintf(out, "%s%c(%ld m%c%c/div)",
                             plot[id].plot_id, c, (long) (val+0.5F), DEGREES,DEG_SCALE);
             }
             else if(plot[id].scale_factor < 1.0F) {
-               sprintf(out, "%s%c(%.2f m%c%c/div)", 
+               sprintf(out, "%s%c(%.2f m%c%c/div)",
                              plot[id].plot_id, c, val, DEGREES,DEG_SCALE);
             }
             else {
-               sprintf(out, "%s%c(%.1f m%c%c/div)", 
+               sprintf(out, "%s%c(%.1f m%c%c/div)",
                              plot[id].plot_id, c, val, DEGREES,DEG_SCALE);
             }
          }
       }
       else if(luxor && (id == TC2)) {
          if(plot[id].scale_factor >= 100.0F) {
-            sprintf(out, "%s%c(%ld %c%c/div)",  
+            sprintf(out, "%s%c(%ld %c%c/div)",
                          plot[id].plot_id, c, (long) (val+0.5F), DEGREES,DEG_SCALE);
          }
          else if(plot[id].scale_factor < 1.0F) {
-            sprintf(out, "%s%c(%.2f %c%c/div)", 
+            sprintf(out, "%s%c(%.2f %c%c/div)",
                           plot[id].plot_id, c, val, DEGREES,DEG_SCALE);
          }
          else {
-            sprintf(out, "%s%c(%.1f %c%c/div)", 
+            sprintf(out, "%s%c(%.1f %c%c/div)",
                           plot[id].plot_id, c, val, DEGREES,DEG_SCALE);
          }
       }
       else if(id == OSC) {
          if(luxor) {
             if(plot[id].scale_factor >= 100.0F) {
-               sprintf(out, "%s%c(%ld%s/div)", 
+               sprintf(out, "%s%c(%ld%s/div)",
                             plot[id].plot_id, c, (long) (val+0.5F), plot[id].units);
             }
             else if(plot[id].scale_factor < 1.0F) {
-               sprintf(out, "%s%c(%.3f%s/div)", 
+               sprintf(out, "%s%c(%.3f%s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
             else {
-               sprintf(out, "%s%c(%.2f%s/div)", 
+               sprintf(out, "%s%c(%.2f%s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
          }
          else if(rcvr_type == ZODIAC_RCVR) {
             if(plot[id].scale_factor >= 100.0F) {
-               sprintf(out, "%s%c(%ld %s/div)", 
+               sprintf(out, "%s%c(%ld %s/div)",
                             plot[id].plot_id, c, (long) (val+0.5F), plot[id].units);
             }
             else if(plot[id].scale_factor < 1.0F) {
-               sprintf(out, "%s%c(%.2f %s/div)", 
+               sprintf(out, "%s%c(%.2f %s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
             else {
-               sprintf(out, "%s%c(%.1f %s/div)", 
+               sprintf(out, "%s%c(%.1f %s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
          }
          else {
             if(plot[id].scale_factor >= 100.0F) {
-               sprintf(out, "%s%c(%ld%s/div)", 
+               sprintf(out, "%s%c(%ld%s/div)",
                             plot[id].plot_id, c, (long) (val+0.5F), plot[id].units);
             }
             else if(plot[id].scale_factor < 1.0F) {
-               sprintf(out, "%s%c(%.2f%s/div)", 
+               sprintf(out, "%s%c(%.2f%s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
             else {
-               sprintf(out, "%s%c(%.1f%s/div)", 
+               sprintf(out, "%s%c(%.1f%s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
          }
       }
       else if((id == DAC) && ((rcvr_type == SCPI_RCVR) || (rcvr_type == UCCM_RCVR))) {
          if(plot[id].scale_factor < 0.01) {
-            sprintf(out, "%s%c(%.5f %s/div)", 
+            sprintf(out, "%s%c(%.5f %s/div)",
                           plot[id].plot_id, c, val, plot[id].units);
          }
          else if(plot[id].scale_factor < 1.0F) {
-            sprintf(out, "%s%c(%.3f %s/div)", 
+            sprintf(out, "%s%c(%.3f %s/div)",
                           plot[id].plot_id, c, val, plot[id].units);
          }
          else {
-            sprintf(out, "%s%c(%.1f %s/div)", 
+            sprintf(out, "%s%c(%.1f %s/div)",
                           plot[id].plot_id, c, val, plot[id].units);
          }
       }
       else {
          if(luxor) {
             if(plot[id].scale_factor >= 100.0F) {
-               sprintf(out, "%s%c(%ld %s/div)", 
+               sprintf(out, "%s%c(%ld %s/div)",
                             plot[id].plot_id, c, (long) (val+0.5F), plot[id].units);
             }
             else if(plot[id].scale_factor < 1.0F) {
-               sprintf(out, "%s%c(%.3f %s/div)", 
+               sprintf(out, "%s%c(%.3f %s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
             else {
-               sprintf(out, "%s%c(%.2f %s/div)", 
+               sprintf(out, "%s%c(%.2f %s/div)",
                              plot[id].plot_id, c, val, plot[id].units);
             }
          }
          else if((id == ONE) || (id == TWO) || (id == THREE)) {
-            sprintf(out, "%s%c(%.5f %s/div)", 
+            sprintf(out, "%s%c(%.5f %s/div)",
                           plot[id].plot_id, c, val, plot[id].units);
          }
          else {
              if(plot[id].scale_factor >= 100.0F) {
-                sprintf(out, "%s%c(%ld %s/div)", 
+                sprintf(out, "%s%c(%ld %s/div)",
                              plot[id].plot_id, c, (long) (val+0.5F), plot[id].units);
              }
              else if(plot[id].scale_factor < 1.0F) {
-                sprintf(out, "%s%c(%.2f %s/div)", 
+                sprintf(out, "%s%c(%.2f %s/div)",
                               plot[id].plot_id, c, val, plot[id].units);
              }
              else {
-                sprintf(out, "%s%c(%.1f %s/div)", 
+                sprintf(out, "%s%c(%.1f %s/div)",
                               plot[id].plot_id, c, val, plot[id].units);
              }
          }
@@ -9371,10 +9388,10 @@ float show_time;
       if(auto_center && plot[id].float_center) c = '~';
       else                                     c = '=';
       if(id == OSC)  {
-         if(luxor)      sprintf(out, "ref%c<%.3f%s>", c, val, plot[id].units); 
-         else if(rcvr_type == ZODIAC_RCVR) sprintf(out, "ref%c<%.1f %s>", c, val, plot[id].units); 
-         else if(TIMING_RCVR) sprintf(out, "ref%c<%.1f%s>", c, val, plot[id].units); 
-         else sprintf(out, "ref%c<%.1f%s>", c, val*1000.0F, plot[id].units); 
+         if(luxor)      sprintf(out, "ref%c<%.3f%s>", c, val, plot[id].units);
+         else if(rcvr_type == ZODIAC_RCVR) sprintf(out, "ref%c<%.1f %s>", c, val, plot[id].units);
+         else if(TIMING_RCVR) sprintf(out, "ref%c<%.1f%s>", c, val, plot[id].units);
+         else sprintf(out, "ref%c<%.1f%s>", c, val*1000.0F, plot[id].units);
       }
       else if(id == PPS) {
          if(res_t) sprintf(out, "ref%c<%.1f %s>", c, val/1000.0F, plot[id].units);
@@ -9424,9 +9441,9 @@ float show_time;
          if(luxor) {
             val *= (float) lux_scale;
             if(val <= (-10000.0F))     sprintf(out, "%s:  %.3f %s", stat_id, val, plot[PPS].units);
-            else if(val <= (-1000.0F)) sprintf(out, "%s:  %.3f %s", stat_id, val, plot[PPS].units); 
-            else if(val >= 10000.0F)   sprintf(out, "%s:  %.3f %s", stat_id, val, plot[PPS].units); 
-            else                       sprintf(out, "%s:  %.3f %s", stat_id, val, plot[PPS].units); 
+            else if(val <= (-1000.0F)) sprintf(out, "%s:  %.3f %s", stat_id, val, plot[PPS].units);
+            else if(val >= 10000.0F)   sprintf(out, "%s:  %.3f %s", stat_id, val, plot[PPS].units);
+            else                       sprintf(out, "%s:  %.3f %s", stat_id, val, plot[PPS].units);
          }
          else if(rcvr_type == UBX_RCVR) {
             if(val <= (-10000.0F))     sprintf(out, "%s: %.4f ns", stat_id, val);
@@ -9540,16 +9557,16 @@ float show_time;
       }
       else if(id == TEMP) {
          if((rcvr_type == UCCM_RCVR) && (scpi_type == 'P')) {
-            sprintf(out, "%s: %.6f %s", "TCOR", 
+            sprintf(out, "%s: %.6f %s", "TCOR",
                    q.data[id]/(float) queue_interval, ppt_string);
          }
          else {
-            sprintf(out, "%s: %s", plot[id].plot_id, 
+            sprintf(out, "%s: %s", plot[id].plot_id,
                    fmt_temp(q.data[id]/(float) queue_interval));
          }
       }
       else if(luxor && (id == TC2)) {
-         sprintf(out, "%s: %s", plot[id].plot_id, 
+         sprintf(out, "%s: %s", plot[id].plot_id,
                 fmt_temp(q.data[id]/(float) queue_interval));
       }
       else if(id == OSC) {
@@ -9688,17 +9705,17 @@ float show_time;
       adjust_tz(2);  // tweak pri_ time for time zone
 
       if(view_all_data == 1) {
-         sprintf(out, "All (DEL to stop): %02d:%02d:%02d.%03d  %s %s         ", 
+         sprintf(out, "All (DEL to stop): %02d:%02d:%02d.%03d  %s %s         ",
              pri_hours,pri_minutes,pri_seconds, (int) ((pri_frac*1000.0)+0.5),  fmt_date(0),
              time_zone_set?tz_string:(q.sat_flags & UTC_TIME) ? "UTC":"GPS");
       }
       else if(view_all_data == 2) {
-         sprintf(out, "Auto (DEL to stop): %02d:%02d:%02d.%03d  %s %s         ", 
+         sprintf(out, "Auto (DEL to stop): %02d:%02d:%02d.%03d  %s %s         ",
              pri_hours,pri_minutes,pri_seconds, (int) ((pri_frac*1000.0)+0.5),  fmt_date(0),
              time_zone_set?tz_string:(q.sat_flags & UTC_TIME) ? "UTC":"GPS");
       }
       else {
-         sprintf(out, "Review (DEL to stop): %02d:%02d:%02d.%03d  %s %s         ", 
+         sprintf(out, "Review (DEL to stop): %02d:%02d:%02d.%03d  %s %s         ",
              pri_hours,pri_minutes,pri_seconds, (int) ((pri_frac*1000.0)+0.5),  fmt_date(0),
              time_zone_set?tz_string:(q.sat_flags & UTC_TIME) ? "UTC":"GPS");
       }
@@ -9707,9 +9724,9 @@ float show_time;
       pri_minutes = minutes;
       pri_seconds = seconds;
       pri_frac    = frac;
-      pri_day     = day;   
-      pri_month   = month; 
-      pri_year    = year;  
+      pri_day     = day;
+      pri_month   = month;
+      pri_year    = year;
       jd_utc      = old_utc;
       jd_gps      = old_gps;
 
@@ -9753,7 +9770,7 @@ float show_time;
    }
 
    if(right_arrow) {
-      sprintf(out, " %c", RIGHT_ARROW);  
+      sprintf(out, " %c", RIGHT_ARROW);
       no_x_margin = no_y_margin = 1;
       vidstr(MOUSE_ROW+7, (SCREEN_WIDTH/TEXT_WIDTH)-2, WHITE, out);
 //    vidstr(MOUSE_ROW+6, (SCREEN_WIDTH/TEXT_WIDTH)-3, WHITE, out);
@@ -9780,7 +9797,7 @@ int color;
    dot(x+2, y-3, color);   dot(x+2, y+3, color);
    dot(x+3, y-2, color);   dot(x+3, y+2, color);
    dot(x+4, y-1, color);   dot(x+4, y+1, color);
-   dot(x+5, y-0, color);   
+   dot(x+5, y-0, color);
 
    x = PLOT_COL + PLOT_WIDTH - 1;
    dot(x-0, y-5, color);   dot(x-0, y+5, color);
@@ -9804,20 +9821,20 @@ int temp;
 
    if(symbol == 0) {   // the mouse click marker
       temp = MARKER_COLOR;
-      dot(x+0, y+5, temp);  
-      dot(x+1, y+4, temp);    dot(x-1, y+4, temp); 
-      dot(x+2, y+3, temp);    dot(x-2, y+3, temp); 
-      dot(x+3, y+2, temp);    dot(x-3, y+2, temp); 
-      dot(x+4, y+1, temp);    dot(x-4, y+1, temp); 
-      dot(x+5, y+0, temp);    dot(x-5, y+0, temp); 
+      dot(x+0, y+5, temp);
+      dot(x+1, y+4, temp);    dot(x-1, y+4, temp);
+      dot(x+2, y+3, temp);    dot(x-2, y+3, temp);
+      dot(x+3, y+2, temp);    dot(x-3, y+2, temp);
+      dot(x+4, y+1, temp);    dot(x-4, y+1, temp);
+      dot(x+5, y+0, temp);    dot(x-5, y+0, temp);
 
       y = PLOT_ROW+PLOT_HEIGHT-1;
-      dot(x+0, y-5, temp);    
-      dot(x+1, y-4, temp);    dot(x-1, y-4, temp); 
-      dot(x+2, y-3, temp);    dot(x-2, y-3, temp); 
-      dot(x+3, y-2, temp);    dot(x-3, y-2, temp); 
-      dot(x+4, y-1, temp);    dot(x-4, y-1, temp); 
-      dot(x+5, y-0, temp);    dot(x-5, y-0, temp); 
+      dot(x+0, y-5, temp);
+      dot(x+1, y-4, temp);    dot(x-1, y-4, temp);
+      dot(x+2, y-3, temp);    dot(x-2, y-3, temp);
+      dot(x+3, y-2, temp);    dot(x-3, y-2, temp);
+      dot(x+4, y-1, temp);    dot(x-4, y-1, temp);
+      dot(x+5, y-0, temp);    dot(x-5, y-0, temp);
    }
    else {   // the numeric markers
       #ifdef DIGITAL_CLOCK
@@ -9924,7 +9941,7 @@ float show_time;
 int col;
 int color;
 
-   // tuck the diaplay interval data into whatever nook or crannie 
+   // tuck the diaplay interval data into whatever nook or crannie
    // we can find on the screen
    if((all_adevs == 0) || mixed_adevs) {
       if(zoom_screen == 'P') col = ZOOM_LEFT;
@@ -9954,7 +9971,7 @@ int color;
          vidstr(view_row, col, color, out);
          if(zoom_screen == 'P') col += ZOOM_SPACE;
          else --view_row;
-         
+
          show_time = (float) (view_interval*queue_interval*PLOT_WIDTH);  // seconds per screen
          show_time /= plot_mag;
          show_time /= nav_rate;
@@ -9986,7 +10003,7 @@ int j;
          dot(col, PLOT_ROW+2, WHITE);
          dot(col, PLOT_ROW+3, WHITE);
 
-         dot(col, PLOT_ROW+PLOT_HEIGHT-2, WHITE);   // bottom horizontal axis     
+         dot(col, PLOT_ROW+PLOT_HEIGHT-2, WHITE);   // bottom horizontal axis
          dot(col, PLOT_ROW+PLOT_HEIGHT-3, WHITE);
          dot(col, PLOT_ROW+PLOT_HEIGHT-4, WHITE);
 
@@ -9997,7 +10014,7 @@ int j;
             if(col > PLOT_COL) dot(col-1, PLOT_ROW+PLOT_CENTER+j,   WHITE);
             dot(col+1, PLOT_ROW+PLOT_CENTER+j,   WHITE);
 
-            dot(col,  PLOT_ROW+PLOT_CENTER-j-1, WHITE);  // + at intersections 
+            dot(col,  PLOT_ROW+PLOT_CENTER-j-1, WHITE);  // + at intersections
             dot(col,  PLOT_ROW+PLOT_CENTER-j,   WHITE);
             dot(col,  PLOT_ROW+PLOT_CENTER-j+1, WHITE);
             if(col > PLOT_COL) dot(col-1,PLOT_ROW+PLOT_CENTER-j,    WHITE);
@@ -10092,7 +10109,7 @@ char c;
                sprintf(&out[j], "(OSC PID: P=%f D=%f F=%f I=%f)", OSC_P_GAIN, OSC_D_TC, OSC_FILTER_TC, OSC_I_TC);
             }
             else {
-               sprintf(&out[j], "(TC=%.3f  DAMPING=%.3f  GAIN=%.3f Hz/V  INITV:%.3f)", 
+               sprintf(&out[j], "(TC=%.3f  DAMPING=%.3f  GAIN=%.3f Hz/V  INITV:%.3f)",
                    time_constant, damping_factor, osc_gain, initial_voltage);
             }
             j = strlen(out);
@@ -10143,7 +10160,7 @@ int row, col;
    if(plot_title[0]) {
       format_plot_title();
       vidstr(row, col, TITLE_COLOR, out);
-      if((text_mode == 0) && (zoom_screen == 0)) { 
+      if((text_mode == 0) && (zoom_screen == 0)) {
          line(PLOT_COL,PLOT_ROW+PLOT_HEIGHT-1,  PLOT_COL+PLOT_WIDTH,PLOT_ROW+PLOT_HEIGHT-1, WHITE);
       }
    }
@@ -10243,7 +10260,7 @@ float val;
             plot[k].plot_center = (plot[k].max_val+plot[k].min_val) / 2.0F;
          }
 
-         if((plot[k].max_val >= plot[k].plot_center) && (plot[k].min_val < plot[k].plot_center)) { 
+         if((plot[k].max_val >= plot[k].plot_center) && (plot[k].min_val < plot[k].plot_center)) {
             if((plot[k].max_val-plot[k].plot_center) >= (plot[k].plot_center-plot[k].min_val)) {
                scale[k] = (plot[k].max_val-plot[k].plot_center);
             }
@@ -10282,9 +10299,9 @@ float val;
       }
 
       if(auto_center) {  // center the plots
-         for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {  
+         for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {
             if(plot[k].float_center) {
-               plot[k].plot_center = (plot[k].max_val+plot[k].min_val) / 2.0F;  
+               plot[k].plot_center = (plot[k].max_val+plot[k].min_val) / 2.0F;
             }
          }
          last_dac_voltage = plot[DAC].plot_center;
@@ -10295,7 +10312,7 @@ float val;
       if(filter_count) q = filter_plot_q(plot_q_last_col-1);
       else             q = get_plot_q(plot_q_last_col-1);
 
-      for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) { 
+      for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {
          if(plot[k].float_center) {
             if(k == TEMP) plot[k].plot_center = scale_temp(q.data[TEMP] / (float) queue_interval);
             else if(luxor && (k == TC2)) plot[k].plot_center = scale_temp(q.data[k] / (float) queue_interval);
@@ -10327,8 +10344,8 @@ float val;
       }
    }
 
-   // finally we round the center line reference values to multiples of 
-   // the scale factor (note that this tweak can allow a plot to go slightly 
+   // finally we round the center line reference values to multiples of
+   // the scale factor (note that this tweak can allow a plot to go slightly
    // off scale)
    if(auto_center) {
       for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {
@@ -10352,12 +10369,12 @@ int py;
    // draw a data point on the plot
    py = (int) (val * (float) VERT_MAJOR);
    if(py >= PLOT_CENTER) {  // point is off the top of the plot area
-      off_scale |= 0x01;   
-      py = PLOT_ROW; 
+      off_scale |= 0x01;
+      py = PLOT_ROW;
    }
    else if(py <= (-PLOT_CENTER)) {  // point is off the bottom of the plot area
-      off_scale |= 0x02;   
-      py = PLOT_ROW+PLOT_CENTER+PLOT_CENTER; 
+      off_scale |= 0x02;
+      py = PLOT_ROW+PLOT_CENTER+PLOT_CENTER;
    }
    else {  // point is in the plot area
       py = (PLOT_ROW+PLOT_CENTER) - py;
@@ -10383,8 +10400,8 @@ int k;
 
    if(first_key) return;    // plot area is in use for help/warning message
    if(text_mode) return;    // no graphics available in text mode
-   if(rcvr_type == NO_RCVR) return; 
-   if(no_plots) return; 
+   if(rcvr_type == NO_RCVR) return;
+   if(no_plots) return;
    if(zoom_screen == 'P');
    else if(zoom_screen) return;
    if(queue_interval <= 0) return;  // no queue data to plot
@@ -10404,7 +10421,7 @@ int k;
 
 
    for(k=0; k<NUM_PLOTS; k++) {     // compensate for drift rate
-      q.data[k] -= ((plot[k].drift_rate*(float)plot_column)*view_interval); 
+      q.data[k] -= ((plot[k].drift_rate*(float)plot_column)*view_interval);
    }
 
    col = PLOT_COL + plot_column;    // where we will be plotting
@@ -10420,7 +10437,7 @@ int k;
 
    if(q.sat_flags & TIME_SKIP) {  // flag skips and stutters in the time stamps
       if(plot_skip_data) {        // use small skip markers
-         line(col,PLOT_ROW, col,PLOT_ROW+8, SKIP_COLOR); 
+         line(col,PLOT_ROW, col,PLOT_ROW+8, SKIP_COLOR);
       }
    }
 
@@ -10436,8 +10453,8 @@ int k;
    }
 
    // flag satellite constellation changes
-   if(plot_const_changes && (q.sat_flags & CONST_CHANGE)) {  
-      line(col,PLOT_ROW+PLOT_HEIGHT, col,PLOT_ROW+PLOT_HEIGHT-8, CONST_COLOR); 
+   if(plot_const_changes && (q.sat_flags & CONST_CHANGE)) {
+      line(col,PLOT_ROW+PLOT_HEIGHT, col,PLOT_ROW+PLOT_HEIGHT-8, CONST_COLOR);
 //    plot_dot = 1;  // highlights satellite change discontinuites
    }
 
@@ -10509,8 +10526,8 @@ float x;
    if(queue_interval <= 0) return;
 
    x = (stat_count * view_interval * queue_interval);
-   for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) { 
-      if(k >= NUM_PLOTS) {   // derived data DERIVED_PLOTS !!!! 
+   for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {
+      if(k >= NUM_PLOTS) {   // derived data DERIVED_PLOTS !!!!
          if(luxor && (k == BATTW)) {        // battery watts
             val = q->data[BATTI]*q->data[BATTV] / (float) queue_interval;
          }
@@ -10555,7 +10572,7 @@ float qi;
 float val;
 
    // prepare to calculate the statistics values of the plots
-   for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {  
+   for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {
       plot[k].sum_x      = 0.0F;
       plot[k].sum_y      = 0.0F;
       plot[k].sum_xx     = 0.0F;
@@ -10573,13 +10590,13 @@ float val;
       for(k=0; k<NUM_PLOTS+DERIVED_PLOTS; k++) {
          if(plot[k].float_center == 0) {
             plot[k].min_val = plot[k].max_val = plot[k].plot_center;
-            if(k == TEMP) {      // !!!! ref_scale? 
-               if(plot[k].plot_center == NEED_CENTER) { 
+            if(k == TEMP) {      // !!!! ref_scale?
+               if(plot[k].plot_center == NEED_CENTER) {
                   if(last_temperature) plot[k].min_val = plot[k].max_val = plot[k].plot_center = scale_temp(last_temperature);
                }
             }
-            else if(luxor && (k == TC2)) {      // !!!! ref_scale? 
-               if(plot[k].plot_center == NEED_CENTER) { 
+            else if(luxor && (k == TC2)) {      // !!!! ref_scale?
+               if(plot[k].plot_center == NEED_CENTER) {
                   plot[k].min_val = plot[k].max_val = plot[k].plot_center = scale_temp(tc2);
                }
             }
@@ -10701,7 +10718,7 @@ u08 ticker[MAX_MARKER];
 
       // see if we have more data in the queue that can be plotted
       if((plot_q_count && (i == plot_q_in)) || (i == (-2L))) {  // more data is available
-         sprintf(out, " %c", RIGHT_ARROW);  
+         sprintf(out, " %c", RIGHT_ARROW);
          right_arrow = 1;
       }
       else {
@@ -10750,7 +10767,7 @@ void draw_plot(u08 refresh_ok)
       }
    #endif
    calc_queue_stats();  // calc stat info data that will be displayed
-   scale_plots();       // find scale factors and the values to center the graphs around 
+   scale_plots();       // find scale factors and the values to center the graphs around
    plot_axes();         // draw and label the plot grid
    plot_queue_data();   // plot the queue data
 
@@ -10827,7 +10844,7 @@ float jitter;
       }
       else {
          if(ONE < NUM_PLOTS) q.data[ONE] += (float) ((dac_voltage-v)*osc_gain*(+1000.0F));
-         if(TWO < NUM_PLOTS) q.data[TWO] = (float) ((q.data[OSC]*1000.0F)-q.data[ONE]); 
+         if(TWO < NUM_PLOTS) q.data[TWO] = (float) ((q.data[OSC]*1000.0F)-q.data[ONE]);
       }
    }
 
@@ -10863,12 +10880,12 @@ float jitter;
 
    if(++plot_time < queue_interval) {  // not yet time to draw
       if(draw_flag) refresh_page();    // make sure text parts of screen keep updating
-      return;  
+      return;
    }
    plot_time = 0;
 
    if(review_mode == 0) {
-      review = plot_q_count;  
+      review = plot_q_count;
    }
 
    ++view_time;
@@ -10913,7 +10930,7 @@ if(view_all_data == 2) view_all(); else { // !!!!!!!! testing automatic view all
    // prepare queue for next point
    if(++plot_q_count >= plot_q_size) plot_q_count = plot_q_size;
    if(++plot_q_in >= plot_q_size) {
-      plot_q_in = 0;  
+      plot_q_in = 0;
    }
    if(plot_q_in == plot_q_out) {  // plot queue is full
       if(++plot_q_out >= plot_q_size) plot_q_out = 0;
@@ -11092,7 +11109,7 @@ void do_mouse_click()
 {
 S32 i;
 
-   // process mouse clicks 
+   // process mouse clicks
 
    if(mouse_x < 0) return;
    else if(mouse_x >= SCREEN_WIDTH) return;
@@ -11228,7 +11245,7 @@ S32 i;
          }
          else right_time = 0;
       }
-   }   
+   }
 }
 
 
@@ -11300,6 +11317,34 @@ unsigned bmask;
       val = 0.0F;
 #endif
 
+#ifdef USE_SDL
+   {
+      	if(mouse_disabled) return 0;
+        int button = SDL_GetMouseState(&mouse_x, &mouse_y);
+
+        float scale_x = ((float)sdl_texture_width / (float)sdl_window_width);
+        float scale_y = ((float)sdl_texture_height / (float)sdl_window_height);
+
+        mouse_x = ((float)mouse_x) * scale_x;
+        mouse_y = ((float)mouse_y) * scale_y;
+
+	    last_button = this_button;
+
+   		if(button & SDL_BUTTON(SDL_BUTTON_LEFT)) {
+   			this_button = 1;
+   		} else if(button & SDL_BUTTON(SDL_BUTTON_RIGHT)) {
+   			this_button = 2;
+   		} else {
+   			this_button = 0;
+   		}
+
+
+        if(last_button != this_button) {
+           new_button |= 0x02;
+	    }
+
+	    val = 0.0F;
+#endif // USE_SDL
       if(this_button) view_all_data = 0;
 
 //sprintf(plot_title, "mx:%d  my:%d  pcol:%d  prow:%d", mouse_x,mouse_y, plot_column,PLOT_ROW);
@@ -11442,7 +11487,7 @@ void end_review(u08 draw_flag)
 void do_review(int c)
 {
    // move the view around in the plot queue
-   if(c == HOME_CHAR)  {  // start of plot data 
+   if(c == HOME_CHAR)  {  // start of plot data
       plot_review(0L);
    }
    else if(c == END_CHAR) { // end of plot data
@@ -11479,7 +11524,7 @@ void do_review(int c)
       if(review_mode == 0) goto review_end;
       if(queue_interval > 0) plot_review(review+(long) (24L*3600L/queue_interval));
    }
-   else if(c == '>') {  
+   else if(c == '>') {
       if(review_mode == 0) goto review_end;
       if(queue_interval > 0) plot_review(review-(long) (24L*3600L/queue_interval));
    }
@@ -11487,7 +11532,7 @@ void do_review(int c)
       if(review_mode == 0) goto review_end;
       if(queue_interval > 0) plot_review(review+view_interval);
    }
-   else if(c == ']') {  
+   else if(c == ']') {
       if(review_mode == 0) goto review_end;
       if(queue_interval > 0) plot_review(review-view_interval);
    }
@@ -11540,7 +11585,6 @@ void adjust_view()
 //  Keypress / wait for key routines
 //
 //
-
 void key_wait(char *s)
 {
 // debug routine - display message and wait for key
@@ -11557,6 +11601,9 @@ BEEP(300);
       #ifdef USE_X11
          get_x11_event();
          XFlush(display);
+      #endif
+      #ifdef USE_SDL
+         get_sdl_event();
       #endif
       if(KBHIT()) break;
    }
@@ -11578,6 +11625,9 @@ void wait_for_key(int serve)
          get_x11_event();
          if(display) XFlush(display);
       #endif
+      #ifdef USE_SDL
+         get_sdl_event();
+      #endif
       if(KBHIT()) break;
 
       if(serve && (process_com || (rcvr_type == NO_RCVR))) { //rxx
@@ -11597,6 +11647,9 @@ void abort_wakeup()
 #ifdef USE_X11
    get_x11_event();
    XFlush(display);
+#endif
+#ifdef USE_SDL
+   get_sdl_event();
 #endif
    if(KBHIT()) {
       if(GETCH() == 0x1B) {
@@ -11690,7 +11743,7 @@ int read_config_file(char *name, u08 local_flag, u08 add_path)
 {
 char fn[MAX_PATH+1];
 char msg[MAX_PATH+80];
-char buf[SLEN+1]; 
+char buf[SLEN+1];
 char *dot;
 FILE *file;
 int error;
@@ -11710,10 +11763,10 @@ printf("read_config_file(name:%s  local:%d  add:%d)  path:%s\n", name,(int) loca
    if(dot) {   // file name has a .EXTension
                // replace with .CFG,  unless user gave the name on the command line
       if(local_flag == 1) {  // cfg file name is based upon the .EXE file name
-         strcpy(dot, ".cfg"); 
+         strcpy(dot, ".cfg");
       }
       else if(local_flag == 2) {
-         strcpy(dot, ".cal"); 
+         strcpy(dot, ".cal");
       }
    }
    else {
@@ -11722,7 +11775,7 @@ printf("read_config_file(name:%s  local:%d  add:%d)  path:%s\n", name,(int) loca
    }
 
    if(local_flag) {  // cfg file name is based upon the .EXE file name
-      dot = strstr(fn, ".");     
+      dot = strstr(fn, ".");
       while(dot >= &fn[0]) {  // look in current directory first
 #ifdef WINDOWS
          if(*dot == '\\') break;
@@ -11747,7 +11800,7 @@ printf("Attempting to open config file::%s\n", fn);
          if(local_flag) return 1;
          sprintf(msg, "\nConfig file %s not found!", fn);
          buf[0] = 0;
-         command_help(msg, buf, 0); 
+         command_help(msg, buf, 0);
          return 1;
 //qqq    exit(10);
       }
@@ -11778,7 +11831,7 @@ printf("Attempting to open config file::%s\n", fn);
          for(i=strlen(buf)-1; i>=0; i--) {       // trim trailing garbage from line
             if     (buf[i] == 0x0A) buf[i] = 0;
             else if(buf[i] == 0x0D) buf[i] = 0;
-            else if(buf[i] == ' ')  buf[i] = 0; 
+            else if(buf[i] == ' ')  buf[i] = 0;
             else if(buf[i] == '\t') buf[i] = 0;
             else break;
          }
@@ -11786,7 +11839,7 @@ printf("Attempting to open config file::%s\n", fn);
          error = option_switch(buf);
          if(error) {
             sprintf(blanks, "in config file %s: ", fn);
-            command_help(blanks, buf, 0); 
+            command_help(blanks, buf, 0);
             return 1;
 //qqq       exit(10);
          }
@@ -11812,7 +11865,7 @@ int k;
    if(keyboard_cmd == 0) {
       if(SCREEN_WIDTH < MEDIUM_WIDTH) {  // blank clock name for small screens
          if(watch_name[0] == 0)  strcpy(watch_name,  " ");
-         if(watch_name2[0] == 0) strcpy(watch_name2, " "); 
+         if(watch_name2[0] == 0) strcpy(watch_name2, " ");
       }
    }
 
@@ -11831,11 +11884,11 @@ int k;
       view_interval /= PLOT_WIDTH;
       if(view_interval <= 1L) view_interval = 1L;
       user_view = view_interval;
-   }                                                 
+   }
    new_user_view = 0;
 
    // user set a log param on the command line, start writing the log file
-   if(user_set_log) { 
+   if(user_set_log) {
       log_file_time = log_interval + 1;
       open_log_file(log_mode);
    }
@@ -11846,8 +11899,8 @@ int k;
    }
 
    // if user did not enable/disable the big clock,  turn it on if it will fit
-   if(user_set_clock_plot == 0) {  
-      if(SCREEN_WIDTH > 800) plot_digital_clock = 1; 
+   if(user_set_clock_plot == 0) {
+      if(SCREEN_WIDTH > 800) plot_digital_clock = 1;
       else if(rcvr_type == NO_RCVR) plot_digital_clock = 1;
       else if((TEXT_HEIGHT <= 8) && (text_mode == 0)) plot_digital_clock = 1; ////
       else if((small_font == 1) && text_mode) plot_digital_clock = 1;
@@ -11875,7 +11928,7 @@ int i;
 int j;
 
    // This routine is used to give initial values to variables.
-   // The QuickC linker does not let one initialize variables from more than 
+   // The QuickC linker does not let one initialize variables from more than
    // one file (even if they are declared extern).
 
    invert_display = 0;
@@ -11965,7 +12018,7 @@ int j;
    com_fd = (-1);
    process_com = 1;
 com_running = (-1);
-   first_msg = 1;        
+   first_msg = 1;
    first_request = 1;
 
    moto_chans = 12;
@@ -12061,7 +12114,7 @@ com_running = (-1);
    log_stream = 0;         // don't write serial data stream to the log file
    log_errors = 1;         // if set, log data errors
    if(luxor) {
-      strcpy(log_name, "luxor.log"); 
+      strcpy(log_name, "luxor.log");
       strcpy(raw_name, "luxor.raw");
    }
    else {
@@ -12193,7 +12246,7 @@ if(0) {  // gggg enable raw receiver data logging
    i = j = 0;
    while(__DATE__[i] && (__DATE__[i] != ' ')) ++i;
    while(__DATE__[i] && (__DATE__[i] == ' ')) ++i;
-   while(__DATE__[i] && (__DATE__[i] != ' ') && (j < VSTRING_LEN-8)) { 
+   while(__DATE__[i] && (__DATE__[i] != ' ') && (j < VSTRING_LEN-8)) {
       date_string[j++] = __DATE__[i++];
    }
    if(j == 1) {
@@ -12206,7 +12259,7 @@ if(0) {  // gggg enable raw receiver data logging
    date_string[j++] = __DATE__[2];
    date_string[j++] = ' ';
    while(__DATE__[i] && (__DATE__[i] == ' ')) ++i;
-   while(__DATE__[i] && (__DATE__[i] != ' ') && (j < VSTRING_LEN-2)) { 
+   while(__DATE__[i] && (__DATE__[i] != ' ') && (j < VSTRING_LEN-2)) {
       date_string[j++] = __DATE__[i++];
    }
    date_string[j++] = 0;
@@ -12290,6 +12343,9 @@ u08 old_disable_kbd;
       #ifdef USE_X11
          get_x11_event();
       #endif
+	#ifdef USE_SDL
+	   get_sdl_event();
+	#endif
 
       get_rcvr_message();
 if((rcvr_type == STAR_RCVR) && (star_type == NEC_TYPE)) break;
@@ -12313,20 +12369,23 @@ static int count;
    if(take_a_dump) return 1;
    if(in_terminal) return 1;
 
-   while(1) {   
+   while(1) {
       served = 0;
       #ifdef WIN_VFX
          if(!timer_serve) {
             SAL_serve_message_queue();     // OK to re-enter serve_gps() via WM_TIMER invoked from this call...
             served = 1;
-            Sleep(0);                      // (in fact, that will usually be the case) 
+            Sleep(0);                      // (in fact, that will usually be the case)
          }
       #endif
       #ifdef USE_X11
          get_x11_event();
          served = 1;
       #endif
-
+      #ifdef USE_SDL
+         get_sdl_event();
+         served = 1;
+      #endif
       if((nav_rate > 10) && (got_timing_msg % 5) == 4) i = 0;
       else if(rcvr_type == NO_RCVR) i = SERIAL_DATA_AVAILABLE();  //rxx
       else if(process_com == 0) i = 0;
@@ -12340,7 +12399,7 @@ else if(1 && ((++count % 20) == 0)) {  // mainly for NEC_TYPE GPSDO and ACRON_RC
 
       if(i == 0) {    // no data available,  we are not too busy
          // no data available,  we are not too busy, or taking a breather from high nav-rate updates
-         system_busy = 0; 
+         system_busy = 0;
          check_com_timer();
          get_mouse_info();
 
@@ -12376,7 +12435,7 @@ if(debug_file) fprintf(debug_file, "!!! DATA LOSS RESET: %d !!!\n", rcvr_reset);
          reset_com_timer();
       }
 
-      if(((rcvr_type == NO_RCVR) && i) || (process_com && i)) {  // we have serial data to process  //rxx   
+      if(((rcvr_type == NO_RCVR) && i) || (process_com && i)) {  // we have serial data to process  //rxx
          get_rcvr_message();  // process the incoming GPS message bytes
          system_busy = 2;
       }
@@ -12385,7 +12444,7 @@ if(debug_file) fprintf(debug_file, "!!! DATA LOSS RESET: %d !!!\n", rcvr_reset);
          if(i == 0) refresh_page();   // keep refreshing page in case no serial data
       }
    }
-   
+
    return 1;
 }
 
@@ -12393,7 +12452,7 @@ void show_com_state()
 {
    if(process_com) {       // we are using the serial port
       if((com_port == 0) && (usb_port == 0) && IP_addr[0]) {   // TCP
-         sprintf(out, "WAITING FOR CONNECTION TO:%s", IP_addr);  
+         sprintf(out, "WAITING FOR CONNECTION TO:%s", IP_addr);
       }
       else if(nortel && com_port)   sprintf(out, "Waking up Nortel receiver on COM%d", com_port);
       else if(nortel && usb_port)   sprintf(out, "Waking up Nortel receiver on USB%d", usb_port);
@@ -12406,7 +12465,7 @@ void show_com_state()
 //    set_single_sat(0x00);
       if(!did_init1) init_messages(3);     // send init messages and request various data
 
-#ifdef USE_X11      
+#ifdef USE_X11
       while(0 && !SERIAL_DATA_AVAILABLE()) {  // !!!!
          Sleep(DEFAULT_SLEEP);
          check_com_timer();
@@ -12417,6 +12476,17 @@ void show_com_state()
          }
       }
 #endif
+#ifdef USE_SDL
+      while(0 && !SERIAL_DATA_AVAILABLE()) {  // !!!!
+         Sleep(DEFAULT_SLEEP);
+         check_com_timer();
+         get_sdl_event();
+         if(KBHIT()) {
+            break;
+         }
+      }
+#endif
+
       if(SERIAL_DATA_AVAILABLE()) {
          reset_com_timer();
          find_msg_end();  // skip data till we see an end of message code
@@ -12483,7 +12553,7 @@ void clean_up()
 
 #define MAX_TERM_ROWS     64
 #define MAX_TERM_COLS     132
-#define TERM_HEADER_LINES 5 
+#define TERM_HEADER_LINES 5
 #define TERM_CURSOR       '_'
 
 char term_screen[MAX_TERM_ROWS][MAX_TERM_COLS+1];  // screen image buffer
@@ -12711,15 +12781,18 @@ double old_cto;
          get_x11_event();
 if(display) XFlush(display);
       #endif
+#ifdef USE_SDL
+   get_sdl_event();
+#endif
 
-      if(KBHIT()) {      // key pressed 
+      if(KBHIT()) {      // key pressed
           i = get_kbd(); // get the keyboard character
 
           if     (i == END_CHAR)  break;        // exit the terminal
           else if(i == HOME_CHAR) goto erase;   // erase screen
           else if(i == F8_CHAR)   SendBreak();  // send a break
           else if(i == F1_CHAR) {               // toggle echo
-             term_echo ^= 1; 
+             term_echo ^= 1;
              goto new_header;
           }
           else if(i == F2_CHAR) {               // toggle log
@@ -12839,6 +12912,9 @@ unsigned i;
       get_x11_event();
 if(display) XFlush(display);
 #endif
+#ifdef USE_SDL
+   get_sdl_event();
+#endif
       if(SERIAL_DATA_AVAILABLE()) {
          reset_com_timer();
          i = get_serial_char();
@@ -12865,6 +12941,9 @@ if(display) XFlush(display);
 #ifdef USE_X11
       get_x11_event();
 if(display) XFlush(display);
+#endif
+#ifdef USE_SDL
+   get_sdl_event();
 #endif
       if(KBHIT()) {
          i = GETCH();
@@ -12923,7 +13002,7 @@ if(1 || show_debug_info) printf("Resizing to %d x %d.\n", SCREEN_WIDTH,SCREEN_HE
 #endif  // USE_X11
 
 
-      if(first_key) ;         // dont redraw screen while keyboard menu active
+      if(first_key)  ;         // dont redraw screen while keyboard menu active
       else if(need_redraw) {
          redraw_screen();
       }
@@ -12950,7 +13029,7 @@ if(1 || show_debug_info) printf("Resizing to %d x %d.\n", SCREEN_WIDTH,SCREEN_HE
          system_busy = 4;
          do_kbd('a');
       }
-      else if(KBHIT()) {   // key pressed 
+      else if(KBHIT()) {   // key pressed
          system_busy = 4;
          i = get_kbd();    // get the keyboard character
          i = do_kbd(i);    // process the character
@@ -12959,7 +13038,7 @@ if(1 || show_debug_info) printf("Resizing to %d x %d.\n", SCREEN_WIDTH,SCREEN_HE
       else {  // sleep a while when we are not busy to keep cpu usage down
          #ifdef WINDOWS
             if(idle_sleep && (set_system_time == 0)) Sleep(idle_sleep);
-         #else  // __linux__  __MACH__ 
+         #else  // __linux__  __MACH__
             if(idle_sleep && (set_system_time == 0)) Sleep(idle_sleep);
          #endif
       }
@@ -12969,12 +13048,12 @@ if(1 || show_debug_info) printf("Resizing to %d x %d.\n", SCREEN_WIDTH,SCREEN_HE
 
 #ifdef PLM
    // This code was a failed attempt to monitor long term power line
-   // frequency changes.  There does not appear to be a viable way to have a 
-   // callback routine called when the modem signal changes state.  So 
+   // frequency changes.  There does not appear to be a viable way to have a
+   // callback routine called when the modem signal changes state.  So
    // this works by polling the RI modem control line for changes.
    // It uses a high-frequency (1KHz) timer event to poll the signal
    // for changes.  Unfortunately Windoze cannot guarantee the required
-   // latency.  
+   // latency.
    HANDLE hTimer = NULL;
    HANDLE hTimerQueue = NULL;
    int    pl_arg = 1;
@@ -13082,10 +13161,10 @@ char path[1024+1];
       }
    #else
       i = readlink("/proc/self/exe", path, sizeof(path));
-   #endif 
+   #endif
 
-   if(i < 0) readlink("/proc/curproc/file", path, sizeof(path)); 
-   if(i < 0) readlink("/proc/self/path/a.out", path, sizeof(path)); 
+   if(i < 0) readlink("/proc/curproc/file", path, sizeof(path));
+   if(i < 0) readlink("/proc/self/path/a.out", path, sizeof(path));
    if(i >= 0) {
       strcpy(heather_path, dirname(path));
       strcat(heather_path, "/");
@@ -13101,7 +13180,7 @@ printf("program:%s\n", help_path);
    read_config_file(help_path, 1, add_path);  // process options from default config file
    read_config_file(help_path, 2, add_path);  // process calendar file
 
-   for(i=1; i<argc; i++) {          // process the command line 
+   for(i=1; i<argc; i++) {          // process the command line
       if((argv[i][0] == '/') || (argv[i][0] == '-') || (argv[i][0] == '=') || (argv[i][0] == '$')) {
          error = option_switch(argv[i]);
       }
@@ -13166,7 +13245,7 @@ int main(int argc, char *argv[])
       config_luxor_plots();
    }
 
-   find_endian();     // determine machine byte ordering 
+   find_endian();     // determine machine byte ordering
    alloc_memory();    // allocate memory for plot and adev queues, etc
    adjust_view();     // tweak screen for user selected view interval, etc
 
@@ -13221,9 +13300,9 @@ int main(int argc, char *argv[])
    show_com_state();  // show com port state and flush buffer
    get_log_file();    // read in any initial log file
 
-   do_term();         // debug terminal 
+   do_term();         // debug terminal
 
-   do_gps();          // run the receiver until something says stop 
+   do_gps();          // run the receiver until something says stop
 
    clean_up();        // leave the receiver in a nice stand-alone state
    shut_down(0);      // clean up remaining details and exit
@@ -13237,7 +13316,7 @@ int main(int argc, char *argv[])
 //
 // Exit handlers must be present in every SAL application
 //
-// These routines handle exits under different conditions (exit() call, 
+// These routines handle exits under different conditions (exit() call,
 // user request via GUI, etc.)
 //
 //****************************************************************************
@@ -13293,13 +13372,13 @@ static int count = 0;
             case VK_INSERT: add_kbd(INS_CHAR);   break;
             case VK_DELETE: add_kbd(DEL_CHAR);   break;
             case VK_CANCEL: break_flag = 1;      break;
-            case VK_F1:     add_kbd(F1_CHAR);    break; 
-            case VK_F2:     add_kbd(F2_CHAR);    break; 
-            case VK_F3:     add_kbd(F3_CHAR);    break; 
-            case VK_F4:     add_kbd(F4_CHAR);    break; 
-            case VK_F5:     add_kbd(F5_CHAR);    break; 
-            case VK_F6:     add_kbd(F6_CHAR);    break; 
-            case VK_F7:     add_kbd(F7_CHAR);    break; 
+            case VK_F1:     add_kbd(F1_CHAR);    break;
+            case VK_F2:     add_kbd(F2_CHAR);    break;
+            case VK_F3:     add_kbd(F3_CHAR);    break;
+            case VK_F4:     add_kbd(F4_CHAR);    break;
+            case VK_F5:     add_kbd(F5_CHAR);    break;
+            case VK_F6:     add_kbd(F6_CHAR);    break;
+            case VK_F7:     add_kbd(F7_CHAR);    break;
             case VK_F8:     add_kbd(F8_CHAR);    break;
             case VK_F9:     add_kbd(F9_CHAR);    break;
 //          case VK_F10:
@@ -13351,9 +13430,9 @@ static int count = 0;
 //****************************************************************************
 int main(int argc, char *argv[]);
 
-int PASCAL WinMain(HINSTANCE hInst, 
+int PASCAL WinMain(HINSTANCE hInst,
                    HINSTANCE hPrevInst,
-                   LPSTR     lpCmdLine,     
+                   LPSTR     lpCmdLine,
                    int       nCmdShow)
 {
 #define MAX_ARGS 60
@@ -13405,7 +13484,7 @@ int PASCAL WinMain(HINSTANCE hInst,
    if(GetCurrentDirectory(sizeof(CWD), CWD)) {
        _strlwr(CWD);
        _strlwr(desktop);
-    
+
       if((!_stricmp(CWD,desktop)) ||
             (strstr(CWD,"program files") != NULL)) {
          SetCurrentDirectory(docs);
@@ -13439,7 +13518,7 @@ int PASCAL WinMain(HINSTANCE hInst,
 
    for(argc=1; (argc < MAX_ARGS) && (src != NULL); argc++) {  // build command line arg vector
       if(*src == 0) break;
-      while(*src == ' ') ++src; 
+      while(*src == ' ') ++src;
 
       C8 *next = NULL;
       C8 *term = strchr(src,' ');
@@ -13459,14 +13538,14 @@ int PASCAL WinMain(HINSTANCE hInst,
 
 
    SAL_set_preference(SAL_USE_PARAMON, NO);
-                                           
+
    if(!SAL_startup(hInstance, szAppName, TRUE, WinExit)) {
       return 0;
    }
 
    //
    // Create application window
-   // 
+   //
 
    SAL_set_preference(SAL_ALLOW_WINDOW_RESIZE, YES);
    SAL_set_preference(SAL_MAXIMIZE_TO_FULLSCREEN, NO);
@@ -13485,7 +13564,7 @@ int PASCAL WinMain(HINSTANCE hInst,
 
    //
    // Register window procedure
-   // 
+   //
 
    SAL_register_WNDPROC(WindowProc);
    SAL_show_system_mouse();
@@ -13503,7 +13582,7 @@ int PASCAL WinMain(HINSTANCE hInst,
 
 
 #ifdef WINDOWS
-BOOL CALLBACK CLIHelpDlgProc (HWND   hDlg,  
+BOOL CALLBACK CLIHelpDlgProc (HWND   hDlg,
                               UINT   message,
                               WPARAM wParam,
                               LPARAM lParam)
@@ -13518,8 +13597,8 @@ BOOL CALLBACK CLIHelpDlgProc (HWND   hDlg,
 
          SAL_FlipToGDISurface();
 
-         S32 screen_w = GetSystemMetrics(SM_CXSCREEN); 
-         S32 screen_h = GetSystemMetrics(SM_CYSCREEN); 
+         S32 screen_w = GetSystemMetrics(SM_CXSCREEN);
+         S32 screen_h = GetSystemMetrics(SM_CYSCREEN);
 
          LPNMHDR pnmh = (LPNMHDR) lParam;
 
@@ -13549,7 +13628,7 @@ BOOL CALLBACK CLIHelpDlgProc (HWND   hDlg,
 
          SetWindowText(hDT, (C8 *) lParam);
 
-         SendMessage(hDT, WM_SETFONT, (WPARAM) GetStockFont(ANSI_FIXED_FONT), (LPARAM) true);         
+         SendMessage(hDT, WM_SETFONT, (WPARAM) GetStockFont(ANSI_FIXED_FONT), (LPARAM) true);
 
          return TRUE;
          }
@@ -13669,7 +13748,7 @@ char c;
    i = 0;
    out[i] = 0;
    while(*s) {
-      c = *s++;  
+      c = *s++;
       if(c == 0) {
          break;
       }
@@ -13844,10 +13923,10 @@ int fs_help;
          "   /nt              - attempt to wake up Nortel NTGxxxx receivers\r\n"
          "   /nx=hh:mm:ss     - exit program at specified time (optional: /n=month/day/year)\r\n"
          "   /nx=#?o          - exit program in #s secs,  #m mins,  #h hours  #d=days\r\n"
-#ifdef ADEV_STUFF            
+#ifdef ADEV_STUFF
          "   /o[#]            - select ADEV type (#=A,H,M,T, O,P)\r\n"
          "                      Adev  Hdev  Mdev  Tdev  O=all osc types  P=all pps types\r\n"
-#endif                       
+#endif
          "   /p               - toggle PPS output signal enable\r\n"
          "   /pd              - disable PPS output signal\r\n"
          "   /pe              - enable PPS output signal\r\n"
@@ -13988,7 +14067,7 @@ int fs_help;
                        CLIHelpDlgProc,
                        (LPARAM) help_msg)) {
       launch_page("readme.htm");
-   } 
+   }
 #else // __linux__ __MACH__  show help as simple text screens
    show_help_msg(help_msg);
 

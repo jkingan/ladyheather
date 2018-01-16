@@ -11,7 +11,9 @@
    // to use the proper file name format and maybe the SWITCH_CHAR
    // command line option switch flag
    #define GCC
+#ifndef USE_SDL
    #define USE_X11
+#endif
 #endif
 #ifdef __GNUG__
    // g++ compiler...
@@ -19,7 +21,9 @@
    // to use the proper file name format and maybe the SWITCH_CHAR
    // command line option switch flag
    #define GCC
+#ifndef USE_SDL
    #define USE_X11
+#endif
 #endif
 #ifdef GCC
    #define stricmp   strcasecmp    // case insensitive string comparison
@@ -32,7 +36,9 @@
    #include <mach/clock.h>
    #include <mach/mach.h>
    #include <mach-o/dyld.h>
+#ifndef USE_SDL
    #define USE_X11
+#endif
 #endif
 
 
@@ -230,12 +236,20 @@ EXTERN char *unit_file_name;  // base name of files to write (based upon receive
 #else // __linux__  __MACH__
    #include <stdint.h>
    #include <unistd.h>
+#ifdef USE_SDL
+   #include <SDL2/SDL.h>
+   #include <SDL2/SDL_types.h>
+   #include <SDL2/SDL_endian.h>
+   #include <SDL2/SDL_keyboard.h>
+   #include "SDL_gfxPrimitives.h"
+#else
    #include <X11/Xlib.h>
    #include <X11/Xutil.h>
    #include <X11/Xos.h>
    #include <X11/Xatom.h>
    #include <X11/keysymdef.h>
    #include <X11/cursorfont.h>
+#endif
    #include <time.h>
    #include <sys/time.h>
    #include <sys/types.h>
@@ -247,16 +261,11 @@ EXTERN char *unit_file_name;  // base name of files to write (based upon receive
    #include <netdb.h>
    #include <libgen.h>
 
+#ifndef USE_SDL
    #define USE_X11
+#endif
    #define SIMPLE_HELP
    #define MAX_PATH 256+1
-
-   #define KBHIT x11_kbhit
-   #define GETCH x11_getch
-   #define SERIAL_DATA_AVAILABLE() (check_incoming_data())
-   #define BEEP(x) if(beep_on && display) XBell(display, 100);
-   #define TCP_IP         // enable TCP/IP networking
-   #define X11_sleep 100  // msecs to sleep when X11 is started / shutdown / resized
 
    #define COORD int
    #define u08 unsigned char
@@ -276,6 +285,38 @@ EXTERN char *unit_file_name;  // base name of files to write (based upon receive
    #define FALSE 0
    #define HUGE_MEM
 
+#ifdef USE_SDL
+   EXTERN SDL_Surface *display;
+   EXTERN SDL_Window  * ne_window;
+   EXTERN SDL_Texture * ne_texture;
+   EXTERN SDL_Renderer * ne_renderer;
+   EXTERN u32 sdl_texture_width;
+   EXTERN u32 sdl_texture_height;
+   EXTERN u32 sdl_window_width;
+   EXTERN u32 sdl_window_height;
+
+   #define KBHIT sdl_kbhit
+   #define GETCH sdl_getch
+   #define SERIAL_DATA_AVAILABLE() (check_incoming_data())
+   #define BEEP(x) ;
+   #define TCP_IP         // enable TCP/IP networking
+
+   EXTERN void kill_screen(void);
+   EXTERN int sdl_getch(void);
+   EXTERN int sdl_kbhit(void);
+   EXTERN u32 get_sdl_color(u08 color);
+   EXTERN void set_sdl_color(u08 color);
+   EXTERN int get_sdl_event();
+
+#else
+   #define KBHIT x11_kbhit
+   #define GETCH x11_getch
+   #define SERIAL_DATA_AVAILABLE() (check_incoming_data())
+   #define BEEP(x) if(beep_on && display) XBell(display, 100);
+   #define TCP_IP         // enable TCP/IP networking
+   #define X11_sleep 100  // msecs to sleep when X11 is started / shutdown / resized
+
+#endif
 
    #define DEGREES     DEG_CODE  // special chars
    #define UP_ARROW    24
@@ -307,7 +348,7 @@ EXTERN char *unit_file_name;  // base name of files to write (based upon receive
    EXTERN int restore_width,restore_height;  // screen size in use before maximization
    EXTERN int x11_maxed;                     // flag set if window is maximized
 
-
+#ifdef USE_X11
    EXTERN Display *display;  // the X11 display to use
    EXTERN Window screen;     // the X11 window to display
    EXTERN Pixmap pix_map;    // drawing pixmap (used to double buffer the drawing)
@@ -318,6 +359,7 @@ EXTERN char *unit_file_name;  // base name of files to write (based upon receive
    EXTERN char *appname;
    EXTERN int x11_left;      // screen window top left corner
    EXTERN int x11_top;
+#endif
 
    EXTERN struct termios oldtio,newtio; // serial port config structures
 
