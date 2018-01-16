@@ -111,6 +111,8 @@ Known issues:
    nicely in smaller windows, and then sized to full screen (for instance) to
    view all the details.
 
+   SDL versions cannot currently save screen shots.
+
    Beware of cheap Chinese USB-Serial converters.  They often use iffy "clone"
    chips that may not be compatible with standard Linux drivers.  For example, 
    a lot of "CH3xxx" clones do not seem to let you set the baud rate under 
