@@ -37,8 +37,14 @@ To use this program on Linux and macOS:
    You will also need to install XCode from Apple (WARNING: it's HUGE).
 
 4) Compile the code (the make file auto-detects Linux or macOS):
+    
+    For X11:
       make clean
       make
+
+    For SDL:
+      make clean
+      USE_SDL=1 make 
 
 5) Edit the heather.cfg file to suit your needs.  It sets the values of the
    initial command line options to use.  Place one command line option per
@@ -96,6 +102,14 @@ Known issues:
    the window,  make sure the mouse cursor has "caught up" with the window 
    corner before releasing the mouse button. Window resizing under XQuartz is
    a bit laggy,
+
+   The SDL version includes some different resizing code. All window sizing is
+   handled via the command line or in-program key commands. This will set the
+   window size to the desired width/height. However, after this, dragging the
+   window to resize results in the contents being scaled instead of dynamically 
+   resized in-place. This permits multiple Lady Heather windows to be shown
+   nicely in smaller windows, and then sized to full screen (for instance) to
+   view all the details.
 
    Beware of cheap Chinese USB-Serial converters.  They often use iffy "clone"
    chips that may not be compatible with standard Linux drivers.  For example, 
