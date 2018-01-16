@@ -29,18 +29,6 @@ u32 RGB_NATIVE(int r, int g, int b)
 {
     return (((u32)r) << 24)       | (((u32)g) << 16)      | (((u32)b) << 8) | 0x000000FF;
 }
-
-static u08 current_color = 0;
-void setxxsdl_color(u08 color)
-{
-    if(color == current_color) {
-        return;
-    }
-    current_color = color;
-    u32 c = get_sdl_color(color);
-    SDL_SetRenderDrawColor(ne_renderer, c & 0xff, (c & 0xff00) >> 8, (c & 0xff0000) >> 16, 255);
-}
-
 u32 get_sdl_color(u08 color)
 {
     if(color == 0xFF) {
@@ -255,6 +243,17 @@ void refresh_page(void)
 
 u08 get_pixel(COORD x, COORD y)
 {
+    u32 pixel;
+    int i;
+
+    int bpp = display->format->BytesPerPixel;
+    u32* p = (u32*)((Uint8 *)display->pixels + y * display->pitch + x * bpp);
+
+    for(i = 0; i < 16; i++) { // convert screen value to color code
+        if(*p == palette[i]) {
+            return i;
+        }
+    }
     return 0;
 }
 
