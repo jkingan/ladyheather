@@ -109,9 +109,7 @@ Known issues:
    window to resize results in the contents being scaled instead of dynamically 
    resized in-place. This permits multiple Lady Heather windows to be shown
    nicely in smaller windows, and then sized to full screen (for instance) to
-   view all the details.
-
-   SDL versions cannot currently save screen shots.
+   view all the details. Use the /sc switch to use this new behavior.
 
    Beware of cheap Chinese USB-Serial converters.  They often use iffy "clone"
    chips that may not be compatible with standard Linux drivers.  For example, 

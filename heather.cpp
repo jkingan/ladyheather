@@ -12311,6 +12311,10 @@ if(0) {  // gggg enable raw receiver data logging
       calendar_entries = calendar_count();
    #endif
 
+   #ifdef USE_SDL
+      sdl_scaling = 0;
+   #endif
+
    d_scale = 1.0F;
    osc_gain = user_osc_gain = (-3.5);
    gain_color = GREY;  // was yellow
@@ -13000,7 +13004,21 @@ if(1 || show_debug_info) printf("Resizing to %d x %d.\n", SCREEN_WIDTH,SCREEN_HE
          }
       }
 #endif  // USE_X11
-
+#if USE_SDL
+       if(0 == sdl_scaling && need_resize && (this_button == 0) && (last_button == 0)) {
+           printf("RESIZE to %dx%d  now:%dx%d  have_root:%d  mach:%d\n", new_width,new_height, SCREEN_WIDTH,SCREEN_HEIGHT, have_root_info, mach); // zork - show_debug_info
+           need_resize = 0;
+           restore_width = new_width;
+           restore_height = new_height;
+           have_restore_size = 3;  // size came from resize event
+           SCREEN_WIDTH = custom_width = new_width;
+           SCREEN_HEIGHT = custom_height = new_height;
+           if(1 || show_debug_info) printf("Resizing to %d x %d.\n", SCREEN_WIDTH,SCREEN_HEIGHT); // zork - show_debug_info
+           screen_type = 'c';
+           sprintf(edit_buffer, "%dx%d",SCREEN_WIDTH,SCREEN_HEIGHT);
+           edit_screen_res();
+       }
+#endif
 
       if(first_key)  ;         // dont redraw screen while keyboard menu active
       else if(need_redraw) {
@@ -13949,6 +13967,9 @@ int fs_help;
          "                      Y=SCPI-(NORTEL)  Z=SCPI-(Z3801A)  5=SCPI-(Z3816A, HP53xxx)r\n"
          "                      For receivers that do not report a valid leapsecond\r\n"
          "                      count you can specify the value to use\r\n"
+#ifdef USE_SDL
+         "   /sc              - use window scaling instead of resizing\r\n"
+#endif
 //       "   /sf              - enter 2D/3D fix mode and map fixes\r\n"
          "   /si[=#]          - set maximum number of displayed satellites to #\r\n"
          "   /sp[=#]          - do Precison Survey (# hours,  default=48/max=96)\r\n"

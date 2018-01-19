@@ -9322,6 +9322,11 @@ if((sat_cols > 1) && (max_sat_display < 16)) max_sat_display = 16;
       temp_sats = max_sat_display;
       config_sat_rows();
    }
+#if USE_SDL
+   else if((c == 's') && (d == 'c')) {   // /sc - set SDL window scaling
+       sdl_scaling = 1;
+   }
+#endif
    else if((c == 's') && (d == 'r')) {   // /sr - set sunrise type
       if(((e == '=') || (e == ':')) && (arg[4])) {
          set_sunrise_type(&arg[4], 0);

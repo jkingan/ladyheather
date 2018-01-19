@@ -293,7 +293,15 @@ int get_sdl_event()
             if(e.window.event == SDL_WINDOWEVENT_RESIZED) {
                 sdl_window_width = e.window.data1;
                 sdl_window_height = e.window.data2;
+
                 printf("New size is %d %d\n", sdl_window_width, sdl_window_height);
+
+                if(0 == sdl_scaling) {
+                    new_width = sdl_window_width;
+                    new_height = sdl_window_height;
+                    need_resize = 1;
+                    return 2;
+                }
             }
         } else if(e.type == SDL_TEXTINPUT) {
             const char * text = e.text.text;

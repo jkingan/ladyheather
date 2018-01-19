@@ -294,6 +294,7 @@ EXTERN char *unit_file_name;  // base name of files to write (based upon receive
    EXTERN u32 sdl_texture_height;
    EXTERN u32 sdl_window_width;
    EXTERN u32 sdl_window_height;
+   EXTERN u08 sdl_scaling;
 
    #define KBHIT sdl_kbhit
    #define GETCH sdl_getch
