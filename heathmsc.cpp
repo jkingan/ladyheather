@@ -65,17 +65,30 @@
 extern char *months[];
 extern u08 bmp_pal[];
 
+#define USE_L2  1              // if set, output L2 data in RINEX .obs files
+#define USE_L5  1              // if set, output L5 data in RINEX .obs files
+#define USE_L6  1              // if set, output L6 data in RINEX .obs files
+#define USE_L7  1              // if set, output L7 data in RINEX .obs files
+#define USE_L8  1              // if set, output L8 data in RINEX .obs files
+#define RAW_CHANGES rinex_fix  // if flag set ignore raw values that are not changing
+
+#define LOG_GPS_CHECK   5000   // check for pending GPS messages every this many entries when reading logs
+#define LOG_SCREEN_RFSH 10000  // refresh screen every this many entries when reading logs
+
+#define MTIE_SCALE 1.010       // increase/decrease global_adev_max/min by this when plotting MTIE for margins
+
 
 #define MOON_COLOR YELLOW      // default moon image color
 #define TRUE_MOON              // define this to draw the moon on the watch face at its celestial position
 #define MESS 0                 // if 1,  allow watch, map, and signals to overlay
 
-#define MOON_SIZE  (ACLOCK_R/4)
+#define MOON_SIZE  (moon_size/2)
 #define MAX_MARKER_SIZE  14
 #define MIN_MARKER_SIZE  3
 
 int moon_color = MOON_COLOR;   // the color to draw the moon in
 int moon_x, moon_y;            // where to draw the moon on the watch face
+int moon_size;                 // size to draw the moon at
 
 int have_moon_el;
 double moon_phase_acc;  // a better moon phase number
@@ -86,6 +99,8 @@ double moon_phase_acc;  // a better moon phase number
 double sun_hlon;        // heliocentric longitude in degrees
 int sunset;
 int sunrise;
+
+int lla_xi, lla_yi;     // location of last plotted LLA point
 
 
 int last_minute = 99;
@@ -148,12 +163,56 @@ char *days[] = {
    "Saturday",
 };
 
+int dim[] = {   // days in the month (gets patched for leap years)
+   0,
+   31,   //jan
+   28,   //feb
+   31,   //mar
+   30,   //apr
+   31,   //may
+   30,   //jun
+   31,   //jul
+   31,   //aug
+   30,   //sep
+   31,   //oct
+   30,   //nov
+   31    //dec
+};
+
+char *months[] = { // convert month to its ASCII abbreviation
+   "???",
+   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+};
+
+char *full_months[] = {
+   "???",
+   "January",
+   "February",
+   "March",
+   "April",
+   "May",
+   "June",
+   "July",
+   "August",
+   "September",
+   "October",
+   "November",
+   "December"
+};
+
+#define LLA_THRESH 1.05    // LLA span must increase by this amount before re-scaling
 char lla_msg[MAX_TEXT_COLS+1];
 int sp_count;  // used to verify optimization of solar noon/new moon calculations
 
-void zoom_all_signals();
-void zoom_stuff();
-void zoom_sat_info();
+float bottom_adev_decade;
+
+void zoom_all_signals(void);
+void zoom_stuff(void);
+void zoom_sat_info(void);
+
+void write_rinex_header(FILE *file);
+
 
 //
 //
@@ -163,65 +222,265 @@ void zoom_sat_info();
 void show_log_state()
 {
 char *mode;
+char c;
 int row;
+int shown;
+int needed;
+int avail;
+char s[32];
+#define MAX_LOG_NAMES 2
 
 
    if(text_mode && first_key) return;
    if(zoom_screen) return;
 
+   show_serial_info();
+
    if(luxor) row = VER_ROW+6;
    else      row = VER_ROW+5;
 
-   if(raw_file) {
-      vidstr(row, VER_COL, WHITE, "                       ");
-      mode = "Raw";
-      if(strlen(raw_name) > 16) {
-         sprintf(out, "%s:...%s", mode, &raw_name[strlen(raw_name)-16]);
+   shown = 0;
+   hide_op_mode = 0;
+   avail = (6-4) + 1;
+///if(all_adevs && (all_adev_row > row)) avail = all_adev_row - row;
+
+   needed = 0;
+   if(log_file) ++needed;
+   else if(log_loaded) ++needed;
+   else if(log_stream & LOG_HEX_STREAM) ++needed;
+
+   if(raw_file) ++needed;
+   if(prn_file) ++needed;
+   if(ticc_file) ++needed;
+   if(debug_file) ++needed;
+if(ticc_port_open()) ++needed;
+if(enviro_port_open()) ++needed;
+
+   if(needed > avail) 
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(log_file) {
+      ++shown;
+
+      if(log_wrap) {
+         vidstr(row, VER_COL, WHITE, "Log: on queue wrap");
+      }
+      else if(log_date || log_time) {
+         vidstr(row, VER_COL, WHITE, "Log: timed");
       }
       else {
-         sprintf(out, "%s: %s", mode, raw_name);
+         if(log_mode[0] == 'a')               strcpy(s, "Cat");
+         else if(log_stream & LOG_HEX_STREAM) strcpy(s, "Hex");
+         else                                 strcpy(s, "Log");
+         if(log_flush_mode) strupr(s);
+         mode = &s[0];
+
+         if((int)strlen(log_name) > 16) {
+            sprintf(out, "%s:...%s", mode, &log_name[strlen(log_name)-16]);
+         }
+         else {
+            sprintf(out, "%s: %s", mode, log_name);
+         }
+         vidstr(row, VER_COL, WHITE, out);
       }
-      vidstr(row, VER_COL, WHITE, out);
+      ++row;
    }
-   else if(log_wrap) {
-      vidstr(row, VER_COL, WHITE, "Log: on queue wrap");
+   else if(log_stream & LOG_HEX_STREAM) {  // debug packet dump mode
+      ++shown;
+      if(log_loaded) vidstr(row, VER_COL, WHITE, "Hex: loaded       ");
+      else           vidstr(row, VER_COL, WHITE, "Hex: OFF          ");
+      ++row;
    }
-   else if(log_date || log_time) {
-      vidstr(row, VER_COL, WHITE, "Log: timed");
+   else if(log_loaded) {
+      ++shown;
+      vidstr(row, VER_COL, WHITE, "Log: loaded       ");
+      ++row;
    }
-   else if(log_file) {
-//    sprintf(out, "Log: %5ld sec", log_interval);
-      vidstr(row, VER_COL, WHITE, "                       ");
-      if(log_mode[0] == 'a')     mode = "Cat";
-      else if(log_stream & 0x01) mode = "Dbg";
-      else                       mode = "Wrt";
-      if((int)strlen(log_name) > 16) {
-         sprintf(out, "%s:...%s", mode, &log_name[strlen(log_name)-16]);
-      }
-      else {
-         sprintf(out, "%s: %s", mode, log_name);
-      }
-      vidstr(row, VER_COL, WHITE, out);
-   }
-   else if(log_stream & 0x01) {  // debug packed dump mode
-      if(log_loaded) vidstr(row, VER_COL, WHITE, "Dbg: loaded       ");
-      else           vidstr(row, VER_COL, WHITE, "Dbg: OFF          ");
-   }
-   else {
-      if(log_loaded) vidstr(row, VER_COL, WHITE, "Log: loaded       ");
-      else           vidstr(row, VER_COL, WHITE, "Log: OFF          ");
+   else if(needed <= avail) {
+      ++shown;
+      vidstr(row, VER_COL, WHITE, "Log: OFF          ");
+      ++row;
    }
 
-   if(debug_file && debug_name[0]) {
-      vidstr(row+1, VER_COL, WHITE, "                       ");
-      mode = "Dbg";
-      if((int)strlen(debug_name) > 16) {
-         sprintf(out, "%s:...%s", mode, &debug_name[strlen(debug_name)-16]);
+   // show raw/debug file names
+   // We only have room to show two file names.  If more than one is needed, 
+   // the name is followed by an '*'
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
+   }
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(rinex_file && rinex_name[0]) {
+      strcpy(s, "Rnx");
+      if(rinex_flush_mode) strupr(s);
+      c = ':';
+      ++shown;
+      if((shown == avail) && (raw_file || prn_file || debug_file || ticc_file)) c = '+';
+
+      if(strlen(rinex_name) > 16) {
+         sprintf(out, "%s%c...%s", s,c, &rinex_name[strlen(rinex_name)-16]);
       }
       else {
-         sprintf(out, "%s: %s", mode, debug_name);
+         sprintf(out, "%s%c %s", s,c, rinex_name);
       }
-      vidstr(row+1, VER_COL, WHITE, out);
+
+      vidstr(row, VER_COL, WHITE, out);
+      ++row;
+   }
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
+   }
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(ticc_file && ticc_name[0]) {
+      mode = "TIC";
+      c = ':';
+      ++shown;
+      if((shown == avail) && (raw_file || prn_file || debug_file)) c = '+';
+
+      if(strlen(ticc_name) > 16) {
+         sprintf(out, "%s%c...%s", mode,c, &ticc_name[strlen(ticc_name)-16]);
+      }
+      else {
+         sprintf(out, "%s%c %s", mode,c, ticc_name);
+      }
+
+      vidstr(row, VER_COL, WHITE, out);
+      ++row;
+   }
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
+   }
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(raw_file && raw_name[0]) {
+      if(raw_flush_mode) mode = "CAP";
+      else               mode = "Cap";
+      c = ':';
+      ++shown;
+      if((shown == avail) && (prn_file || debug_file)) c = '+';
+
+      if(strlen(raw_name) > 16) {
+         sprintf(out, "%s%c...%s", mode,c, &raw_name[strlen(raw_name)-16]);
+      }
+      else {
+         sprintf(out, "%s%c %s", mode,c, raw_name);
+      }
+
+      vidstr(row, VER_COL, WHITE, out);
+      ++row;
+   }
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
+   }
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(debug_file && debug_name[0]) {
+      if(dbg_flush_mode) mode = "DBG";
+      else mode = "Dbg";
+      c = ':';
+      ++shown;
+      if((shown == avail) && (prn_file)) c = '+';
+
+      if((int)strlen(debug_name) > 16) {
+         sprintf(out, "%s%c...%s", mode,c, &debug_name[strlen(debug_name)-16]);
+      }
+      else {
+         sprintf(out, "%s%c %s", mode,c, debug_name);
+      }
+
+      vidstr(row, VER_COL, WHITE, out);
+      ++row;
+   }
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
+   }
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(prn_file && prn_name[0]) {
+      if(prn_flush_mode) mode = "PRN";
+      else mode = "Prn";
+      c = ':';
+      ++shown;
+
+      if((int)strlen(prn_name) > 16) {
+         sprintf(out, "%s%c...%s", mode,c, &prn_name[strlen(prn_name)-16]);
+      }
+      else {
+         sprintf(out, "%s%c %s", mode,c, prn_name);
+      }
+
+      vidstr(row, VER_COL, WHITE, out);
+      ++row;
+   }
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
+   }
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(ticc_port_open()) {  // TICC is an auxiliary input device
+      ++shown;
+
+      if(ticc_sim_file && ticc_sim_eof)                 sprintf(out, "TIC: end of sim file  "); // simulation file eof
+      else if(ticc_sim_file)                            sprintf(out, "TIC: simulation file  "); // simulation file
+      else if(com[TICC_PORT].usb_port == USE_IDEV_NAME) sprintf(out, "TIC: %-17.17s", com[TICC_PORT].com_dev); // user specified device
+      else if(com[TICC_PORT].usb_port == USE_DEV_NAME)  sprintf(out, "TIC: %-17.17s", com[TICC_PORT].com_dev); // symlink to /dev/heather
+      else if(com[TICC_PORT].usb_port >= 10)            sprintf(out, "TIC: %-2d               ", com[TICC_PORT].usb_port-1);
+      else if(com[TICC_PORT].usb_port)                  sprintf(out, "TIC: %-2d               ", com[TICC_PORT].usb_port-1);
+#ifdef WINDOWS
+      else if(com[TICC_PORT].com_port >= 10) sprintf(out, "TIC: %-2d               ", com[TICC_PORT].com_port);
+      else if(com[TICC_PORT].com_port)       sprintf(out, "TIC: %-2d               ", com[TICC_PORT].com_port);
+#else   // __linux__  __MACH__  __FreeBSD__
+      else if(com[TICC_PORT].com_port >= 10) sprintf(out, "TIC: %-2d               ", com[TICC_PORT].com_port-1);
+      else if(com[TICC_PORT].com_port)       sprintf(out, "TIC: %-2d               ", com[TICC_PORT].com_port-1);
+#endif
+#ifdef TCP_IP 
+      else                              sprintf(out," TIC:%-17.17s", com[TICC_PORT].IP_addr); // TCP, no room for sernum
+#else
+      else                              sprintf(out, "TIC:none              ");
+#endif
+      if(strlen(out) > 25) strcpy(&out[25-3],"...");   // don't hit 'Power' label
+      vidstr(row, VER_COL, WHITE, out);
+      ++row;
+   }
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
+   }
+
+   vidstr(row, VER_COL, WHITE, "                       ");
+   if(enviro_port_open()) {  // envionmental sensor is an auxiliary input device
+      ++shown;
+
+      if(com[THERMO_PORT].usb_port == USE_IDEV_NAME)     sprintf(out, "ENV: %-17.17s", com[THERMO_PORT].com_dev); // user specified device
+      else if(com[THERMO_PORT].usb_port == USE_DEV_NAME) sprintf(out, "ENV: %-17.17s", com[THERMO_PORT].com_dev); // symlink to /dev/heather
+      else if(com[THERMO_PORT].usb_port >= 10)           sprintf(out, "ENV: %-2d               ", com[THERMO_PORT].usb_port-1);
+      else if(com[THERMO_PORT].usb_port)                 sprintf(out, "ENV: %-2d               ", com[THERMO_PORT].usb_port-1);
+#ifdef WINDOWS
+      else if(com[THERMO_PORT].com_port >= 10) sprintf(out, "ENV: %-2d               ", com[THERMO_PORT].com_port);
+      else if(com[THERMO_PORT].com_port)       sprintf(out, "ENV: %-2d               ", com[THERMO_PORT].com_port);
+#else   // __linux__  __MACH__  __FreeBSD__
+      else if(com[THERMO_PORT].com_port >= 10) sprintf(out, "ENV: %-2d               ", com[THERMO_PORT].com_port-1);
+      else if(com[THERMO_PORT].com_port)       sprintf(out, "ENV: %-2d               ", com[THERMO_PORT].com_port-1);
+#endif
+#ifdef TCP_IP 
+      else                              sprintf(out," ENV:%-17.17s", com[TICC_PORT].IP_addr); // TCP, no room for sernum
+#else
+      else                              sprintf(out, "ENV:none              ");
+#endif
+      if(strlen(out) > 25) strcpy(&out[25-3],"...");   // don't hit 'Power' label
+      vidstr(row, VER_COL, WHITE, out);
+      ++row;
+   }
+   if(shown >= avail) {
+      ++hide_op_mode;
+      return;
    }
 }
 
@@ -233,7 +492,6 @@ int color;
    if(log_file == 0) return;
 
    ++gpx_track_number;
-   fprintf(log_file, "\n");
    if((log_fmt == GPX) || (log_fmt == XML)) {
       fprintf(log_file, "  <trk>\n");
       fprintf(log_file, "    <name>Lady Heather data</name>\n");
@@ -244,6 +502,7 @@ int color;
       color = (gpx_track_number % 15) + 8;  // 1..15
       if(color > 15) color = color - 15;
 
+      fprintf(log_file, "\n");
       fprintf(log_file, "    <Folder>\n");
       fprintf(log_file, "      <name>Track %04d/%02d/%02d  %02d:%02d:%02d</name>\n", pri_year,pri_month,pri_day, pri_hours,pri_minutes,pri_seconds);
       fprintf(log_file, "      <description>Lady Heather Track</description>\n");
@@ -264,6 +523,7 @@ int color;
       fprintf(log_file, "        <altitudeMode>absolute</altitudeMode>\n");
       fprintf(log_file, "          <coordinates>\n");
    }
+   if(log_flush_mode && log_file) fflush(log_file);
 }
 
 void end_log_track()
@@ -280,29 +540,73 @@ void end_log_track()
       fprintf(log_file, "      </Placemark>\n");
       fprintf(log_file, "    </Folder>\n");
    }
+   if(log_flush_mode && log_file) fflush(log_file);
 }
 
 void log_rcvr_type()
 {
+char *s;
+
+   // NEW_RCVR
+
    if(log_file == 0) return;
 
    log_text[0] = 0;
 
    if     (rcvr_type == ACRON_RCVR)  sprintf(log_text, "  <name>Acron Zeit WWVB Receiver</name>");
+   else if(rcvr_type == BRANDY_RCVR) sprintf(log_text, "  <name>Brandywine GPS-4 GPSDO</name>");
+   else if(rcvr_type == CS_RCVR)     sprintf(log_text, "  <name>HP5071A cesium beam oscillator</name>");
+   else if(rcvr_type == ESIP_RCVR)   sprintf(log_text, "  <name>Furuno eSIP receiver</name>");
+   else if(rcvr_type == FURUNO_RCVR) sprintf(log_text, "  <name>Furuno PFEC receiver</name>");
    else if(rcvr_type == GPSD_RCVR)   sprintf(log_text, "  <name>GPSD client</name>");
+   else if(rcvr_type == LPFRS_RCVR)  sprintf(log_text, "  <name>LPFRS rubidium oscillator</name>");
    else if(rcvr_type == MOTO_RCVR)   sprintf(log_text, "  <name>Motorola receiver</name>");
    else if(rcvr_type == NMEA_RCVR)   sprintf(log_text, "  <name>NMEA receiver</name>");
    else if(rcvr_type == NO_RCVR)     sprintf(log_text, "  <name>System clock</name>");
-   else if(rcvr_type == SCPI_RCVR) {
-      if(scpi_type == HP_TYPE)       sprintf(log_text, "  <name>HP5xxxx SCPI receiver</name>");
-      else                           sprintf(log_text, "  <name>SCPI receiver</name>");
-   }
+   else if(rcvr_type == RT17_RCVR)   sprintf(log_text, "  <name>Trimble RT17 receiver</name>");
    else if(rcvr_type == NVS_RCVR)    sprintf(log_text, "  <name>NVS receiver</name>");
+   else if(rcvr_type == PRS_RCVR)    sprintf(log_text, "  <name>PRS-10 rubidium oscillator</name>");
+   else if(rcvr_type == RFTG_RCVR)   {
+      if((have_rftg_unit) && (rftg_unit == 0)) sprintf(log_text, "  <name>RFTG-m RB</name>");
+      else if((have_rftg_unit) && (rftg_unit == 1)) sprintf(log_text, "  <name>RFTG-m XO</name>");
+      else sprintf(log_text, "  <name>RFTG-m</name>");
+   }
+   else if(rcvr_type == SA35_RCVR)   sprintf(log_text, "  <name>SA.3xM rubidium oscillator</name>");
+   else if(rcvr_type == SCPI_RCVR) {
+      if(scpi_type == HP_TYPE)       sprintf(log_text, "  <name>HP58xxx SCPI GPSDO</name>");
+      else if(scpi_type == HP_TYPE2) sprintf(log_text, "  <name>HP59xxx SCPI GPSDO</name>");
+      else                           sprintf(log_text, "  <name>SCPI GPSDO</name>");
+   }
    else if(rcvr_type == SIRF_RCVR)   sprintf(log_text, "  <name>SIRF receiver</name>");
-   else if(rcvr_type == STAR_RCVR)   sprintf(log_text, "  <name>Oscilloquartz STAR-4 receiver</name>"); 
+   else if(rcvr_type == SRO_RCVR)    sprintf(log_text, "  <name>SRO100 rubidium oscillator</name>");
+   else if(rcvr_type == SS_RCVR)     sprintf(log_text, "  <name>Novatel SuperStar II/name>");
+   else if(rcvr_type == STAR_RCVR) {
+      if(star_type == NEC_TYPE) sprintf(log_text, "  <name>NEC STAR-4 GPSDO</name>"); 
+      else if(star_type == OSA_TYPE) sprintf(log_text, "  <name>OSA 453x GPSDO</name>"); 
+      else sprintf(log_text, "  <name>Oscilloquartz STAR-4 GPSDO</name>"); 
+   }
    else if(res_t)                    sprintf(log_text, "  <name>Trimble Resolution-T receiver</name>");
+   else if(rcvr_type == TAIP_RCVR)   sprintf(log_text, "  <name>Trimble TAIP receiver</name>"); 
+   else if(rcvr_type == THERMO_RCVR) {
+      sprintf(log_text, "  <name>Environmental</name>");
+   }
+   else if(rcvr_type == TICC_RCVR) {
+      if     (ticc_type == TAPR_TICC)   sprintf(log_text, "  <name>TAPR TICC</name>");
+      else if(ticc_type == HP_TICC)     sprintf(log_text, "  <name>HP53xxx interval counter</name>");
+      else if(ticc_type == PICPET_TICC) sprintf(log_text, "  <name>PICPET timestamp counter</name>");
+      else if(ticc_type == LARS_TICC)   sprintf(log_text, "  <name>LARS GPSDO TIC</name>");
+      else                              sprintf(log_text, "  <name>Generic interval counter</name>");
+   }
+   else if(rcvr_type == TIDE_RCVR)    sprintf(log_text, "  <name>Gravity clock</name>");
+   else if(rcvr_type == TM4_RCVR)     sprintf(log_text, "  <name>Spectrum TM4 GPSDO</name>");
+   else if(rcvr_type == TRUE_RCVR) {
+      sprintf(log_text, "  <name>TruePosition GPSDO</name>");
+   }
+   else if(rcvr_type == TSERVE_RCVR) {
+      sprintf(log_text, "  <name>TymServe 2000</name>");
+   }
    else if(rcvr_type == TSIP_RCVR) {
-      if(tsip_type == STARLOC_RCVR)  sprintf(log_text, "  <name>STARLOC receiver</name>");
+      if(tsip_type == STARLOC_TYPE)  sprintf(log_text, "  <name>STARLOC GPSDO</name>");
       else                           sprintf(log_text, "  <name>TSIP receiver</name>");
    }
    else if(rcvr_type == UBX_RCVR)  {
@@ -310,23 +614,42 @@ void log_rcvr_type()
       else                           sprintf(log_text, "  <name>Ublox receiver</name>");
    }
    else if(rcvr_type == UCCM_RCVR) {
-      if(scpi_type == UCCMP_TYPE)    sprintf(log_text, "  <name>Symmetricom UCCM receiver</name>");
-      else                           sprintf(log_text, "  <name>Trimble UCCM receiver</name>");
+      if(scpi_type == UCCMP_TYPE)    sprintf(log_text, "  <name>Symmetricom UCCM GPSDO</name>");
+      else                           sprintf(log_text, "  <name>Trimble UCCM GPSDO</name>");
    }
    else if(rcvr_type == VENUS_RCVR) {
-       if(saw_timing_msg)            sprintf(log_text, "  <name>Venus timing receiver</name>");
+       if(lte_lite)                  sprintf(log_text, "  <name>Jackson Labs LTE</name>");
+       else if(saw_venus_raw)        sprintf(log_text, "  <name>Venus RTK receiver</name>");
+       else if(saw_timing_msg)       sprintf(log_text, "  <name>Venus timing receiver</name>");
        else                          sprintf(log_text, "  <name>Venus receiver</name>");
    }
+   else if(rcvr_type == X72_RCVR)    sprintf(log_text, "  <name>X72 rubidium</name>");
+   else if(rcvr_type == Z12_RCVR)    sprintf(log_text, "  <name>Ashtech Z12</name>");
    else if(rcvr_type == ZODIAC_RCVR) sprintf(log_text, "  <name>Zodiac receiver</name>");
+   else if(rcvr_type == ZYFER_RCVR) {
+      sprintf(log_text, "  <name>Zyfer Nanosync 380 GPSDO</name>");
+   }
    else                              sprintf(log_text, "  <name>Unknown receiver type</name>");
 
    if(log_fmt == HEATHER) {
+      s = strstr(log_text, "</name>");
+      if(s) *s = 0;
+
+      s = strstr(log_text, "<name>");
+      if(s) {
+         sprintf(out, "   Device: %s", &s[6]);
+         strcpy(log_text, out);
+      }
+
       fprintf(log_file, "#");
       write_log_comment(1);
+   }
+   else if(log_fmt == RINEX) {
    }
    else {
       fprintf(log_file, "%s\n", log_text);
    }
+   if(log_flush_mode && log_file) fflush(log_file);
 }
 
 
@@ -334,11 +657,21 @@ FILE *open_log_file(char *mode)
 {
 u32 color;
 int i;
+char *s;
 
    if(log_file) return 0;  // log already open
+   if(mode == 0) return 0;
+
+   s = strchr(log_name, FLUSH_CHAR);
+   if(s) {
+      *s = 0;
+      log_flush_mode = 1;
+   }
+   else log_flush_mode = 0;
 
    log_file = topen(log_name, mode);
    if(log_file == 0) return 0;
+   if(debug_file) fprintf(debug_file, "! log file %s opened\n", log_name);
 
    if(log_header) log_written = 0;
    log_loaded = 0;
@@ -351,6 +684,8 @@ int i;
    else if(strstr(log_name, ".GPX")) log_fmt = GPX;
    else if(strstr(log_name, ".kml")) log_fmt = KML;
    else if(strstr(log_name, ".KML")) log_fmt = KML;
+   else if(strstr(log_name, ".obs")) log_fmt = RINEX;
+   else if(strstr(log_name, ".OBS")) log_fmt = RINEX;
    else log_fmt = HEATHER;
 
    if(log_fmt != HEATHER) {
@@ -358,12 +693,6 @@ int i;
       if(log_fmt == GPX) {
          fprintf(log_file, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n\n");
          fprintf(log_file, "<gpx version=\"1.0\"  creator=\"Lady Heather V%s - %s\" >\n", VERSION, date_string);
-         log_rcvr_type();
-         start_log_track();
-      }
-      else if(log_fmt == XML) {
-         fprintf(log_file, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n\n");
-         fprintf(log_file, "<gpx version=\"1.1\"  creator=\"Lady Heather V%s - %s\" >\n", VERSION, date_string);
          log_rcvr_type();
          start_log_track();
       }
@@ -392,7 +721,16 @@ int i;
          }
          start_log_track();
       }
+      else if(log_fmt == RINEX) {
+      }
+      else if(log_fmt == XML) {
+         fprintf(log_file, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n\n");
+         fprintf(log_file, "<gpx version=\"1.1\"  creator=\"Lady Heather V%s - %s\" >\n", VERSION, date_string);
+         log_rcvr_type();
+         start_log_track();
+      }
    }
+   if(log_flush_mode && log_file) fflush(log_file);
 
    return log_file;
 }
@@ -401,11 +739,6 @@ void close_log_file()
 {
    if(log_file) {
       if(log_fmt == GPX) {
-         end_log_track();
-         fprintf(log_file, "</gpx>\n");
-         gpx_track_number = 0;
-      }
-      else if(log_fmt == XML) {
          end_log_track();
          fprintf(log_file, "</gpx>\n");
          gpx_track_number = 0;
@@ -431,6 +764,20 @@ void close_log_file()
          fprintf(log_file, "</kml>\n");
          gpx_track_number = 0;
       }
+      else if(log_fmt == RINEX) {
+         rinex_header_written = 0;
+         rinex_obs_written = 0;
+      }
+      else if(log_fmt == XML) {
+         end_log_track();
+         fprintf(log_file, "</gpx>\n");
+         gpx_track_number = 0;
+      }
+
+      if(log_fmt != RINEX) {
+         fprintf(log_file, "\n");
+         fprintf(log_file, "\n");
+      }
 
       fclose(log_file);
    }
@@ -446,29 +793,20 @@ void sync_log_file()
 
    if(log_fmt != HEATHER) {
       end_log_track();
-
-      fflush(log_file);
-      #ifdef WINDOWS
-      #else // __linux__  __MACH__
-         fsync(fileno(log_file));
-      #endif
-
+      sync_file(log_file);
       start_log_track();
-      return;
    }
-
-   fflush(log_file);
-   #ifdef WINDOWS
-   #else // __linux__  __MACH__
-      fsync(fileno(log_file));
-   #endif
+   else {
+      sync_file(log_file);
+   }
 }
 
-void filter_log_text()
+int filter_log_text()
 {
 char *s;
 
    // remove potentially corrupting chars from log_text lines
+   // returns 0 if resulting line is blank, 1 otherwise
 
    s = strchr(log_text, '!');
    while(s) {
@@ -481,11 +819,30 @@ char *s;
       *s = ' ';
       s = strchr(s+1, '#');
    }
+
+   if(log_text[0] == 0) return 0;  // empty line
+   if((log_text[0] == ' ') && (log_text[1] == 0)) return 0;  // blank line
+   return 1;
+}
+
+
+void write_rinex_line(FILE *file, char *s, char *type)
+{
+char buf[SLEN+1];
+
+   // output a 60:20 character line to a RINEX file
+
+   if(file == 0) return;
+   if(s == 0) return;
+   if(type == 0) return;
+
+   sprintf(buf, "%-60.60s%-20.20s", s,type);
+   buf[80] = 0;
+   fprintf(file, "%s\n", buf);
 }
 
 void write_log_comment(int spaces)
 {
-
    if(log_file == 0) return;
    if(log_comments == 0) return;
 
@@ -494,52 +851,301 @@ void write_log_comment(int spaces)
       while(spaces--) fprintf(log_file, "\n");
    }
    else if(log_fmt == KML) {
-      filter_log_text();
-      fprintf(log_file, "<!-- %s -->", log_text);
+      if(filter_log_text()) {
+         fprintf(log_file, "<!-- %s -->", log_text);
+      }
       while(spaces--) fprintf(log_file, "\n");
    }
+   else if(log_fmt == RINEX) {  // don't output anything until the RINEX header has been output
+      if(rinex_header_written) {
+         write_rinex_line(log_file, log_text, "COMMENT");
+      }
+   }
    else if(log_fmt == XML) {  // !!!! does this work when sending to a GPX viewer?
-      filter_log_text();
-      fprintf(log_file, "<!-- %s -->", log_text);
-      while(spaces--) fprintf(log_file, "\n");
+      if(filter_log_text()) {
+         fprintf(log_file, "<!-- %s -->", log_text);
+      }
+      else {  // blank line
+//       fprintf(log_file, "<!--  -->");
+      }
+
+      while(spaces--) {
+         fprintf(log_file, "\n");
+      }
    }
 
    if(debug_file) {
       if(log_text[1] == '!') fprintf(debug_file, "Event: %s\n", log_text);
+      fflush(debug_file);
    }
+
+   if(log_flush_mode && log_file) fflush(log_file);
 }
 
+void log_enviro_info()
+{
+   strcpy(log_text, "#");
+   write_log_comment(1);
+
+   if(enviro_type == HEATHER_ENVIRO) {
+      sprintf(log_text, "#   Enviro type:   Heather Environmental Sensor");
+   }
+   else if(enviro_type == DOG_ENVIRO) {
+      if(enviro_dev[0]) sprintf(log_text, "#   Enviro type:   %s", enviro_dev);
+      else              sprintf(log_text, "#   Envito type:   Dogratian USB");
+   }
+   else if(enviro_type == LFS_ENVIRO) {
+      if(enviro_dev[0]) sprintf(log_text, "#   Enviro type:   %s", enviro_dev);
+      else              sprintf(log_text, "#   Enviro type:   LFS10xx");
+   }
+   else {
+      sprintf(log_text, "#   Enviro type:   Environmental sensor");
+   }
+   write_log_comment(1);
+
+   if(enviro_sn[0]) {
+      sprintf(log_text, "#   Enviro serial: %s", enviro_sn);
+      write_log_comment(1);
+   }
+
+   strcpy(log_text, "#");
+   write_log_comment(1);
+}
+
+void log_ticc_info()
+{
+   strcpy(log_text, "#");
+   write_log_comment(1);
+
+   if(ticc_type == TAPR_TICC) {
+      sprintf(log_text, "#   Unit type:     TAPR TICC");
+      write_log_comment(1);
+      sprintf(log_text, "#   Serial number: %s", ticc_sn);
+      write_log_comment(1);
+      sprintf(log_text, "#   Firmware ver:  %s", ticc_fw);
+      write_log_comment(1);
+      sprintf(log_text, "#   Board ver:     %s", ticc_board);
+      write_log_comment(1);
+      sprintf(log_text, "#   EEPROM ver:    %d", ticc_eeprom);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+   else if(ticc_type == HP_TICC) {
+      sprintf(log_text, "#   Unit type:     HP-53xxx interval counter");
+      write_log_comment(1);
+   }
+   else if(ticc_type == PICPET_TICC) {
+      sprintf(log_text, "#   Unit type:     PICPET timestamp  counter");
+      write_log_comment(1);
+   }
+   else if(ticc_type == LARS_TICC) {
+      sprintf(log_text, "#   Unit type:     LARS GPSDO TIC");
+      write_log_comment(1);
+   }
+   else {
+      sprintf(log_text, "#   Unit type:     Generic interval counter");
+      write_log_comment(1);
+   }
+
+   if(have_ticc_mode) {
+      if     (ticc_mode == 'F') sprintf(log_text, "#   Mode:          Frequency");
+      else if(ticc_mode == 'H') sprintf(log_text, "#   Mode:          Phase");
+      else if(ticc_mode == 'I') sprintf(log_text, "#   Mode:          Interval");
+      else if(ticc_mode == 'P') sprintf(log_text, "#   Mode:          Period");
+      else if(ticc_mode == 'T') sprintf(log_text, "#   Mode:          Timestamp");
+      else if(ticc_mode == 'D') sprintf(log_text, "#   Mode:          Debug");
+      else if(ticc_mode == 'L') sprintf(log_text, "#   Mode:          Timelab");
+      else                      sprintf(log_text, "#   Mode:          Unknown: %c", ticc_mode);
+      write_log_comment(1);
+   }
+   if(have_ticc_syncmode) {
+      sprintf(log_text, "#   Sync mode:     %c", ticc_syncmode);
+      write_log_comment(1);
+   }
+   if(have_ticc_cal) {
+      sprintf(log_text, "#   Cal periods:   %d", ticc_cal);
+      write_log_comment(1);
+   }
+   if(have_ticc_timeout) {
+      sprintf(log_text, "#   Timeout:       %d", ticc_timeout);
+      write_log_comment(1);
+   }
+   if(have_ticc_speed) {
+      sprintf(log_text, "#   Clock speed:   %f MHz", ticc_speed);
+      write_log_comment(1);
+   }
+   if(have_ticc_coarse) {
+      sprintf(log_text, "#   Coarse speed:  %f usec", ticc_coarse);
+      write_log_comment(1);
+   }
+
+   if(have_ticc_edges & 0x01) {
+      sprintf(log_text, "#   chA edge:      %c", edge_a);
+      write_log_comment(1);
+   }
+   if(have_ticc_edges & 0x02) {
+      sprintf(log_text, "#   chB edge:      %c", edge_b);
+      write_log_comment(1);
+   }
+   if(have_ticc_edges & 0x04) {
+      sprintf(log_text, "#   chC edge:      %c", edge_c);
+      write_log_comment(1);
+   }
+   if(have_ticc_edges & 0x08) {
+      sprintf(log_text, "#   chD edge:      %c", edge_d);
+      write_log_comment(1);
+   }
+
+   if(have_ticc_fudge & 0x01) {
+      sprintf(log_text, "#   chA Fudge:     %g ps", fudge_a);
+      write_log_comment(1);
+   }
+   if(have_ticc_fudge & 0x02) {
+      sprintf(log_text, "#   chB Fudge:     %g ps", fudge_b);
+      write_log_comment(1);
+   }
+   if(have_ticc_fudge & 0x04) {
+      sprintf(log_text, "#   chC Fudge:     %g ps", fudge_c);
+      write_log_comment(1);
+   }
+   if(have_ticc_fudge & 0x08) {
+      sprintf(log_text, "#   chD Fudge:     %g ps", fudge_d);
+      write_log_comment(1);
+   }
+
+   if(have_ticc_time2 & 0x01) {
+      sprintf(log_text, "#   chA TIME2:     %d", time2_a);
+      write_log_comment(1);
+   }
+   if(have_ticc_time2 & 0x02) {
+      sprintf(log_text, "#   chB TIME2:     %d", time2_b);
+      write_log_comment(1);
+   }
+   if(have_ticc_time2 & 0x04) {
+      sprintf(log_text, "#   chC TIME2:     %d", time2_c);
+      write_log_comment(1);
+   }
+   if(have_ticc_time2 & 0x08) {
+      sprintf(log_text, "#   chD TIME2:     %d", time2_d);
+      write_log_comment(1);
+   }
+
+   if(have_ticc_dilat & 0x01) {
+      sprintf(log_text, "#   chA Dilation   %d", dilat_a);
+      write_log_comment(1);
+   }
+   if(have_ticc_dilat & 0x02) {
+      sprintf(log_text, "#   chB Dilation   %d", dilat_b);
+      write_log_comment(1);
+   }
+   if(have_ticc_dilat & 0x04) {
+      sprintf(log_text, "#   chC Dilation   %d", dilat_c);
+      write_log_comment(1);
+   }
+   if(have_ticc_dilat & 0x08) {
+      sprintf(log_text, "#   chD Dilation   %d", dilat_d);
+      write_log_comment(1);
+   }
+
+   strcpy(log_text, "#");
+   write_log_comment(1);
+   strcpy(log_text, "#");
+   write_log_comment(1);
+}
+
+
+void write_log_tsip_vers()
+{
+   sprintf(log_text, "#   Serial number: %u.%lu", sn_prefix, (unsigned long) serial_num);
+   write_log_comment(1);
+   sprintf(log_text, "#   Case s/n:      %u.%lu", case_prefix, (unsigned long) case_sn);
+   write_log_comment(1);
+   sprintf(log_text, "#   Prodn number:  %lu.%u", (unsigned long) prodn_num, prodn_extn);
+   write_log_comment(1);
+   sprintf(log_text, "#   Prodn options: %u", prodn_options);        // from prodn_params message
+   write_log_comment(1);
+   sprintf(log_text, "#   Machine id:    %u", machine_id);
+   write_log_comment(1);
+   if(ebolt) {
+      sprintf(log_text, "#   Hardware code: %u", hw_code);
+      write_log_comment(1);
+   }
+
+   sprintf(log_text, "#   App firmware:  %2d.%-2d  %02d %s %02d", 
+      ap_major, ap_minor,  ap_day, months[ap_month], ap_year);   //!!! docs say 1900
+   write_log_comment(1);
+   sprintf(log_text, "#   GPS firmware:  %2d.%-2d  %02d %s %02d", 
+      core_major, core_minor,  core_day, months[core_month], core_year);  //!!! docs say 1900
+   write_log_comment(1);
+   sprintf(log_text, "#   Mfg time:      %02d:00  %02d %s %04d", 
+      build_hour, build_day, months[build_month], build_year);
+   write_log_comment(1);
+}
 
 void write_log_id()
 {
 int i;
 
    // write the receiver ID info to the log file
+   // NEW_RCVR
 
-   if(unit_name[0] && (rcvr_type != SCPI_RCVR) && (rcvr_type != UCCM_RCVR)) {
+   if((rcvr_type != THERMO_RCVR) && (enviro_sn[0] || enviro_dev[0])){
+      log_enviro_info();
+   }
+
+   if((rcvr_type != TICC_RCVR) && ticc_port_open()) {
+      log_ticc_info();
+   }
+
+   if(unit_name[0] && (rcvr_type != SCPI_RCVR) && (rcvr_type != UCCM_RCVR) && (rcvr_type != CS_RCVR)) {
       sprintf(log_text, "#   Unit type:     Trimble %s", unit_name);
       write_log_comment(1);
-   }
-   else if(saw_mini) {
-      sprintf(log_text, "#   Unit type:     Trimble Mini-T");
-      write_log_comment(1);
-   }
-   else if(saw_ntpx) {
-      sprintf(log_text, "#   Unit type:     Nortel NTPX");
-      write_log_comment(1);
-   }
-   else if(saw_nortel) {
-      sprintf(log_text, "#   Unit type:     Nortel NTGS/NTBW");
-      write_log_comment(1);
+      write_log_tsip_vers();
    }
    else if(luxor) {
       sprintf(log_text, "#   Unit type:     Luxor");
+      write_log_comment(1);
+      sprintf(log_text, "#   HW version:    %u.%lu", (unsigned)luxor_hw_ver, (unsigned long)luxor_hw_rev);
+      write_log_comment(1);
+      sprintf(log_text, "#   Serial number: %u.%lu", (unsigned)luxor_sn_prefix, (unsigned long)luxor_serial_num);
       write_log_comment(1);
    }
    else if(rcvr_type == ACRON_RCVR) {
       sprintf(log_text, "#   Unit type:     Acron Zeit");
       write_log_comment(1);
-      return;
+   }
+   else if(rcvr_type == BRANDY_RCVR) {
+      sprintf(log_text, "#   Unit type:     Brandywine GPS-4");
+      write_log_comment(1);
+      sprintf(log_text, "#   Firmware:      %s", brandy_fw);
+      write_log_comment(1);
+      sprintf(log_text, "#   Engine:        %s", brandy_engine);
+      write_log_comment(1);
+      sprintf(log_text, "#   Test:          %s", brandy_test);
+      write_log_comment(1);
+      sprintf(log_text, "#   Osc type:      %s", brandy_osc);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == ESIP_RCVR) {
+      sprintf(log_text, "#   Unit type:     Furuno eSIP GPS receiver");
+      write_log_comment(1);
+      sprintf(log_text, "#   Device:        %s", esip_device);
+      write_log_comment(1);
+      sprintf(log_text, "#   Version:       %s", esip_version);
+      write_log_comment(1);
+      sprintf(log_text, "#   Query:         %s", esip_query);
+      write_log_comment(1);
+      sprintf(log_text, "#   Model:         %s", esip_model);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == FURUNO_RCVR) {
+      sprintf(log_text, "#   Unit type:     Furuno PFEC GPS receiver");
+      write_log_comment(1);
+      sprintf(log_text, "#   Pgm:           %d", furuno_pgm);
+      write_log_comment(1);
+      sprintf(log_text, "#   Ver:           %d", furuno_ver);
+      write_log_comment(1);
    }
    else if(rcvr_type == GPSD_RCVR) {
       sprintf(log_text, "#   Unit type:     GPSD %d.%d interfaced receiver", gpsd_major, gpsd_minor);
@@ -548,17 +1154,38 @@ int i;
       write_log_comment(1);
       sprintf(log_text, "#   Release:       %s", gpsd_release);
       write_log_comment(1);
-      return;
+   }
+   else if(rcvr_type == LPFRS_RCVR) {
+      sprintf(log_text, "#   Unit type:     LPFRS rubidium oscillator");
+      write_log_comment(1);
+      sprintf(log_text, "#   Hardware:      %s", lpfrs_id);
+      write_log_comment(1);
+      sprintf(log_text, "#   Version:       %s", lpfrs_fw);
+      write_log_comment(1);
+      sprintf(log_text, "#   Checksum:      %s", lpfrs_ck);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == MOTO_RCVR) {
+      sprintf(log_text, "#   Unit type:     Motorola %d channel GPS receiver", moto_chans);
+      write_log_comment(1);
+      for(i=1; i<=10; i++) {
+         if(moto_id[i][0]) {
+            sprintf(log_text, "#                  %s", &moto_id[i][0]);
+            write_log_comment(1);
+         }
+      }
+   }
+   else if(rcvr_type == RT17_RCVR) {
+      sprintf(log_text, "#   Unit type:     Trimble RT17 receiver");
+      write_log_comment(1);
    }
    else if(rcvr_type == NMEA_RCVR) {
       sprintf(log_text, "#   Unit type:     NMEA GPS receiver");
       write_log_comment(1);
-      return;
    }
    else if(rcvr_type == NO_RCVR) {
       sprintf(log_text, "#   Unit type:     System clock");
       write_log_comment(1);
-      return;
    }
    else if(rcvr_type == NVS_RCVR) {
       sprintf(log_text, "#   Unit type:     NVS receiver - %d channels", nvs_chans);
@@ -584,18 +1211,186 @@ int i;
          sprintf(log_text, "#   Number 3:      %u (%08X)", nvs_sn3, nvs_sn3);
          write_log_comment(1);
       }
-      return;
    }
-   else if(rcvr_type == MOTO_RCVR) {
-      sprintf(log_text, "#   Unit type:     Motorola %d channel GPS receiver", moto_chans);
+   else if(rcvr_type == PRS_RCVR) {
+      sprintf(log_text, "#   Unit type:     PRS-10 rubidium oscillator");
       write_log_comment(1);
-      for(i=1; i<=10; i++) {
-         if(moto_id[i][0]) {
-            sprintf(log_text, "#                  %s", &moto_id[i][0]);
-            write_log_comment(1);
-         }
+      sprintf(log_text, "#   FW version:    %s", prs_fw);
+      write_log_comment(1);
+      sprintf(log_text, "#   Serial number: %s", prs_sn);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == RFTG_RCVR) {
+      sprintf(log_text, "#   Unit type:     System clock");
+      if((have_rftg_unit) && (rftg_unit == 0))      sprintf(log_text, "#   Unit type:     RFTG-m RB");
+      else if((have_rftg_unit) && (rftg_unit == 1)) sprintf(log_text, "#   Unit type:     RFTG-m XO");
+      else sprintf(log_text, "#   Unit type:     RFTG-m");
+      write_log_comment(1);
+      sprintf(log_text,"#   Firmware:      %s", rftg_fw);
+      write_log_comment(1);
+      sprintf(log_text,"#   HW version:    %d", rftg_hw);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == SA35_RCVR) {
+      sprintf(log_text, "#   Unit type:     SA.3xM rubidium oscillator");
+      if(have_sa35_telem) {
+         sprintf(log_text, "#   Firmware:      %s", sa35_fw);
+         write_log_comment(1);
+         sprintf(log_text, "#   Date:          %s", sa35_date);
+         write_log_comment(1);
+         sprintf(log_text, "#   Model:         %s", sa35_model);
+         write_log_comment(1);
+         sprintf(log_text, "#   Serial number: %s", sa35_sn);
+         write_log_comment(1);
       }
-      return;
+      write_log_comment(1);
+   }
+   else if((rcvr_type == SCPI_RCVR) || (rcvr_type == UCCM_RCVR) || (rcvr_type == CS_RCVR)) {
+      sprintf(log_text, "#   Unit type:     %s", scpi_model);
+      write_log_comment(1);
+      sprintf(log_text, "#   Manufacturer:  %s", scpi_mfg);
+      write_log_comment(1);
+      sprintf(log_text, "#   Serial number: %s", scpi_sn);
+      write_log_comment(1);
+      sprintf(log_text, "#   Firmware:      %s", scpi_fw);
+      write_log_comment(1);
+//      if((rcvr_type == CS_RCVR) && cs_cbtid[0]) {
+      if(rcvr_type == CS_RCVR) {
+         sprintf(log_text, "#   Tube:          %s", cs_cbtid);
+         write_log_comment(1);
+      }
+   }
+   else if(rcvr_type == SIRF_RCVR) {
+      sprintf(log_text, "#   Unit type:     SIRF GPS receiver");
+      write_log_comment(1);
+      sprintf(log_text, "#   SW:            %s", sirf_sw_id);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == SRO_RCVR) {
+      sprintf(log_text, "#   Unit type:     SRO100 rubidium oscillator");
+      write_log_comment(1);
+      sprintf(log_text, "#   Hardware:      %s", sro_id);
+      write_log_comment(1);
+      sprintf(log_text, "#   Serial number: %s", sro_sn);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == SS_RCVR) {
+      sprintf(log_text, "#   Unit type:     Novatel SuperStar II");
+      sprintf(log_text, "#   Software:       %s", ss_sw_pn);
+      sprintf(log_text, "#   Model:          %s", ss_model);
+      sprintf(log_text, "#   Type::          %d", ss_type);
+      sprintf(log_text, "#   Boot:           %s", ss_boot_pn);
+      sprintf(log_text, "#   Serial number:  %s", ss_psn);
+      sprintf(log_text, "#   Reserved 1:     %s", ss_rsvd);
+      sprintf(log_text, "#   Reserved 2:     %s", ss_rsvd2);
+      sprintf(log_text, "#   Model checksum: %s", ss_model_cksum);
+      sprintf(log_text, "#   Boot checksum:  %04X", ss_boot_cksum);
+      sprintf(log_text, "#   Op checksum:    %04X", ss_op_cksum);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == STAR_RCVR) {
+      if(star_type == NEC_TYPE)      sprintf(log_text, "#   Unit type:     NEC GPSDO");
+      else if(star_type == OSA_TYPE) sprintf(log_text, "#   Unit type:     OSA-453x GPSDO");
+      else                           sprintf(log_text, "#   Unit type:     STAR-4 GPSDO");
+      write_log_comment(1);
+
+      sprintf(log_text, "#   Module:        %s", star_module);
+      write_log_comment(1);
+
+      sprintf(log_text, "#   Article:       %s", star_article);
+      write_log_comment(1);
+
+      sprintf(log_text, "#   SN:            %s", star_sn);
+      write_log_comment(1);
+
+      if(star_type != OSA_TYPE) {
+         sprintf(log_text, "#   HW version:    %s", star_hw_ver);
+         write_log_comment(1);
+
+         sprintf(log_text, "#   FW article:    %s", star_fw_article);
+         write_log_comment(1);
+      }
+
+      sprintf(log_text, "#   FW:            %s", star_fw);
+      write_log_comment(1);
+
+      sprintf(log_text, "#   Test date:     %s", star_test_date);
+      write_log_comment(1);
+
+      sprintf(log_text, "#   Test version:  %s", star_test_version);
+      write_log_comment(1);
+
+      sprintf(log_text, "#   Osc type:      %s", star_osc);
+      write_log_comment(1);
+
+      if(star_type == OSA_TYPE) {
+         sprintf(log_text, "#   Layout:        %s", star_layout);
+         write_log_comment(1);
+         sprintf(log_text, "#   Commercial:    %s", star_commercial);
+         write_log_comment(1);
+      }
+      else {
+         sprintf(log_text, "#   FPGA:          %s", star_fpga);
+         write_log_comment(1);
+         sprintf(log_text, "#   Family:        %s", star_family);
+         write_log_comment(1);
+         sprintf(log_text, "#   Variant:       %s", star_variant);
+         write_log_comment(1);
+      }
+   }
+   else if(rcvr_type == TAIP_RCVR) {
+      sprintf(log_text, "#   Product:       %s", taip_product);
+      write_log_comment(1);
+      sprintf(log_text, "#   Version:       %s", taip_version);
+      write_log_comment(1);
+      sprintf(log_text, "#   Core:          %s", taip_core);
+      write_log_comment(1);
+      sprintf(log_text, "#   Copyright:     %s", taip_copr);
+      write_log_comment(1);
+      sprintf(log_text, "#   Unit id:       %04d", taip_id);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == THERMO_RCVR) {
+      log_enviro_info();
+   }
+   else if(rcvr_type == TICC_RCVR) {
+      log_ticc_info();
+   }
+   else if(rcvr_type == TIDE_RCVR) {
+      sprintf(log_text, "#   Unit type:     Gravity clock");
+      write_log_comment(1);
+   }
+   else if(rcvr_type == TM4_RCVR) {
+      sprintf(log_text, "#   Unit type:     Spectrum TM4 GPSDO");
+      write_log_comment(1);
+      sprintf(log_text, "#   Version:       %s", tm4_id);
+      write_log_comment(1);
+      sprintf(log_text, "#   HEX file:      %s", tm4_hex);
+      write_log_comment(1);
+      sprintf(log_text, "#   OBJ file:      %s", tm4_obj);
+      write_log_comment(1);
+      sprintf(log_text, "#   String:        %s", tm4_string);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == TRUE_RCVR) {
+      sprintf(log_text, "#   Unit type:     TruePosition GPSDO");
+      write_log_comment(1);
+      sprintf(log_text, "#   SW:            %s", tp_sw);
+      write_log_comment(1);
+      sprintf(log_text, "#   GPS Engine:    %s", tp_boot);
+      write_log_comment(1);
+      sprintf(log_text, "#   FPGA VERSION:  %s", tp_num1);
+      write_log_comment(1);
+      sprintf(log_text, "#   SW CKSUM:      %s", tp_num2);
+      write_log_comment(1);
+      sprintf(log_text, "#   FPGA CKSUM:    %s", tp_num3);
+      write_log_comment(1);
+      sprintf(log_text, "#   SN:            %s", tp_sn);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == TSERVE_RCVR) {
+      sprintf(log_text, "#   Unit type:     TymServe 2000");
+      write_log_comment(1);
    }
    else if(rcvr_type == UBX_RCVR) {
       if(saw_timing_msg) sprintf(log_text, "#   Unit type:     Ublox GPS receiver");
@@ -606,61 +1401,19 @@ int i;
       write_log_comment(1);
       sprintf(log_text, "#   HW:            %s", ubx_hw);
       write_log_comment(1);
-      sprintf(log_text, "#   ROM:           %s", ubx_rom);
-      write_log_comment(1);
-      return;
-   }
-   else if((rcvr_type == SCPI_RCVR) || (rcvr_type == UCCM_RCVR)) {
-      sprintf(log_text, "#   Unit type:     %s", scpi_model);
-      write_log_comment(1);
-      sprintf(log_text, "#   Manufacturer:  %s", scpi_mfg);
-      write_log_comment(1);
-      sprintf(log_text, "#   Serial number: %s", scpi_sn);
-      write_log_comment(1);
-      sprintf(log_text, "#   Firmware:      %s", scpi_fw);
-      write_log_comment(1);
-      return;
-   }
-   else if(rcvr_type == SIRF_RCVR) {
-      sprintf(log_text, "#   Unit type:     SIRF GPS receiver");
-      write_log_comment(1);
-      sprintf(log_text, "#   SW:            %s", sirf_sw_id);
-      write_log_comment(1);
-      return;
-   }
-   else if(rcvr_type == STAR_RCVR) {
-      if(star_type == NEC_TYPE) sprintf(log_text, "#   Unit type:     NEC GPSDO");
-      else                      sprintf(log_text, "#   Unit type:     STAR-4 GPSDO");
-      write_log_comment(1);
-      sprintf(log_text, "#   Module:        %s", star_module);
-      write_log_comment(1);
-      sprintf(log_text, "#   Article:       %s", star_article);
-      write_log_comment(1);
-      sprintf(log_text, "#   SN:            %s", star_sn);
-      write_log_comment(1);
-      sprintf(log_text, "#   HW version:    %s", star_hw_ver);
-      write_log_comment(1);
-      sprintf(log_text, "#   FW article:    %s", star_fw_article);
-      write_log_comment(1);
-      sprintf(log_text, "#   FW:            %s", star_fw);
-      write_log_comment(1);
-      sprintf(log_text, "#   Test date:     %s", star_test_date);
-      write_log_comment(1);
-      sprintf(log_text, "#   Test version:  %s", star_test_version);
-      write_log_comment(1);
-      sprintf(log_text, "#   Osc type:      %s", star_osc);
-      write_log_comment(1);
-      sprintf(log_text, "#   FPGA:          %s", star_fpga);
-      write_log_comment(1);
-      sprintf(log_text, "#   Family:        %s", star_family);
-      write_log_comment(1);
-      sprintf(log_text, "#   Variant:       %s", star_variant);
-      write_log_comment(1);
-      return;
+      for(i=0; i<UBX_ROM_INFO; i++) {
+         if(ubx_rom[i][0]) {
+            if(i > 9) sprintf(log_text, "#   ROM %d:        %s", i+1, &ubx_rom[i][0]);
+            else      sprintf(log_text, "#   ROM %d:         %s", i+1, &ubx_rom[i][0]);
+            write_log_comment(1);
+         }
+      }
    }
    else if(rcvr_type == VENUS_RCVR) {
-      if(saw_timing_msg) sprintf(log_text, "#   Unit type:     Venus timing receiver");
-      else               sprintf(log_text, "#   Unit type:     Venus GPS receiver");
+      if(lte_lite)            sprintf(log_text, "#   Unit type:     Jackson Labs LTE GPSDO");
+      else if(saw_venus_raw)  sprintf(log_text, "#   Unit type:     Venus RTK receiver");
+      else if(saw_timing_msg) sprintf(log_text, "#   Unit type:     Venus timing receiver");
+      else                    sprintf(log_text, "#   Unit type:     Venus GPS receiver");
       write_log_comment(1);
       sprintf(log_text, "#   Kernel:        %s", venus_kern);
       write_log_comment(1);
@@ -668,7 +1421,59 @@ int i;
       write_log_comment(1);
       sprintf(log_text, "#   Rev:           %s", venus_rev);
       write_log_comment(1);
-      return;
+   }
+   else if(rcvr_type == X72_RCVR) {
+      if(x72_type == SA22_TYPE) {
+         sprintf(log_text, "#   Unit type:         SA22 rubidium oscillator");
+      }
+      else if(x72_type == X99_TYPE) {
+         sprintf(log_text, "#   Unit type:         X99 rubidium oscillator");
+      }
+      else {
+         sprintf(log_text, "#   Unit type:         X72 rubidium oscillator");
+      }
+      write_log_comment(1);
+
+      sprintf(log_text, "#   FW version:        %.2f", x72_fw);
+      write_log_comment(1);
+      sprintf(log_text, "#   Date:              %s", x72_date);
+      write_log_comment(1);
+      sprintf(log_text, "#   Loader version:    %d", x72_loader);
+      write_log_comment(1);
+      sprintf(log_text, "#   Serial number:     %s", x72_serial);
+      write_log_comment(1);
+      sprintf(log_text, "#   Tuning state:      %d", x72_tune);
+      write_log_comment(1);
+      sprintf(log_text, "#   Osc freq:          %.1f Hz", x72_osc);
+      write_log_comment(1);
+      sprintf(log_text, "#   Crystal freq:      %g Hz", x72_crystal);
+      write_log_comment(1);
+      sprintf(log_text, "#   ACMOS freq:        %g Hz", x72_acmos);
+      write_log_comment(1);
+      sprintf(log_text, "#   Sine freq:         %g Hz", x72_sine);
+      write_log_comment(1);
+      sprintf(log_text, "#   Res temp offset:   %g", x72_res_tempofs);
+      write_log_comment(1);
+      sprintf(log_text, "#   Lamp temp offset:  %g", x72_lamp_tempofs);
+      write_log_comment(1);
+   }
+   else if(rcvr_type == Z12_RCVR) {
+      sprintf(log_text, "#   Unit type:     Ashtech Z12 receiver");
+      write_log_comment(1);
+      sprintf(log_text, "#   Receiver type:   %s", z12_type);
+      write_log_comment(1);
+      sprintf(log_text, "#   Channel option:  %s", z12_chan_opt);
+      write_log_comment(1);
+      sprintf(log_text, "#   Nav version:     %s", z12_nav_ver);
+      write_log_comment(1);
+      sprintf(log_text, "#   Reserved:        %s", z12_rsvd);
+      write_log_comment(1);
+      sprintf(log_text, "#   Channel version: %s", z12_chan_ver);
+      write_log_comment(1);
+      if(z12_site[0]) {
+         sprintf(log_text, "#   Site name:       %s", z12_site);
+         write_log_comment(1);
+      }
    }
    else if(rcvr_type == ZODIAC_RCVR) {
       sprintf(log_text, "#   Unit type:     Zodiac GPS receiver");
@@ -683,56 +1488,109 @@ int i;
       write_log_comment(1);
       sprintf(log_text, "#   Rsvd:          %s", zod_rsvd);
       write_log_comment(1);
-      return;
+   }
+   else if(rcvr_type == ZYFER_RCVR) {
+      sprintf(log_text, "#   Unit type:     Zyfer Nanosync");
+      write_log_comment(1);
+      sprintf(log_text, "#   ID:            %s", zy_id);
+      write_log_comment(1);
+      sprintf(log_text, "#   SN:            %s", zy_sn);
+      write_log_comment(1);
+      sprintf(log_text, "#   PN:            %s", zy_pn);
+      write_log_comment(1);
+      sprintf(log_text, "#   FW:            %s", zy_fw);
+      write_log_comment(1);
+      sprintf(log_text, "#   Mfg:           %s", zy_mfgid);
+      write_log_comment(1);
+      sprintf(log_text, "#   Rev:           %s", zy_rev);
+      write_log_comment(1);
+      sprintf(log_text, "#   GPS:           %s", zy_gps);
+      write_log_comment(1);
+      sprintf(log_text, "#   Prodn:         %s", zy_prod);
+      write_log_comment(1);
+      sprintf(log_text, "#   Date:          %s", zy_date);
+      write_log_comment(1);
+      sprintf(log_text, "#   App version:   %s", zy_app_vers);
+      write_log_comment(1);
+      sprintf(log_text, "#   App prog:      %s", zy_app_prog);
+      write_log_comment(1);
+      sprintf(log_text, "#   App date:      %s", zy_app_date);
+      write_log_comment(1);
+      sprintf(log_text, "#   Option:        %s", zy_option);
+      write_log_comment(1);
+      sprintf(log_text, "#   OSC type:      %s", zy_osc_type);
+      write_log_comment(1);
+   }
+   //
+   //   Trimble receivers follow:
+   //
+   else if(saw_mini) {
+      sprintf(log_text, "#   Unit type:     Trimble Mini-T");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(saw_ntpx) {
+      sprintf(log_text, "#   Unit type:     Nortel NTPX");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(saw_nortel) {
+      sprintf(log_text, "#   Unit type:     Nortel NTGS/NTBW");
+      write_log_comment(1);
+      write_log_tsip_vers();
    }
    else if(res_t) {
       sprintf(log_text, "#   Unit type:     Unknown Resolution-T type receiver");
       write_log_comment(1);
+      write_log_tsip_vers();
    }
-   else if((rcvr_type == TSIP_RCVR) && (tsip_type == STARLOC_RCVR)) {
-      sprintf(log_text, "#   Unit type:     Datum Starloc\n");
+   else if((rcvr_type == TSIP_RCVR) && (tsip_type == STARLOC_TYPE)) {
+      sprintf(log_text, "#   Unit type:     Datum Starloc");
       write_log_comment(1);
+      write_log_tsip_vers();
    }
-   else {
+   else if(ACE3) {
+      sprintf(log_text, "#   Unit type:     Trimble ACE-III");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(ACU_GG) {
+      sprintf(log_text, "#   Unit type:     Trimble Acutime GG");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(ACU_360) {
+      sprintf(log_text, "#   Unit type:     Trimble Acutime 360");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(ACUTIME) {
+      sprintf(log_text, "#   Unit type:     Trimble Acutime");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(PALISADE) {
+      sprintf(log_text, "#   Unit type:     Trimble Palisade");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(SV6_FAMILY) {
+      sprintf(log_text, "#   Unit type:     Trimble SV6/SV8");
+      write_log_comment(1);
+      write_log_tsip_vers();
+   }
+   else if(rcvr_type == TSIP_RCVR) {
       sprintf(log_text, "#   Unit type:     Trimble Thunderbolt%s", ebolt?"-E":"");
       write_log_comment(1);
+      write_log_tsip_vers();
    }
-
-   if(luxor) {
-      sprintf(log_text, "#   HW version:    %u.%lu", (unsigned)luxor_hw_ver, (unsigned long)luxor_hw_rev);
-      write_log_comment(1);
-      sprintf(log_text, "#   Serial number: %u.%lu", (unsigned)luxor_sn_prefix, (unsigned long)luxor_serial_num);
-      write_log_comment(1);
-   }
-   else {
-      sprintf(log_text, "#   Serial number: %u.%lu", sn_prefix, (unsigned long) serial_num);
-      write_log_comment(1);
-      sprintf(log_text, "#   Case s/n:      %u.%lu", case_prefix, (unsigned long) case_sn);
-      write_log_comment(1);
-      sprintf(log_text, "#   Prodn number:  %lu.%u", (unsigned long) prodn_num, prodn_extn);
-      write_log_comment(1);
-      sprintf(log_text, "#   Prodn options: %u", prodn_options);        // from prodn_params message
-      write_log_comment(1);
-      sprintf(log_text, "#   Machine id:    %u", machine_id);
-      write_log_comment(1);
-      if(ebolt) {
-         sprintf(log_text, "#   Hardware code: %u", hw_code);
-         write_log_comment(1);
-      }
-
-      sprintf(log_text, "#   App firmware:  %2d.%-2d  %02d %s %02d", 
-         ap_major, ap_minor,  ap_day, months[ap_month], ap_year);   //!!! docs say 1900
-      write_log_comment(1);
-      sprintf(log_text, "#   GPS firmware:  %2d.%-2d  %02d %s %02d", 
-         core_major, core_minor,  core_day, months[core_month], core_year);  //!!! docs say 1900
-      write_log_comment(1);
-      sprintf(log_text, "#   Mfg time:      %02d:00  %02d %s %04d", 
-         build_hour, build_day, months[build_month], build_year);
+   else  {
+      sprintf(log_text, "#   Unit type:     Unknown");
       write_log_comment(1);
    }
 }
 
-void write_log_header(FILE *file)
+void write_log_header(FILE *file, int why)
 {
 FILE *old_file;
 
@@ -750,14 +1608,71 @@ FILE *old_file;
    if(log_fmt == HEATHER) {
       log_rcvr_type();
    }
-   write_log_id();
+   else if(log_fmt == RINEX) {
+      write_rinex_header(file);
+   }
+
+   if((have_info & INFO_LOGGED) == 0) {
+      write_log_id();
+      have_info |= INFO_LOGGED;
+   }
 
    sprintf(log_text, "#");
    write_log_comment(1);
 
    if(plot_title[0] && (title_type == USER)) {
-      format_plot_title();
+      format_plot_title(plot_title);
       sprintf(log_text, "#TITLE: %s", out);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+
+   if(debug_text[0]) {
+      format_plot_title(debug_text);
+      sprintf(log_text, "#DEBUG1: %s", out);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+   if(debug_text2[0]) {
+      format_plot_title(debug_text2);
+      sprintf(log_text, "#DEBUG2: %s", out);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+   if(debug_text3[0]) {
+      format_plot_title(debug_text3);
+      sprintf(log_text, "#DEBUG3: %s", out);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+   if(debug_text4[0]) {
+      format_plot_title(debug_text4);
+      sprintf(log_text, "#DEBUG4: %s", out);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+   if(debug_text5[0]) {
+      format_plot_title(debug_text5);
+      sprintf(log_text, "#DEBUG5: %s", out);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+   if(debug_text6[0]) {
+      format_plot_title(debug_text6);
+      sprintf(log_text, "#DEBUG6: %s", out);
+      write_log_comment(1);
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+   if(debug_text7[0]) {
+      format_plot_title(debug_text7);
+      sprintf(log_text, "#DEBUG7: %s", out);
       write_log_comment(1);
       sprintf(log_text, "#");
       write_log_comment(1);
@@ -797,10 +1712,10 @@ int sky_shown;
             if(sat[i].azimuth < 10.0) fprintf(file, "  ");
             else if(sat[i].azimuth < 100.0) fprintf(file, " ");
 
-            if((i == SUN_PRN) && (sat[i].sig_level < 0.0)) {
+            if(0 && (i == SUN_PRN) && (sat[i].sig_level < 0.0)) {
                fprintf(file, "  el=\"%.2f\"", 0.0-sat[i].elevation);
             }
-            else if((i == MOON_PRN) && (sat[i].sig_level < 0.0)) {
+            else if(0 && (i == MOON_PRN) && (sat[i].sig_level < 0.0)) {
                fprintf(file, "  el=\"%.2f\"", 0.0-sat[i].elevation);
             }
             else {
@@ -814,7 +1729,7 @@ int sky_shown;
                if(sat[i].sig_level < 10.0) fprintf(file, " ");
 
                if(have_doppler) {
-                  fprintf(file, "  doppler=\"%.10f\"", sat[i].doppler);
+                  fprintf(file, "  doppler=\"%.3f\"", sat[i].doppler);
                   if     (sat[i].doppler >= 10000.0) fprintf(file, " ");
                   else if(sat[i].doppler >= 1000.0)  fprintf(file, "  ");
                   else if(sat[i].doppler >= 100.0)   fprintf(file, "   ");
@@ -827,7 +1742,7 @@ int sky_shown;
                   else if(sat[i].doppler <= -0.0)    fprintf(file, "    ");
                }
                if(have_phase) {
-                  fprintf(file, "  phase=\"%.10f\"", sat[i].code_phase);
+                  fprintf(file, "  phase=\"%.3f\"", sat[i].code_phase);
                   if     (sat[i].code_phase >= 100000.0) ;
                   else if(sat[i].code_phase >= 10000.0)  fprintf(file, " ");
                   else if(sat[i].code_phase >= 1000.0)   fprintf(file, "  ");
@@ -836,7 +1751,41 @@ int sky_shown;
                   else if(sat[i].code_phase >= 0.0)      fprintf(file, "    ");
                }
                if(have_range) {
-                  fprintf(file, "  range=\"%.10f\"", sat[i].range);
+                  fprintf(file, "  range=\"%.3f\"", sat[i].range);
+               }
+               if(have_bias) {
+                  fprintf(file, "  bias=\"%.10g\"", sat[i].sat_bias);
+               }
+
+               if(have_l2_doppler || have_l2_phase || have_l2_range) {
+                  fprintf(file, "  l2_sig=\"%.2f\"", sat[i].l2_sig_level);
+                  if(sat[i].l2_sig_level < 10.0) fprintf(file, " ");
+               }
+
+               if(have_l2_doppler) {
+                  fprintf(file, "  l2_doppler=\"%.3f\"", sat[i].l2_doppler);
+                  if     (sat[i].l2_doppler >= 10000.0) fprintf(file, " ");
+                  else if(sat[i].l2_doppler >= 1000.0)  fprintf(file, "  ");
+                  else if(sat[i].l2_doppler >= 100.0)   fprintf(file, "   ");
+                  else if(sat[i].l2_doppler >= 10.0)    fprintf(file, "    ");
+                  else if(sat[i].l2_doppler >= 0.0)     fprintf(file, "     ");
+                  else if(sat[i].l2_doppler <= -10000.0) ;
+                  else if(sat[i].l2_doppler <= -1000.0) fprintf(file, " ");
+                  else if(sat[i].l2_doppler <= -100.0)  fprintf(file, "  ");
+                  else if(sat[i].l2_doppler <= -10.0)   fprintf(file, "   ");
+                  else if(sat[i].l2_doppler <= -0.0)    fprintf(file, "    ");
+               }
+               if(have_l2_phase) {
+                  fprintf(file, "  l2_phase=\"%.3f\"", sat[i].l2_code_phase);
+                  if     (sat[i].l2_code_phase >= 100000.0) ;
+                  else if(sat[i].l2_code_phase >= 10000.0)  fprintf(file, " ");
+                  else if(sat[i].l2_code_phase >= 1000.0)   fprintf(file, "  ");
+                  else if(sat[i].l2_code_phase >= 100.0)    fprintf(file, "   ");
+                  else if(sat[i].l2_code_phase >= 10.0)     fprintf(file, "   ");
+                  else if(sat[i].l2_code_phase >= 0.0)      fprintf(file, "    ");
+               }
+               if(have_l2_range) {
+                  fprintf(file, "  l2_range=\"%.3f\"", sat[i].l2_range);
                }
                if(have_bias) {
                   fprintf(file, "  bias=\"%.10g\"", sat[i].sat_bias);
@@ -846,23 +1795,23 @@ int sky_shown;
             fprintf(file, "> </sv>\n");
          }
          else if(i == SUN_PRN) {
-            if(sat[i].sig_level < 0.0) {
-               fprintf(file, "#SUN %02d  %5.1f  %-4.1f  %5.1f", 
+            if(0 && (sat[i].sig_level < 0.0)) {
+               fprintf(file, "#SUN  %04d  %5.1f  %-4.1f  %5.1f", 
                  i, sat[i].azimuth, 0.0-sat[i].elevation, sat[i].sig_level);
             }
             else {
-               fprintf(file, "#SUN %02d  %5.1f  %-4.1f  %5.1f", 
+               fprintf(file, "#SUN  %04d  %5.1f  %-4.1f  %5.1f", 
                  i, sat[i].azimuth, sat[i].elevation, sat[i].sig_level);
             }
             fprintf(file, "\n");
          }
          else if(i == MOON_PRN) {
-            if(sat[i].sig_level < 0.0) {
-               fprintf(file, "#MOON %02d  %5.1f  %-4.1f  %5.1f", 
+            if(0 && (sat[i].sig_level < 0.0)) {
+               fprintf(file, "#MOON %04d  %5.1f  %-4.1f  %5.1f", 
                  i, sat[i].azimuth, 0.0-sat[i].elevation, sat[i].sig_level);
             }
             else {
-               fprintf(file, "#MOON %02d  %5.1f  %-4.1f  %5.1f", 
+               fprintf(file, "#MOON %04d  %5.1f  %-4.1f  %5.1f", 
                  i, sat[i].azimuth, sat[i].elevation, sat[i].sig_level);
             }
             fprintf(file, "\n");
@@ -870,8 +1819,8 @@ int sky_shown;
          else {
             fprintf(file, "#SIG %02d  %5.1f  %-4.1f  %5.1f", 
               i, sat[i].azimuth, sat[i].elevation, sat[i].sig_level);
-            if(have_doppler || have_phase || have_bias) {
-               fprintf(file, "  %.10f  %.10f  %.10g", sat[i].doppler, sat[i].code_phase, sat[i].sat_bias);
+            if(have_doppler || have_phase || have_range || have_bias) {
+               fprintf(file, "  %10.3f  %13.3f  %12.3f  %.10g", sat[i].doppler, sat[i].code_phase, sat[i].range, sat[i].sat_bias);
             }
             fprintf(file, "\n");
          }
@@ -890,20 +1839,1317 @@ char *idlwr(int id)
    return &out[0];
 }
 
+
+int show_lpfrs_info(int row,int col, int max_row)
+{
+int col2;
+int color;
+
+   col2 = col + 40;
+   color = WHITE;
+
+   if(SCREEN_HEIGHT <= TINY_HEIGHT) {
+      no_y_margin = 1;
+   }
+   if(max_row < 999) {
+      if(SCREEN_HEIGHT <= 480) {
+         ++row;
+         ++max_row;
+      }
+      fill_rectangle(0,(row+1)*TEXT_HEIGHT, (VER_COL+1)*TEXT_WIDTH-1,(max_row-row)*TEXT_HEIGHT, BLACK);
+      goto info_table;
+   }
+
+   erase_screen();
+     
+   if(SCREEN_WIDTH >= NARROW_SCREEN) {
+//    show_prs_status(row,col2+40-1, MOUSE_ROW); 
+   }
+
+   info_table:
+// sprintf(out, "Freq adj:             %g PPB", lpfrs_freq*1.0E9);
+   sprintf(out, "Freq adj: (C:%02X F:%02X) %g PPB", lpfrs_c_rval, lpfrs_f_rval, lpfrs_freq*1.0E9);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "HH - photocell:       %7.5f V", lpfrs_hh);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "GG - Rb signal:       %7.5f V", lpfrs_gg);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "EE - varactor:        %7.5f V", lpfrs_ee);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "DD - EFC input:       %7.5f V", lpfrs_dd);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "CC - lamp current:    %7.5f mA", lpfrs_cc);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "BB - heater current:  %7.5f mA", lpfrs_bb);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "AA - 90 MHz AGC:      %7.5f V", lpfrs_aa);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "FF - reserved:        %7.5f", lpfrs_ff);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   done:
+   return row;
+}
+
+
+int show_sa35_info(int row,int col, int max_row)
+{
+int col2;
+int color;
+
+   // !!!!! placeholder
+   col2 = col + 40;
+   color = WHITE;
+
+   if(SCREEN_HEIGHT <= TINY_HEIGHT) {
+      no_y_margin = 1;
+   }
+   if(max_row < 999) {
+      if(SCREEN_HEIGHT <= 480) {
+         ++row;
+         ++max_row;
+      }
+      fill_rectangle(0,(row+1)*TEXT_HEIGHT, (VER_COL+1)*TEXT_WIDTH-1,(max_row-row)*TEXT_HEIGHT, BLACK);
+      goto info_table;
+   }
+
+   erase_screen();
+     
+   if(SCREEN_WIDTH >= NARROW_SCREEN) {
+//    show_prs_status(row,col2+40-1, MOUSE_ROW); 
+   }
+
+   info_table:
+   sprintf(out, "Freq adj: (C:%02X F:%02X) %g PPB", lpfrs_c_rval, lpfrs_f_rval, lpfrs_freq*1.0E9);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "TEC temperature:      %7.5f C", sa35_tec);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "RF voltage:           %7.5f V", sa35_rf);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "Cell heater current:  %7.5f mA", sa35_heater);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "DC signal:            %7.5f V", sa35_dc);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "EFC input:            %7.5f V", sa35_efc);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+// sa35_dds
+// sa35_tune
+// sa35_center_freq
+// sa35_efc_enable
+
+   done:
+   return row;
+}
+
+
+int show_sro_info(int row,int col, int max_row)
+{
+int col2;
+int color;
+
+   col2 = col + 40;
+   color = WHITE;
+
+   if(SCREEN_HEIGHT <= TINY_HEIGHT) {
+      no_y_margin = 1;
+   }
+   if(max_row < 999) {
+      if(SCREEN_HEIGHT <= 480) {
+         ++row;
+         ++max_row;
+      }
+      fill_rectangle(0,(row+1)*TEXT_HEIGHT, (VER_COL+1)*TEXT_WIDTH-0,(max_row-row)*TEXT_HEIGHT, BLACK);
+      goto info_table;
+   }
+
+   erase_screen();
+     
+   if(SCREEN_WIDTH >= NARROW_SCREEN) {
+//    show_prs_status(row,col2+40-1, MOUSE_ROW); 
+   }
+
+   info_table:
+   if(sro_r4F & 0x03) {
+      sprintf(out, "R4F- DDS limited:     %d", sro_r4F);
+      vidstr(row++,col, RED, out);
+   }
+
+   if(row >= max_row) goto done;
+   sprintf(out, "HH - EFC input:       %7.5f V", sro_hh);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "FF - Rb signal:       %7.5f V", sro_ff);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "EE - photocell:       %7.5f V", sro_ee);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "DD - varactor:        %7.5f V", sro_dd);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "CC - lamp current:    %7.5f %%", sro_cc);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "BB - heater current:  %7.5f %%", sro_bb);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "AA - reserved:        %7.5f", sro_aa);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "GG - reserved:        %7.5f", sro_gg);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+
+   sprintf(out, "VS - PPSref sigma:    %.1f ns", sro_vs);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "VT - loop time const: %d sec", sro_vt);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "TC - time constant:   %d sec", sro_tc);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "TR - track mode:      %d", sro_tr);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "SY - sync mode:       %d", sro_sy);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "RA - phase adjust:    %d", sro_ra);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "CO - fine phase ofs:  %d ns", sro_co);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "DE - PPS delay:       %.1f ns", (double) sro_de*SRO_TICK);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "PW - PPS width:       %.1f us", (double) sro_pw*SRO_TICK/1000.0);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "FC - freq correction: %g PPT", ((double)sro_fc)*5.12E-13*1.0E12);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "FS - freq save mode:  %d", sro_fs);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "TW - tracking window  %.1f ns", (double) sro_tw*SRO_TICK);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "AW - alarm window:    %.1f ns", (double) sro_aw*SRO_TICK);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "GF - go fast mode:    %d", sro_gf);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "Freq limitation:      %.3f PPT", sro_freq_lim*1.0E12);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   sprintf(out, "Startup freq corr:    %.3f PPT", sro_poweron_fc*1.0E12);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+
+   done:
+   no_y_margin = 0;
+   return row;
+}
+
+
+int show_prs_info(int row,int col, int max_row)
+{
+int col2;
+int color;
+int temp;
+
+   col2 = col + 40;
+   color = WHITE;
+
+   if(SCREEN_HEIGHT <= TINY_HEIGHT) {
+      no_y_margin = 1;
+   }
+   if(max_row < 999) goto info_table;
+
+   erase_screen();
+     
+   if(SCREEN_WIDTH >= NARROW_SCREEN) {
+      show_prs_status(row,col2+40-1, MOUSE_ROW); 
+   }
+
+   if(have_prs_lm) {
+      sprintf(out, "LM - lock mode:      %d", prs_lm);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_lo) {
+      sprintf(out, "LO - lock:           %d", prs_lo);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ep) {
+      sprintf(out, "EP - enable power:   %d", prs_ep);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_fc) {
+      sprintf(out, "FC - freq control:   %d %d", prs_fc1,prs_fc2);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "                     %g", prs_fc_ppt);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_fc2) {
+      sprintf(out, "FC!- eeprom FC vals: %d %d", prs_ee_fc1,prs_ee_fc2);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "                     %g", prs_ee_fc_ppt);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ds & 0x01) {
+      sprintf(out, "DS1- 2nd harmonic:   %d", prs_ds1);
+      vidstr(row++,col, WHITE, out);
+   }
+   if(have_prs_ds & 0x02) {
+      sprintf(out, "DS2- sig level:      %d", prs_ds2);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_sf) {
+      sprintf(out, "SF - set frequency:  %d", prs_sf);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ss) {
+      sprintf(out, "SS - set slope:      %d", prs_ss);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ph) {
+      sprintf(out, "PH - FLL phase:      %d", prs_ph);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_sp) {
+      sprintf(out, "SP - FLL params:     %d  %d  %d", prs_sp[0],prs_sp[1],prs_sp[2]);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ms) {
+      sprintf(out, "MS - mag switching:  %d", prs_ms);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_mo) {
+      sprintf(out, "MO - mag offset:     %d", prs_mo);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_mr) {
+      sprintf(out, "MR - mag read:       %d", prs_mr);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_tt) {
+      sprintf(out, "TT - time tag:       %d", prs_tt);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ts) {
+      sprintf(out, "TS - time slope:     %d", prs_ts);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_to) {
+      sprintf(out, "TO - time offset:    %d", prs_to);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ps) {
+      sprintf(out, "PS - pulse slope:    %d", prs_ps);
+      vidstr(row++,col, WHITE, out);
+   }
+
+
+
+   if(have_prs_pl) {
+      sprintf(out, "PL - phase locking:  %d", prs_pl);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_ga) {
+      sprintf(out, "GA - FLL gain:       %d", prs_ga);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_pt) {
+      sprintf(out, "PT - PLL TC:         %d", prs_pt);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_pf) {
+      sprintf(out, "PF - PLL stability:  %d", prs_pf);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   if(have_prs_pi) {
+      sprintf(out, "PI - PLL integrator: %d", prs_pi);
+      vidstr(row++,col, WHITE, out);
+   }
+
+
+   if(have_prs_st) {
+      ++row;
+      sprintf(out, "ST - Status byte 1:  0x%02X", prs_st[0]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "ST - Status byte 2:  0x%02X", prs_st[1]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "ST - Status byte 3:  0x%02X", prs_st[2]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "ST - Status byte 4:  0x%02X", prs_st[3]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "ST - Status byte 5:  0x%02X", prs_st[4]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "ST - Status byte 6:  0x%02X", prs_st[5]);
+      vidstr(row++,col, WHITE, out);
+   }
+
+
+
+   row = 1;
+   col = col2;
+   if(have_prs_ad) {
+      sprintf(out, "AD0  - Spare ADC:         %.3f V", prs_ad[0]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      info_table:
+      sprintf(out, "AD1  - Heater supply:     %.3f V", prs_ad[1]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD2  - +24V supply:       %.3f V", prs_ad[2]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD3  - Lamp FET drain:    %.3f V", prs_ad[3]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD4  - Lamp FET gate:     %.3f V", prs_ad[4]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD5  - OCXO heater:       %.3f V", prs_ad[5]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD6  - Cell heater:       %.3f V", prs_ad[6]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD7  - Lamp heater:       %.3f V", prs_ad[7]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD8  - Photo signal:      %.3f", prs_ad[8]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD9  - I/V converter      %.3f V", prs_ad[9]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+
+      temp = round_temp;
+      round_temp = 2;
+      sprintf(out, "AD10 - Case temperature:  %s", fmt_temp(prs_ad[10]));
+      round_temp = temp;
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD11 - XTAL thermistors:  %.3f", prs_ad[11]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD12 - Cell thermistors:  %.3f", prs_ad[12]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD13 - Lamp thermistors:  %.3f", prs_ad[13]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD14 - Freq cal pot:      %.3f", prs_ad[14]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD15 - Analog ground:     %.3f V", prs_ad[15]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD16 - TCXO varactor:     %.3f V", prs_ad[16]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD17 - VCO varactor:      %.3f V", prs_ad[17]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD18 - Multiplier gain:   %.3f V", prs_ad[18]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "AD19 - RF synth lock:     %.3f V", prs_ad[19]);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+      if(max_row < 999) goto done;
+   }
+
+   if(have_prs_sd) {
+      ++row;
+      sprintf(out, "SD0  - RF amplitude DAC:  %d", prs_sd[0]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "SD1  - PPS delay DAC:     %d", prs_sd[1]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "SD2  - Lamp drain DAC:    %d", prs_sd[2]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "SD3  - Lamp temp DAC:     %d", prs_sd[3]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "SD4  - XTAL temp DAC:     %d", prs_sd[4]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "SD5  - Cell temp DAC:     %d", prs_sd[5]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "SD6  - OSC amplitude DAC: %d", prs_sd[6]);
+      vidstr(row++,col, WHITE, out);
+      sprintf(out, "SD7  - RF deviation DAC:  %d", prs_sd[7]);
+      vidstr(row++,col, WHITE, out);
+   }
+
+   done:
+   no_y_margin = 0;
+   return row;
+}
+
+
+int show_x72_info(int row,int col, int max_row)
+{
+int col2;
+int color;
+int temp;
+int last_status_row;
+
+   col2 = col + 40 - 1;
+   color = WHITE;
+   temp = 0;
+   last_status_row = row;
+
+   if(SCREEN_HEIGHT <= TINY_HEIGHT) {
+      no_y_margin = 1;
+   }
+   if(max_row < 999) goto info_table;
+
+   erase_screen();
+     
+   last_status_row = show_x72_status(row,col+40-1, MOUSE_ROW); 
+
+   if(have_x72_fw) {
+      sprintf(out, "FW version:       %.2f  ", x72_fw);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(x72_date[0]) {
+      sprintf(out, "Date:             %s  ", x72_date);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_loader) {
+      sprintf(out, "Loader version:   %d  ", x72_loader);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(x72_serial[0]) {
+      sprintf(out, "Serial number:    %s  ", x72_serial);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_tune) {
+      sprintf(out, "Tuning state:     %d  ", x72_tune);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   sprintf(out, "OSC freq:         %.1f Hz  ", x72_osc);
+   vidstr(row++,col, WHITE, out);
+   if(row >= max_row) goto done;
+   if(have_x72_crystal) {
+      sprintf(out, "Crystal freq:     %g Hz  ", x72_crystal);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_acmos) {
+      sprintf(out, "ACMOS freq:       %g Hz  ", x72_acmos);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_sine) {
+      sprintf(out, "Sine freq:        %g Hz  ", x72_sine);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_res_tempofs) {
+      sprintf(out, "Res temp offset:  %g   ", x72_res_tempofs);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_lamp_tempofs) {
+      sprintf(out, "Lamp temp offset: %g   ", x72_lamp_tempofs);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dds_word) {
+      sprintf(out, "User DDS offset:  %g   ", x72_dds_word);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+
+      sprintf(out, "                  %g   ", x72_dds_word*1.0E-11);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(user_set_x72_acmos_freq && last_x72_acmos_freq) {
+      sprintf(out, "User ACOMS freq:  %g Hz   ", (x72_osc / 2.0) / (double) last_x72_acmos_freq);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   ++row;
+   if(row >= max_row) goto done;
+
+
+   info_table:
+   if(row >= last_status_row) last_status_row = row;
+   row = last_status_row + 1;
+
+   if(have_x72_dmp17) {
+      sprintf(out, "dMP17:          %g   ", x72_dmp17);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dmp5) {
+      sprintf(out, "dMP5:           %g   ", x72_dmp5);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_plmp) {
+      sprintf(out, "PLmp:           %g   ", x72_plmp);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_pres) {
+      sprintf(out, "PRes:           %g   ", x72_pres);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dlvthermc) {
+      sprintf(out, "dLVthermc:      %g   ", x72_dlvthermc);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_drvthermc) {
+      sprintf(out, "dRVthermc:      %g   ", x72_drvthermc);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dlvolt) {
+      sprintf(out, "dLVolt:         %g   ", x72_dlvolt);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dmvoutc) {
+      sprintf(out, "dMVoutC:        %g   ", x72_dmvoutc);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dlvoutc) {
+      sprintf(out, "dLVoutC:        %g   ", x72_dlvoutc);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_drvoutc) {
+      sprintf(out, "dRVoutC:        %g   ", x72_drvoutc);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dmv2demavg) {
+      sprintf(out, "dMV2demAvg:     %g   ", x72_dmv2demavg);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_dhtrvolt) {
+      sprintf(out, "dHtrVolt:       %g V   ", x72_dhtrvolt);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   temp = round_temp;
+   round_temp = 2;
+   if(have_x72_dtemplo) {
+      sprintf(out, "dTempLo:        %s   ", fmt_temp(x72_dtemplo));
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   round_temp = 3;
+   if(have_x72_dtemphi) {
+      sprintf(out, "dTempHi:        %s   ", fmt_temp(x72_dtemphi));
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   round_temp = temp;
+
+   if(have_x72_dvoltlo) {
+      sprintf(out, "dVoltLo:        %g V   ", x72_dvoltlo);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_dvolthi) {
+      sprintf(out, "dVoltHi:        %g V   ", x72_dvolthi);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(max_row >= 999) {    // show zoomed data screen in two columns
+      col = col2;
+      row = last_status_row+1;
+   }
+
+   if(have_x72_creg) {
+      sprintf(out, "iFpgaCtl:       0x%04X   ", x72_creg);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_pps) {
+      sprintf(out, "1PPS Delta:     %-8d ", x72_pps);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_scont) {
+      sprintf(out, "SCont:          %d   ", x72_scont);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_sernum) {
+      sprintf(out, "SerNum:         %d   ", x72_sernum);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_lhhrs) {
+      sprintf(out, "LHHrs:          %d   ", x72_lhhrs);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_lhticks) {
+      sprintf(out, "LHTicks         %d   ", x72_lhticks);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_x72_rhhrs) {
+      sprintf(out, "RHHrs:          %d   ", x72_rhhrs);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_rhticks) {
+      sprintf(out, "RHTicks         %d   ", x72_rhticks);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   if(have_lifetime) {
+      sprintf(out, "PwrHrs:         %d   ", scpi_life);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   if(have_x72_pwrticks) {
+      sprintf(out, "PwrTicks        %d   ", x72_pwrticks);
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+
+   temp = round_temp;
+   round_temp = 2;
+   if(have_temperature) {
+      sprintf(out, "dCurTemp:       %s   ", fmt_temp(temperature));
+      vidstr(row++,col, WHITE, out);
+      if(row >= max_row) goto done;
+   }
+   round_temp = temp;
+
+   done:
+   no_y_margin = 0;
+   return row;
+}
+
+
+
+void show_cs_log(int row,int col, int extended)
+{
+int i;
+int count;
+
+   vidstr(row,col, GREEN, "Log: Message");
+   ++row;
+   count = 0;
+   for(i=cs_log_count-1; i>=0; i--) {
+      if(cs_log_msg[i][0]) {
+         vidstr(row,col, WHITE, &blanks[TEXT_COLS-LOG_MSG_LEN]);
+         vidstr(row,col, WHITE, cs_log_msg[i]);
+         ++row;
+         ++count;
+         if(count >= CS_LOG_SHOW) break;
+      }
+   }
+}
+
+
+void show_cs_val(int row,int col, int color)
+{
+char *s;
+int i;
+
+   s = strchr(out, ':');
+   if(s == 0) return;
+
+   i = s - &out[0] + 1;
+   out[i] = 0;
+   i = strlen(out);
+
+   vidstr(row,col, WHITE, &blanks[TEXT_COLS-40]);
+   vidstr(row,col, GREEN, out);
+   vidstr(row,col+i+1, color, &out[i+1]);
+}
+
+
+void show_cs_info()
+{
+int row, col, col2;
+int color;
+
+   row = 1;
+   col = 3;
+   col2 = 40;
+   color = WHITE;
+   if(SCREEN_HEIGHT <= TINY_HEIGHT) {
+      no_y_margin = 1;
+   }
+
+   erase_screen();
+   show_cs_log(row+1,col2, 0);
+
+   if(unit_name[0]) {
+      sprintf(out,  "Device:   %s", unit_name);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(scpi_mfg[0]) {
+      sprintf(out,  "Mfg:      %s", scpi_mfg);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(scpi_sn[0]) {
+      sprintf(out,  "Serial:   %s", scpi_sn);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(scpi_fw[0]) {
+      sprintf(out,  "Firmware: %s", scpi_fw);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(have_cs_cbtid) {
+      sprintf(out,  "CBT ID:   %s", cs_cbtid);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   ++row;
+
+
+   sprintf(out, "Time:        %g   %02d:%02d:%02d", cs_mjd, cs_hours,cs_minutes,cs_seconds);
+   show_cs_val(row,col, color);
+   ++row;
+
+   if(have_cs_glob) {
+      sprintf(out, "Status:      %s", cs_glob);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(have_cs_cont)    { 
+      if     (cs_cont == 2) sprintf(out,  "Operation:   Continuous");
+      else if(cs_cont == 1) sprintf(out,  "Operation:   Enabled");
+      else if(cs_cont == 0) sprintf(out,  "Operation:   OFF");
+      else                  sprintf(out,  "Operation:   %d?", cs_cont);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(no_y_margin == 0) ++row;
+
+   if(have_cs_leapstate) {
+      if(cs_leap_state) sprintf(out, "Leap second: Enabled");
+      else              sprintf(out, "Leap second: Disabled");
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(have_cs_leapdur) { 
+      sprintf(out,  "Leap dur:    %d seconds", cs_leapdur);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(have_cs_leapmjd) { 
+      sprintf(out,  "Leap MJD:    %g", cs_leapmjd);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(no_y_margin == 0) ++row;
+
+   if(have_cs_sync)    { 
+      sprintf(out,  "Sync:        %s", cs_sync);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(have_cs_disp)    { 
+      if(cs_disp) sprintf(out,  "Display:     ON");
+      else        sprintf(out,  "Display:     OFF");
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(have_cs_standby) { 
+      if(cs_standby) sprintf(out,  "Mode:        Standby");
+      else           sprintf(out,  "Mode:        Operating");
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   if(have_cs_remote)  { 
+      if(cs_remote) sprintf(out, "Interface:   Remote");
+      else          sprintf(out, "Interface:   Local");
+      show_cs_val(row,col, color);
+      ++row;
+   }
+
+   if(have_cs_slew)    { 
+      sprintf(out, "Slew:        %g", cs_slew);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+
+
+   if(have_cs_supply)    { 
+      sprintf(out,  "Power:       %s", cs_supply);
+      show_cs_val(row,col, color);
+      ++row;
+   }
+   ++row;
+
+   if(have_cs_freq1)   { 
+      sprintf(out,  "Freq1:       %.1f MHz", cs_freq1/1.0E6);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_freq2)   { 
+      sprintf(out,  "Freq2:       %.1f MHz", cs_freq2/1.0E6);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+   if(no_y_margin == 0) ++row;
+
+   if(have_cs_ster)    { 
+      if(cs_ster == 0) sprintf(out,  "Steering:    0E-15");
+      else             sprintf(out,  "Steering:    %g", cs_ster);
+      show_cs_val(row,col, color);
+   }
+   if(have_dac) {
+      sprintf(out,  "EFC:         %g %%", dac_voltage);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+   if(have_cs_rfam & 0x01)    { 
+      sprintf(out,  "RF Ampl 1:   %g %%", cs_rfam1);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_rfam & 0x02)    { 
+      sprintf(out,  "RF Ampl 2:   %g %%", cs_rfam2);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+   if(have_cs_emul)    { 
+      sprintf(out,  "E-mult:      %g V", cs_emul);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_gain)    { 
+      sprintf(out,  "Gain:        %g %%", cs_gain);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+   if(no_y_margin == 0) ++row;
+
+
+   if(have_cs_beam)    { 
+      sprintf(out,  "Beam:        %g nA", cs_beam);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_cfield)  { 
+      sprintf(out,  "C-field:     %g mA", cs_cfield);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+
+   if(have_cs_coven)   { 
+      sprintf(out,  "Cesium oven: %g V", cs_coven);
+      show_cs_val(row,col, color);
+   }
+   ++row;
+
+   if(have_cs_qoven)   { 
+      sprintf(out,  "Quartz oven: %g V", cs_qoven);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_pump)    { 
+      sprintf(out,  "Ion pump:    %g uA", cs_pump);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+   if(have_cs_hwi)     { 
+      sprintf(out,  "HWI:         %g V", cs_hwi);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_msp)     { 
+      sprintf(out,  "Mass spec:   %g V", cs_msp);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+
+   if(have_cs_pll & 0x01) { 
+      sprintf(out,  "SAW pll:     %g V", cs_pll_saw);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_pll & 0x02) { 
+      sprintf(out,  "DRO pll:     %g V", cs_pll_dro);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+   if(have_cs_pll & 0x04) { 
+      sprintf(out,  "87MHz PLL:   %g V", cs_pll_87);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_pll & 0x08)     { 
+      sprintf(out,  "uP PLL:      %g V", cs_pll_up);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+
+   if(have_cs_volt & 0x02)    { 
+      sprintf(out,  "+12V supply: %g V", cs_volt2);
+      show_cs_val(row,col, color);
+   }
+   if(have_cs_volt & 0x04)    { 
+      sprintf(out,  "-12V supply: %g V", cs_volt3);
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+   if(have_cs_volt & 0x01)    { 
+      sprintf(out,  "+5V supply:  %g V", cs_volt1);
+      show_cs_val(row,col, color);
+   }
+   if(have_temperature)    { 
+      sprintf(out,  "Temperature: %s", fmt_temp(temperature));
+      show_cs_val(row,col2, color);
+   }
+   ++row;
+
+   no_y_margin = 0;
+}
+
+
+
+
+void log_cs_xml(FILE *file)
+{
+   if(file == 0) return;
+
+   if(have_cs_beam)    fprintf(file, "        <beam> %g </beam>\n", cs_beam);
+   if(have_cs_cfield)  fprintf(file, "        <cfield> %g </cfield>\n", cs_cfield);
+   if(have_cs_pump)    fprintf(file, "        <pump> %g </pump>\n", cs_pump);
+   if(have_cs_gain)    fprintf(file, "        <gain> %g </gain>\n", cs_gain);
+   if(have_cs_emul)    fprintf(file, "        <emult> %g </emult>\n", cs_emul);
+   if(have_cs_hwi)     fprintf(file, "        <hwi> %g </hwi>\n", cs_hwi);
+   if(have_cs_msp)     fprintf(file, "        <mspec> %g </mspec>\n", cs_msp);
+   if(have_cs_coven)   fprintf(file, "        <coven> %g </coven>\n", cs_coven);
+   if(have_cs_qoven)   fprintf(file, "        <qoven> %g </qoven>\n", cs_qoven);
+
+   if(have_cs_rfam & 0x01)    fprintf(file, "        <rfampl1> %g </rfampl1>\n", cs_rfam1);
+   if(have_cs_rfam & 0x02)    fprintf(file, "        <rfampl2> %g </rfampl2>\n", cs_rfam2);
+
+   if(have_cs_pll & 0x01)     fprintf(file, "        <dro> %g </dro>\n", cs_pll_dro);
+   if(have_cs_pll & 0x02)     fprintf(file, "        <saw> %g </saw>\n", cs_pll_saw);
+   if(have_cs_pll & 0x04)     fprintf(file, "        <87mhz> %g </87mhz>\n", cs_pll_87);
+   if(have_cs_pll & 0x08)     fprintf(file, "        <up> %g </up>\n", cs_pll_up);
+
+   if(have_cs_volt & 0x01)    fprintf(file, "        <volt1> %g </volt1>\n", cs_volt1);
+   if(have_cs_volt & 0x02)    fprintf(file, "        <volt2> %g </volt2>\n", cs_volt2);
+   if(have_cs_volt & 0x04)    fprintf(file, "        <volt3> %g </volt3>\n", cs_volt3);
+
+   if(have_cs_freq1)   fprintf(file, "        <freq1> %.1f </freq1>\n", cs_freq1);
+   if(have_cs_freq2)   fprintf(file, "        <freq2> %.1f </freq2>\n", cs_freq2);
+   if(have_cs_ster)    fprintf(file, "        <ster> %g </ster>\n", cs_ster);
+   if(have_cs_slew)    fprintf(file, "        <slew> %g </slew>\n", cs_slew);
+
+   if(have_cs_supply)  fprintf(file, "        <supply> %s </supply>\n", cs_supply);
+
+   if(have_cs_leapdur) fprintf(file, "        <leapdur> %d </leapdur>\n", cs_leapdur);
+   if(have_cs_leapmjd) fprintf(file, "        <leapmjd> %g </leapmjd>\n", cs_leapmjd);
+
+   if(have_cs_cont)    fprintf(file, "        <cont> %d </cont>\n", cs_cont);
+   if(have_cs_sync)    fprintf(file, "        <sync> %s </sync>\n", cs_sync);
+   if(have_cs_disp)    fprintf(file, "        <disp> %d </disp>\n", cs_disp);
+   if(have_cs_standby) fprintf(file, "        <standby> %d </standby>\n", cs_standby);
+   if(have_cs_remote)  fprintf(file, "        <remote> %d </remote>\n", cs_remote);
+}
+
+
+void log_lpfrs_xml(FILE *file)
+{
+   fprintf(file, "        <aa>%g</aa>\n", lpfrs_aa);
+   fprintf(file, "        <bb>%g</bb>\n", lpfrs_bb);
+   fprintf(file, "        <cc>%g</cc>\n", lpfrs_cc);
+   fprintf(file, "        <dd>%g</dd>\n", lpfrs_dd);
+   fprintf(file, "        <ee>%g</ee>\n", lpfrs_ee);
+   fprintf(file, "        <ff>%g</ff>\n", lpfrs_ff);
+   fprintf(file, "        <gg>%g</gg>\n", lpfrs_gg);
+   fprintf(file, "        <hh>%g</hh>\n", lpfrs_hh);
+}
+
+
+void log_sa35_xml(FILE *file)
+{
+   // !!!!! placeholder
+}
+
+
+void log_sro_xml(FILE *file)
+{
+   fprintf(file, "        <aa>%g</aa>\n", sro_aa);
+   fprintf(file, "        <bb>%g</bb>\n", sro_bb);
+   fprintf(file, "        <cc>%g</cc>\n", sro_cc);
+   fprintf(file, "        <dd>%g</dd>\n", sro_dd);
+   fprintf(file, "        <ee>%g</ee>\n", sro_ee);
+   fprintf(file, "        <ff>%g</ff>\n", sro_ff);
+   fprintf(file, "        <gg>%g</gg>\n", sro_gg);
+   fprintf(file, "        <hh>%g</hh>\n", sro_hh);
+}
+
+
+void log_prs_xml(FILE *file)
+{
+   if(file == 0) return;
+
+   if(have_prs_lm)             fprintf(file, "        <lm> %d </lm>\n", prs_lm);
+   if(have_prs_lo)             fprintf(file, "        <lo> %d </lo>\n", prs_lo);
+
+   if(have_prs_fc & 0x01)      fprintf(file, "        <fc1> %d </fc1>\n", prs_fc1);
+   if(have_prs_fc & 0x02)      fprintf(file, "        <fc2> %d </fc2>\n", prs_fc2);
+
+   if(have_prs_ds & 0x01)      fprintf(file, "        <ds1> %d </ds1>\n", prs_ds1);
+   if(have_prs_ds & 0x02)      fprintf(file, "        <ds2> %d </ds2>\n", prs_ds2);
+
+   if(have_prs_sf)             fprintf(file, "        <sf> %d </sf>\n", prs_sf);
+   if(have_prs_ss)             fprintf(file, "        <ss> %d </ss>\n", prs_ss);
+   if(have_prs_ph)             fprintf(file, "        <ph> %d </ph>\n", prs_ph);
+
+   if(have_prs_sp & (1 << 0))  fprintf(file, "        <sp1> %d </sp1>\n", prs_sp[0]);
+   if(have_prs_sp & (1 << 1))  fprintf(file, "        <sp2> %d </sp2>\n", prs_sp[1]);
+   if(have_prs_sp & (1 << 2))  fprintf(file, "        <sp3> %d </sp3>\n", prs_sp[2]);
+
+   if(have_prs_ms)             fprintf(file, "        <ms> %d </ms>\n", prs_ms);
+   if(have_prs_mo)             fprintf(file, "        <mo> %d </mo>\n", prs_mo);
+   if(have_prs_mr)             fprintf(file, "        <mr> %d </mr>\n", prs_mr);
+
+   if(have_prs_tt)             fprintf(file, "        <tt> %d </tt>\n", prs_tt);
+   if(have_prs_ts)             fprintf(file, "        <ts> %d </ts>\n", prs_ts);
+   if(have_prs_to)             fprintf(file, "        <to> %d </to>\n", prs_to);
+
+   if(have_prs_ps)             fprintf(file, "        <ps> %d </ps>\n", prs_ps);
+   if(have_prs_pl)             fprintf(file, "        <pl> %d </pl>\n", prs_pl);
+   if(have_prs_ep)             fprintf(file, "        <ep> %d </ep>\n", prs_ep);
+
+   if(have_prs_ga)             fprintf(file, "        <ga> %d </ga>\n", prs_ga);
+   if(have_prs_pt)             fprintf(file, "        <pt> %d </pt>\n", prs_pt);
+   if(have_prs_pf)             fprintf(file, "        <pf> %d </pf>\n", prs_pf);
+   if(have_prs_pi)             fprintf(file, "        <pi> %d </pi>\n", prs_pi);
+
+   if(have_prs_ad & (1 << 0))  fprintf(file, "        <ad0> %.3f </ad0>\n", prs_ad[0]);
+   if(have_prs_ad & (1 << 1))  fprintf(file, "        <ad1> %.3f </ad1>\n", prs_ad[1]);
+   if(have_prs_ad & (1 << 2))  fprintf(file, "        <ad2> %.3f </ad2>\n", prs_ad[2]);
+   if(have_prs_ad & (1 << 3))  fprintf(file, "        <ad3> %.3f </ad3>\n", prs_ad[3]);
+   if(have_prs_ad & (1 << 4))  fprintf(file, "        <ad4> %.3f </ad4>\n", prs_ad[4]);
+   if(have_prs_ad & (1 << 5))  fprintf(file, "        <ad5> %.3f </ad5>\n", prs_ad[5]);
+   if(have_prs_ad & (1 << 6))  fprintf(file, "        <ad6> %.3f </ad6>\n", prs_ad[6]);
+   if(have_prs_ad & (1 << 7))  fprintf(file, "        <ad7> %.3f </ad7>\n", prs_ad[7]);
+   if(have_prs_ad & (1 << 8))  fprintf(file, "        <ad8> %.3f </ad8>\n", prs_ad[8]);
+   if(have_prs_ad & (1 << 9))  fprintf(file, "        <ad9> %.3f </ad9>\n", prs_ad[9]);
+   if(have_prs_ad & (1 << 10)) fprintf(file, "        <ad10> %.3f </ad10>\n", prs_ad[10]);
+   if(have_prs_ad & (1 << 11)) fprintf(file, "        <ad11> %.3f </ad11>\n", prs_ad[11]);
+   if(have_prs_ad & (1 << 12)) fprintf(file, "        <ad12> %.3f </ad12>\n", prs_ad[12]);
+   if(have_prs_ad & (1 << 13)) fprintf(file, "        <ad13> %.3f </ad13>\n", prs_ad[13]);
+   if(have_prs_ad & (1 << 14)) fprintf(file, "        <ad14> %.3f </ad14>\n", prs_ad[14]);
+   if(have_prs_ad & (1 << 15)) fprintf(file, "        <ad15> %.3f </ad15>\n", prs_ad[15]);
+   if(have_prs_ad & (1 << 16)) fprintf(file, "        <ad16> %.3f </ad16>\n", prs_ad[16]);
+   if(have_prs_ad & (1 << 17)) fprintf(file, "        <ad17> %.3f </ad17>\n", prs_ad[17]);
+   if(have_prs_ad & (1 << 18)) fprintf(file, "        <ad18> %.3f </ad18>\n", prs_ad[18]);
+   if(have_prs_ad & (1 << 19)) fprintf(file, "        <ad19> %.3f </ad19>\n", prs_ad[19]);
+
+   if(have_prs_sd & (1 << 0))  fprintf(file, "        <sd0> %d </sd0>\n", prs_sd[0]);
+   if(have_prs_sd & (1 << 1))  fprintf(file, "        <sd1> %d </sd1>\n", prs_sd[1]);
+   if(have_prs_sd & (1 << 2))  fprintf(file, "        <sd2> %d </sd2>\n", prs_sd[2]);
+   if(have_prs_sd & (1 << 3))  fprintf(file, "        <sd3> %d </sd3>\n", prs_sd[3]);
+   if(have_prs_sd & (1 << 4))  fprintf(file, "        <sd4> %d </sd4>\n", prs_sd[4]);
+   if(have_prs_sd & (1 << 5))  fprintf(file, "        <sd5> %d </sd5>\n", prs_sd[5]);
+   if(have_prs_sd & (1 << 6))  fprintf(file, "        <sd6> %d </sd6>\n", prs_sd[6]);
+   if(have_prs_sd & (1 << 7))  fprintf(file, "        <sd7> %d </sd7>\n", prs_sd[7]);
+                            
+   if(have_prs_st & (1 << 0))  fprintf(file, "        <st1> %d </st1>\n", prs_st[0]);
+   if(have_prs_st & (1 << 1))  fprintf(file, "        <st2> %d </st2>\n", prs_st[1]);
+   if(have_prs_st & (1 << 2))  fprintf(file, "        <st3> %d </st3>\n", prs_st[2]);
+   if(have_prs_st & (1 << 3))  fprintf(file, "        <st4> %d </st4>\n", prs_st[3]);
+   if(have_prs_st & (1 << 4))  fprintf(file, "        <st5> %d </st5>\n", prs_st[4]);
+   if(have_prs_st & (1 << 5))  fprintf(file, "        <st6> %d </st6>\n", prs_st[5]);
+}
+
+void log_x72_xml(FILE *file)
+{
+   if(file == 0) return;
+                                                                         
+   if(have_x72_dmp17)      fprintf(file, "        <dmp17>%f</dmp17>\n", x72_dmp17);     
+   if(have_x72_dmp5)       fprintf(file, "        <dmp5>%f</dmp5>\n", x72_dmp5);      
+   if(have_x72_dhtrvolt)   fprintf(file, "        <dhtrvolt>%f</dhtrvolt>\n", x72_dhtrvolt);  
+   if(have_x72_plmp)       fprintf(file, "        <plmp>%f</plmp>\n", x72_plmp);      
+   if(have_x72_pres)       fprintf(file, "        <pres>%f</pres>\n", x72_pres);      
+   if(have_x72_dlvthermc)  fprintf(file, "        <dlvthermc>%f</dlvthermc>\n", x72_dlvthermc); 
+   if(have_x72_drvthermc)  fprintf(file, "        <drvthermc>%f</drvthermc>\n", x72_drvthermc); 
+   if(have_x72_dlvolt)     fprintf(file, "        <dlvolt>%f</dlvolt>\n", x72_dlvolt);    
+   if(have_x72_dmvoutc)    fprintf(file, "        <dmvoutc>%f</dmvoutc>\n", x72_dmvoutc);   
+   if(have_x72_dtemplo)    fprintf(file, "        <dtemplo>%f</dtemplo>\n", x72_dtemplo);   
+   if(have_x72_dtemphi)    fprintf(file, "        <dtemphi>%f</dtemphi>\n", x72_dtemphi);   
+   if(have_x72_dvoltlo)    fprintf(file, "        <dvoltlo>%f</dvoltlo>\n", x72_dvoltlo);   
+   if(have_x72_dvolthi)    fprintf(file, "        <dvolthi>%f</dvolthi>\n", x72_dvolthi);   
+   if(have_x72_dlvoutc)    fprintf(file, "        <dlvoutc>%f</dlvoutc>\n", x72_dlvoutc);   
+   if(have_x72_drvoutc)    fprintf(file, "        <drvoutc>%f</drvoutc>\n", x72_drvoutc);   
+   if(have_x72_dmv2demavg) fprintf(file, "        <dmv2demavg>%f</dmv2demavg>\n", x72_dmv2demavg);
+
+   if(have_x72_creg)       fprintf(file, "        <creg>%d</creg>\n", x72_creg);      
+   if(have_x72_scont)      fprintf(file, "        <scont>%d</scont>\n", x72_scont);     
+   if(have_x72_sernum)     fprintf(file, "        <sernum>%d</sernum>\n", x72_sernum);    
+   if(have_x72_pwrticks)   fprintf(file, "        <pwrticks>%d</pwrticks>\n", x72_pwrticks);  
+   if(have_x72_lhhrs)      fprintf(file, "        <lhhrs>%d</lhhrs>\n", x72_lhhrs);     
+   if(have_x72_lhticks)    fprintf(file, "        <lhticks>%d</lhticks>\n", x72_lhticks);   
+   if(have_x72_rhhrs)      fprintf(file, "        <rhhrs>%d</rhhrs>\n", x72_rhhrs);     
+   if(have_x72_rhticks)    fprintf(file, "        <rhticks>%d</rhticks>\n", x72_rhticks);   
+}
+
 void write_xml_log(FILE *file)
 {
 int i;
-float dop_sum;
+DATA_SIZE dop_sum;
+double old_lat, old_lon;
 
    // write readings to GPX/XML format log files
+   // NEW_RCVR
 
    if(file == 0) return;
 
+   old_lat = lat;
+   old_lon = lon;
    if(log_fmt == GPX) {
+      if(plot_loc == 0) {
+         lat = 90.0*PI/180.0;
+         lon = 180.0*PI/180.0;
+      }
       i = (int) (raw_frac*1000.0);
       fprintf(file, "      <trkpt lat=\"%.9f\" lon=\"%.9f\">\n", lat*180.0/PI,lon*180.0/PI);
       fprintf(file, "        <ele>%.3f</ele>\n", alt);
       fprintf(file, "        <time>%04d-%02d-%02dT%02d:%02d:%02d.%03dZ</time>\n", year,month,day,hours,minutes,seconds, i);
+      old_lat = lat;
+      old_lon = lon;
 
       if(have_heading) {
          fprintf(file, "        <course>%.3f</course>\n", heading);
@@ -919,6 +3165,10 @@ float dop_sum;
       }
 
       if(luxor) ;
+      else if(rcvr_type == CS_RCVR) ;
+      else if(rcvr_type == NO_RCVR) ;
+      else if(rcvr_type == TICC_RCVR) ;
+      else if(rcvr_type == TIDE_RCVR) ;
       else if(rcvr_mode == RCVR_MODE_2D)       fprintf(file, "        <fix>2d</fix>\n"); 
       else if(rcvr_mode == RCVR_MODE_3D)       fprintf(file, "        <fix>3d</fix>\n"); 
       else if(rcvr_mode == RCVR_MODE_UNKNOWN)  fprintf(file, "        <fix>none</fix>\n"); 
@@ -929,10 +3179,17 @@ float dop_sum;
       fprintf(file, "      </trkpt>\n\n");
    }
    else if(log_fmt == XML) {
+      if(plot_loc == 0) {
+         lat = 90.0*PI/180.0;
+         lon = 180.0*PI/180.0;
+      }
       i = (int) (raw_frac*1000.0);
       fprintf(file, "      <trkpt lat=\"%.9f\" lon=\"%.9f\">\n", lat*180.0/PI,lon*180.0/PI);
       fprintf(file, "        <ele>%.3f</ele>\n", alt);
       fprintf(file, "        <time>%04d-%02d-%02dT%02d:%02d:%02d.%03dZ</time>\n", year,month,day,hours,minutes,seconds, i);
+      old_lat = lat;
+      old_lon = lon;
+
       if(have_week)    fprintf(file, "        <week>%d</week>\n", gps_week);
       if(have_tow)     fprintf(file, "        <tow>%d</tow>\n", pri_tow);
       if(have_utc_ofs) fprintf(file, "        <utcofs>%d</utcofs>\n", utc_offset);
@@ -945,24 +3202,75 @@ float dop_sum;
       if(have_speed) {
          fprintf(file, "        <speed>%.3f</speed>\n", speed);
       }
+      if(have_datum) {
+         fprintf(file, "        <datum>%d</datum>\n", datum);
+      }
 
-      if((rcvr_type == UCCM_RCVR) && (scpi_type == UCCMP_TYPE)) {
+      if((rcvr_type == UCCM_RCVR) && (scpi_type == UCCMP_TYPE) && (have_temperature == 0)) {  // samsung
          fprintf(file, "        <tcor>%.6f</tcor>\n", temperature);
       }
-      if(have_dac || have_temperature || have_sawtooth || have_osc_offset || have_pps_offset || have_tfom || have_ffom) {
-         if(have_temperature) fprintf(file, "        <temp>%.6f</temp>\n", temperature);
-         if(have_dac)         fprintf(file, "        <%s>%.6f</%s>\n", idlwr(DAC), dac_voltage, idlwr(DAC));
-         if(have_pps_offset)  fprintf(file, "        <%s>%.6f</%s>\n", idlwr(PPS), pps_offset,  idlwr(PPS));
-         if(have_osc_offset)  fprintf(file, "        <%s>%.6f</%s>\n", idlwr(OSC), osc_offset,  idlwr(OSC));
-         if(have_sawtooth)    fprintf(file, "        <sawtooth>%.6f</sawtooth>\n", dac_voltage);
-         if(have_tfom)        fprintf(file, "        <tfom>%d</tfom>\n", tfom); 
-         if(have_tfom)        fprintf(file, "        <ffom>%d</ffom>\n", ffom); 
+
+      if(have_dac || have_temperature || have_sawtooth || have_osc_offset || 
+         have_pps_offset || have_chc_offset || have_chd_offset || 
+         have_tfom || have_ffom || have_true_eval || have_star_led || 
+         have_temperature2 || have_humidity || have_pressure || 
+         have_adc1 || have_adc2 || have_adc3 || have_adc4 || 
+         have_ant_v1 || have_ant_v2 || have_ant_ma || 
+         have_lars_dac || have_lars_temp || have_lars_pps
+      ) {
+         if(rcvr_type != THERMO_RCVR) {
+            if(have_temperature)  fprintf(file, "        <temp>%.6f</temp>\n", temperature);
+         }
+         if(have_temperature0) fprintf(file, "        <temp0>%.6f</temp0>\n", tc0);
+         if(have_temperature1) fprintf(file, "        <temp1>%.6f</temp1>\n", tc1);
+         if(have_temperature2) fprintf(file, "        <temp2>%.6f</temp2>\n", tc2);
+         if(have_lars_temp)    fprintf(file, "        <templ>%.6f</templ>\n", lars_temp);
+
+         if(have_humidity)     fprintf(file, "        <rh>%.6f</rh>\n", humidity);
+         if(have_pressure)     fprintf(file, "        <mb>%.6f</mb>\n", pressure);
+         if(have_adc1)         fprintf(file, "        <adc1>%.6f</adc1>\n", adc1);
+         if(have_adc2)         fprintf(file, "        <adc2>%.6f</adc2>\n", adc2);
+         if(have_adc3)         fprintf(file, "        <adc3>%.6f</adc3>\n", adc3);
+         if(have_adc4)         fprintf(file, "        <adc4>%.6f</adc4>\n", adc4);
+
+         if(have_dac)          fprintf(file, "        <%s>%.6f</%s>\n", idlwr(DAC), dac_voltage, idlwr(DAC));
+         if(have_lars_dac)     fprintf(file, "        <%s>%.6f</%s>\n", idlwr(DAC), lars_dac, idlwr(DAC));
+         if(have_sawtooth)     fprintf(file, "        <sawtooth>%.6f</sawtooth>\n", dac_voltage);
+
+         if(have_lars_pps) {
+             fprintf(file, "        <%s>%.6f</%s>\n", idlwr(PPS), lars_pps,  idlwr(PPS));
+         }
+         else if(have_pps_offset) {
+             fprintf(file, "        <%s>%.6f</%s>\n", idlwr(PPS), pps_offset,  idlwr(PPS));
+         }
+
+         if(have_osc_offset) {
+             if(rcvr_type == X72_RCVR) {
+                fprintf(file, "        <%s>%.6g</%s>\n", idlwr(OSC), osc_offset,  idlwr(OSC));
+             }
+             else {
+                fprintf(file, "        <%s>%.6f</%s>\n", idlwr(OSC), osc_offset,  idlwr(OSC));
+             }
+         }
+         if(have_chc_offset)    fprintf(file, "        <%s>%.6f</%s>\n", idlwr(CHC), chc_offset,  idlwr(CHC));
+         if(have_chd_offset)    fprintf(file, "        <%s>%.6f</%s>\n", idlwr(CHD), chd_offset,  idlwr(CHD));
+
+         if(have_esip_pps_type) fprintf(file, "        <gclk>%d</gclk>\n", esip_pps_type);
+         if(have_true_eval)     fprintf(file, "        <eval>%.6f</eval>\n", true_eval); 
+         if(have_tfom)          fprintf(file, "        <tfom>%d</tfom>\n", tfom); 
+         if(have_ffom) {
+            if(rcvr_type == BRANDY_RCVR) fprintf(file, "        <pll>%d</pll>\n", ffom); 
+            else                         fprintf(file, "        <ffom>%d</ffom>\n", ffom); 
+         }
+         if(have_star_led) {
+            fprintf(file, "        <led>%d</led>\n", star_led); 
+         }
 
          if(luxor) {
             fprintf(file, "        <lumens>%.6f</lumens>\n", lux2);
             fprintf(file, "        <ledi>%.6f</ledi>\n", led_i);
             fprintf(file, "        <ledv>%.6f</ledv>\n", led_v);
-            fprintf(file, "        <temp2>%.6f</temp2>\n", tc2);
+            fprintf(file, "        <temp2>%.6f</temp2>\n", luxor_tc2);
             fprintf(file, "        <blue>%.6f</blue>\n", blue_hz);
             fprintf(file, "        <green>%.6f</green>\n", green_hz);
             fprintf(file, "        <red>%.6f</red>\n", red_hz);
@@ -970,36 +3278,76 @@ float dop_sum;
             fprintf(file, "        <pwm>%.6f</pwm>\n", pwm_hz);
             fprintf(file, "        <auxv>%.6f</auxv>\n", adc2);
          }
-         fprintf(file, "\n");
+         else if(rcvr_type == CS_RCVR) ;
+         else if(rcvr_type == TICC_RCVR) ;
+         else if((rcvr_type == RFTG_RCVR) && have_rftg_unit && (have_ant_v1 || have_ant_v2 || have_ant_ma)) {
+            if(rftg_unit == 0) {
+               if(have_ant_v1) fprintf(file, "        <lampv>%.6f</lampv>\n", ant_v1);
+               if(have_ant_v2) fprintf(file, "        <ocxov>%.6f</ocxov>\n", ant_v2);
+            }
+            else {
+               if(have_ant_v1) fprintf(file, "        <antv1>%.6f</antv1>\n", ant_v1);
+               if(have_ant_v2) fprintf(file, "        <antv2>%.6f</antv2>\n", ant_v2);
+               if(have_ant_ma) fprintf(file, "        <antma>%.6f</antma>\n", ant_ma);
+            }
+            fprintf(file, "        <oscv>%.6f</oscv>\n", rftg_oscv);
+         }
+         else if(have_ant_v1 || have_ant_v2 || have_ant_ma) {
+            if(have_ant_v1) fprintf(file, "        <antv1>%.6f</antv1>\n", ant_v1);
+            if(have_ant_v2) fprintf(file, "        <antv2>%.6f</antv2>\n", ant_v2);
+            if(have_ant_ma) fprintf(file, "        <antma>%.6f</antma>\n", ant_ma);
+         }
+         else fprintf(file, "\n");
+      }
+
+      if(rcvr_type == CS_RCVR) {
+         log_cs_xml(file);
+      }
+      else if(rcvr_type == LPFRS_RCVR) {
+         log_lpfrs_xml(file);
+      }
+      else if(rcvr_type == PRS_RCVR) {
+         log_prs_xml(file);
+      }
+      else if(rcvr_type == SA35_RCVR) {
+         log_sa35_xml(file);
+      }
+      else if(rcvr_type == SRO_RCVR) {  // !!!!!SRO
+         log_sro_xml(file);
+      }
+      else if(rcvr_type == X72_RCVR) {
+         log_x72_xml(file);
       }
 
       if(have_tc | have_damp | have_gain | have_initv) {
          if(have_tc)    fprintf(file, "        <tc>%.6f</tc>\n", time_constant); 
          if(have_damp)  fprintf(file, "        <damp>%.6f</damp>\n", damping_factor); 
-         if(have_gain)  fprintf(file, "        <gain>%.6f</gain>\n", osc_gain); 
+         if(have_gain)  fprintf(file, "        <oscgain>%.6f</oscgain>\n", osc_gain); 
          if(have_initv) fprintf(file, "        <initv>%.6f</initv>\n", initial_voltage); 
          fprintf(file, "\n");
       }
 
+      i = 0;
       if(have_pps_enable) {
          if(pps_enabled) fprintf(file, "        <pulse>on</pulse>\n"); 
          else            fprintf(file, "        <pulse>off</pulse>\n"); 
+         ++i;
       }
 
       if(have_pps_rate) {
-         if((rcvr_type == UBX_RCVR) && (pps_rate == 0x82)) {
+         if((rcvr_type == UBX_RCVR) && (pps_rate == RATE_100PPS)) {
             fprintf(file, "        <ppsrate>100.0</ppsrate>\n"); 
          }
-         else if((rcvr_type == UBX_RCVR) && (pps_rate == 0x83)) {
+         else if((rcvr_type == UBX_RCVR) && (pps_rate == RATE_1000PPS)) {
             fprintf(file, "        <ppsrate>1000.0</ppsrate>\n"); 
          }
-         else if((rcvr_type == UBX_RCVR) && (pps_rate == 0)) {  // !!!!! uuuuu user rate
+         else if((rcvr_type == UBX_RCVR) && (pps_rate == RATE_USER)) {  // !!!!! uuuuu user rate
             fprintf(file, "        <ppsrate>-1.0</ppsrate>\n"); 
          }
-         else if((rcvr_type == MOTO_RCVR) && pps_rate) {
+         else if((rcvr_type == MOTO_RCVR) && (pps_rate != RATE_USER)) {
             fprintf(file, "        <ppsrate>100.0</ppsrate>\n"); 
          }
-         else if(pps_rate == 0x82) {
+         else if(pps_rate == RATE_PP2S) {
             fprintf(file, "        <ppsrate>0.50</ppsrate>\n"); 
          }
          else if(rcvr_type == ZODIAC_RCVR) {
@@ -1008,34 +3356,39 @@ float dop_sum;
          else {
             fprintf(file, "        <ppsrate>1.0</ppsrate>\n"); 
          }
+         ++i;
       }
 
       if(have_pps_polarity) {
          if(pps_polarity) fprintf(file, "        <ppsedge>fall</ppsedge>\n"); 
          else             fprintf(file, "        <ppsedge>rise</ppsedge>\n"); 
+         ++i;
       }
 
       if(have_osc_polarity) {
          if(osc_polarity) fprintf(file, "        <oscedge>fall</oscedge>\n"); 
          else             fprintf(file, "        <oscedge>rise</oscedge>\n"); 
+         ++i;
       }
 
       if(have_cable_delay) {
          fprintf(file, "        <cable>%f</cable>\n", cable_delay*1.0E9); 
+         ++i;
       }
       if(have_rf_delay) {
          fprintf(file, "        <rfdelay>%f</rfdelay>\n", rf_delay*1.0E9); 
+         ++i;
       }
       if(have_pps_delay & 0x01) {
          fprintf(file, "        <pps1delay>%f</pps1delay>\n", pps1_delay); 
+         ++i;
       }
       if(have_pps_delay & 0x02) {
          fprintf(file, "        <pps2delay>%f</pps2delay>\n", pps2_delay); 
+         ++i;
       }
 
-      if(have_pps_enable || have_pps_polarity || have_osc_polarity || have_pps_rate || have_cable_delay || have_rf_delay || have_pps_delay) {
-         fprintf(file, "\n");
-      }
+      if(i) fprintf(file, "\n");
 
 
       dop_sum = hdop + vdop + pdop + gdop + tdop + ndop + edop;
@@ -1050,8 +3403,17 @@ float dop_sum;
          fprintf(file, "\n");
       }
 
-      if(luxor) ;
-      else if(rcvr_type == NO_RCVR) ;
+      i = 1;
+      if(luxor) i = 0;
+      else if(rcvr_type == CS_RCVR) i = 0;
+      else if(rcvr_type == LPFRS_RCVR) i = 0;
+      else if(rcvr_type == NO_RCVR) i = 0;
+      else if(rcvr_type == PRS_RCVR) i = 0;
+      else if(rcvr_type == SRO_RCVR) i = 0;
+      else if(rcvr_type == SA35_RCVR) i = 0;
+      else if(rcvr_type == TICC_RCVR) i = 0;
+      else if(rcvr_type == TIDE_RCVR) i = 0;
+      else if(rcvr_type == X72_RCVR) i = 0;
       else if(rcvr_mode == RCVR_MODE_2D_3D)    fprintf(file, "        <fix>2d3d</fix>\n"); 
       else if(rcvr_mode == RCVR_MODE_SINGLE)   fprintf(file, "        <fix>single</fix>\n"); 
       else if(rcvr_mode == RCVR_MODE_2D)       fprintf(file, "        <fix>2d</fix>\n"); 
@@ -1070,20 +3432,17 @@ float dop_sum;
       else if(rcvr_mode == RCVR_MODE_ACQUIRE)  fprintf(file, "        <fix>acquire</fix>\n"); 
       else if(rcvr_mode == RCVR_MODE_BAD_GEOM) fprintf(file, "        <fix>badgeom</fix>\n"); 
       else if(rcvr_mode == RCVR_MODE_SURVEY)   fprintf(file, "        <fix>survey</fix>\n"); 
-      else                                     fprintf(file, "        <fix>unlnown</fix>\n"); 
-
-      if(luxor) ;
-      else if(rcvr_type == NO_RCVR) ;
-      else fprintf(file, "\n");
+      else                                     fprintf(file, "        <fix>unknown</fix>\n"); 
+      if(i) fprintf(file, "\n");
 
       if(have_amu)     fprintf(file, "        <snrmask>%.1f</snrmask>\n", amu_mask);
       if(have_el_mask) fprintf(file, "        <elmask>%.1f</elmask>\n", el_mask);
       if(have_gnss_mask && gnss_mask) {
          out[0] = 0;
          if(gnss_mask & GPS)     strcat(out, "G");
-         if(gnss_mask & GLONASS) strcat(out, "N");
-         if(gnss_mask & BEIDOU)  strcat(out, "B");
-         if(gnss_mask & GALILEO) strcat(out, "L");
+         if(gnss_mask & GLONASS) strcat(out, "R");
+         if(gnss_mask & BEIDOU)  strcat(out, "C");
+         if(gnss_mask & GALILEO) strcat(out, "E");
          if(gnss_mask & SBAS)    strcat(out, "S");
          if(gnss_mask & QZSS)    strcat(out, "Q");
          if(gnss_mask & IMES)    strcat(out, "I");
@@ -1092,6 +3451,19 @@ float dop_sum;
       }
       if(have_count)   fprintf(file, "        <sat>%d</sat>\n", sat_count);
       if(log_db) log_sky_data(file);
+
+      if(lat || lon) {
+         if(have_tides) {
+            fprintf(file, "\n");
+            fprintf(file, "        <lattide>%.2f</lattide>\n", lat_tide); 
+            fprintf(file, "        <lontide>%.2f</lontide>\n", lon_tide); 
+            fprintf(file, "        <alttide>%.2f</alttide>\n", alt_tide); 
+         }
+         if(have_ugals) {
+            if(have_tides == 0) fprintf(file, "\n");
+            fprintf(file, "        <ugals>%.2f</ugals>\n", ugals); 
+         }
+      }
 
       fprintf(file, "      </trkpt>\n\n");
    }
@@ -1102,23 +3474,51 @@ float dop_sum;
 
 void write_log_readings(FILE *file, long x)
 {
+int all_info_avail;
+char *s;
+
    // write readings to ASCII format log file
+   // NEW_RCVR
 
    if(file == 0) return;  // log not open
    if(tow == 0) return;   // no data from GPS yet
-   if(log_stream & 0x01) return; // dumping raw tsip data
+   if(log_stream & LOG_HEX_STREAM) return; // dumping raw tsip data
 
-   if(have_info < (MANUF_PARAMS | PRODN_PARAMS | VERSION_INFO)) return;
-
+   // see if all available device info has been collected
+   all_info_avail = 1;
    if(have_info & INFO_LOGGED) ;
-   else if(have_info & MISC_INFO) {
-      have_info |= INFO_LOGGED;
-      write_log_header(file);
+   else if((rcvr_type == THERMO_RCVR) || (rcvr_type == ZYFER_RCVR)) {
+      if     ((have_info & MANUF_PARAMS) == 0) all_info_avail = 0;
+      else if((have_info & PRODN_PARAMS) == 0) all_info_avail = 0;
+      else if((have_info & VERSION_INFO) == 0) all_info_avail = 0;
+      else if((have_info & MFG_INFO) == 0)     all_info_avail = 0;
    }
-   else if(have_info == (MANUF_PARAMS | PRODN_PARAMS | VERSION_INFO)) {
-      have_info |= INFO_LOGGED;
-      write_log_header(file);
+   else {
+      if     ((have_info & MANUF_PARAMS) == 0) all_info_avail = 0;
+      else if((have_info & PRODN_PARAMS) == 0) all_info_avail = 0;
+      else if((have_info & VERSION_INFO) == 0) all_info_avail = 0;
    }
+
+   if(sim_file) ;  // sim capture files may not have ID info in them
+   else if((no_log_id_wait == 0) && (all_info_avail == 0)) {
+      return;   // wait for receiver id info before logging data
+   }
+
+
+   if((no_log_id_wait || sim_file) && (all_info_avail == 0)) {
+       // log data without having seen receiver id info
+   }
+   else if(log_stream & (LOG_HEX_STREAM | LOG_SENT_DATA | LOG_PACKET_START)) {
+       // always log info if logging other than raw stream
+   }
+   else if(have_info & INFO_LOGGED) {
+       // device id info already written to log
+   }
+   else if(have_info) {
+      write_log_header(file, 1);
+      have_info |= INFO_LOGGED;
+   }
+
 
    if(hours != last_log_hours) {  // sync log data to disk every hour
       if(file == log_file) {
@@ -1131,18 +3531,20 @@ void write_log_readings(FILE *file, long x)
 
    if(log_written == 0) {  // write header each time log opens
       log_written = 1;
+      month = fix_month(month);
       if(log_comments && (log_fmt == HEATHER)) {
          fprintf(file,"#\n");
 
          //!!!! NOTE: IF YOU CHANGE THE CONTENT OR SPACING IF THIS LUNE,  
          //           YOU MUST CHANGE reload_log() TO MATCH !!!!
-         if(nav_rate != 1.0) {
-            fprintf(file,"#  %02d:%02d:%02d.%03d %s   %02d %s %04d - interval %.2f seconds\n", 
-               hours,minutes,seconds,(int)(raw_frac*1000.0+0.50), (time_flags & 0x0001)?"UTC":"GPS", day,months[month],year, (double)log_interval/(double)nav_rate);
+         month = fix_month(month);
+         if((nav_rate != 1.0) || (rcvr_type == BRANDY_RCVR)) {
+            fprintf(file,"#  %02d:%02d:%02d.%03d %s   %02d %s %04d - interval %.3f seconds\n", 
+               hours,minutes,seconds,(int)(raw_frac*1000.0+0.50), (time_flags & TFLAGS_UTC)?"UTC":"GPS", day,months[month],year, (double)log_interval/(double)nav_rate);
          }
          else {
             fprintf(file,"#  %02d:%02d:%02d.%03d %s   %02d %s %04d - interval %ld seconds\n", 
-               hours,minutes,seconds,(int)(raw_frac*1000.0+0.50), (time_flags & 0x0001)?"UTC":"GPS", day,months[month],year, log_interval);
+               hours,minutes,seconds,(int)(raw_frac*1000.0+0.50), (time_flags & TFLAGS_UTC)?"UTC":"GPS", day,months[month],year, log_interval);
          }
 
          fprintf(file,"#\n");
@@ -1150,26 +3552,65 @@ void write_log_readings(FILE *file, long x)
          if(luxor) {
             fprintf(file,"# time\t  tow   \t  LUX1\t LUMENS\t  BATTi\t  BATTv\t  LEDi \t  LEDv \t TEMP1\t TEMP2\t   Blue\t  Green\t    Red\t  White\t   PWM\t  AUXv\n");
          }
-         else if(rcvr_type == NO_RCVR) {  // nnnnnn
+         else if(rcvr_type == NO_RCVR) {
             fprintf(file,"# time\t  tow\n");
          }
          else {
-            if(nav_rate != 1.0) fprintf(file, "# tow\t\t\t\t");
-            else                fprintf(file, "# tow\t\t\t");
+            if(tow >= 1000000) s = "# tow ";
+            else               s = "# tow";
+            if(nav_rate != 1.0) {
+                if(rcvr_type == TIDE_RCVR) fprintf(file, "%s\t\t\t", s);
+                else                       fprintf(file, "%s\t\t\t\t", s);
+            }
+            else if(rcvr_type == TIDE_RCVR)  fprintf(file, "%s\t\t", s);
+            else                             fprintf(file, "%s\t\t\t", s);
 
             if(rcvr_type == ACRON_RCVR) {
                fprintf(file,"\n");
             }
+            else if(rcvr_type == BRANDY_RCVR) {
+               fprintf(file,"phase(sec) \tosc(%s)\tdac(%s)  \ttemp(C)\t\tsats\n", ppb_string, plot[DAC].units);
+            }
+            else if(rcvr_type == CS_RCVR) {
+               fprintf(file,"pump(uA) \temult(%s)\tdac(%s)  \ttemp(C)\t\tsats\n", "V", plot[DAC].units);
+            }
+            else if(rcvr_type == FURUNO_RCVR) {
+               fprintf(file,"lat        \tlon     \talt (m)\t\tsats\n");
+            }
             else if(rcvr_type == GPSD_RCVR) {
                fprintf(file,"lat        \tlon     \talt (m)\t\tsats\n");
+            }
+            else if(rcvr_type == LPFRS_RCVR) {  // !!!!!LPFRS
+               fprintf(file,"TT(sec) \tFC(%s)\tEFC(%s)  \ttemp(C)\t\tsats\n", ppb_string, "V");
             }
             else if(rcvr_type == NMEA_RCVR) {
                fprintf(file,"tlat        \tlon     \talt (m)\t\tsats\n");
             }
+            else if(rcvr_type == PRS_RCVR) {
+               fprintf(file,"TT(sec) \tFC(%s)\tdac(%s)  \ttemp(C)\t\tsats\n", ppb_string, "V");
+            }
+            else if(rcvr_type == RFTG_RCVR) {
+               fprintf(file,"phase(sec) \tosc(%s)\tdac(%s)  \ttemp(C)\t\tsats\n", ppb_string, plot[DAC].units);
+            }
             else if(rcvr_type == SCPI_RCVR) {
                fprintf(file,"pps(ns)  \tunc(%s) \tdac(%s)  \ttemp(C)\t\tsats\n", "us", plot[DAC].units);
             }
-            else if((rcvr_type == UCCM_RCVR) && (scpi_type == UCCMP_TYPE)) {
+            else if(rcvr_type == SA35_RCVR) {  // !!!!!SA35
+               fprintf(file,"TT(sec) \tFC(%s)\tEFC(%s)  \ttemp(C)\t\tsats\n", ppb_string, "V");
+            }
+            else if(rcvr_type == SRO_RCVR) {
+               fprintf(file,"pps(sec) \tosc(%s)\tsig(%s)  \tVT(s)\n", "PPB", "V");
+            }
+            else if(rcvr_type == THERMO_RCVR) {
+               fprintf(file,"temp1(C)\ttemp2(C)\tmb\trh\tadc3\tadc4\n");
+            }
+            else if(rcvr_type == TICC_RCVR) {
+               fprintf(file,"chA(ps)  \t\tchB(ps) \t\tchC(ps)\t\tchD(ps)\n");
+            }
+            else if(rcvr_type == TIDE_RCVR) {  // ckckck
+               fprintf(file,"  lat(mm)\tlon(mm)  \talt(mm)  \tgrav(uGals)\n");
+            }
+            else if((rcvr_type == UCCM_RCVR) && (scpi_type == UCCMP_TYPE) && (have_temperature == 0)) { // samsung
                fprintf(file,"tpps(sec) \tosc(%s)\tdac(%s)  \ttcor(ppt)\t\tsats\n", ppb_string, plot[DAC].units);
             }
             else if(rcvr_type == UCCM_RCVR) {
@@ -1179,7 +3620,10 @@ void write_log_readings(FILE *file, long x)
                fprintf(file,"accu(ns)   \tfrac(ns)\tsawtooth \ttemp(C)\t\tsats\n");
             }
             else if(TIMING_RCVR) {
-               if(rcvr_type == MOTO_RCVR) {
+               if(rcvr_type == ESIP_RCVR) {
+                  fprintf(file,"accu(ns)   \tcofs(ns)\tsawtooth \ttemp(C)\t\tsats\n");
+               }
+               else if(rcvr_type == MOTO_RCVR) {
                   fprintf(file,"accu(ns)   \tcofs(ns)\tsawtooth \ttemp(C)\t\tsats\n");
                }
                else if(rcvr_type == NVS_RCVR) {
@@ -1191,9 +3635,21 @@ void write_log_readings(FILE *file, long x)
                else if(rcvr_type == ZODIAC_RCVR) {
                   fprintf(file,"PPS(ns)    \tcofs(ns)\tsawtooth \ttemp(C)\t\tsats\n");
                }
+               else if(lte_lite) {
+                  fprintf(file,"pps(ns)    \tosc(%s) \tDAC      \ttemp(C)\t\tsats\n", ppb_string);
+               }
                else {
                   fprintf(file,"bias(ns)   \trate(%s)\tsawtooth \ttemp(C)\t\tsats\n", ppb_string);
                }
+            }
+            else if(rcvr_type == TM4_RCVR) {
+               fprintf(file,"\n");
+            }
+            else if(rcvr_type == TSERVE_RCVR) {
+               fprintf(file,"\n");
+            }
+            else if(rcvr_type == Z12_RCVR) {
+               fprintf(file,"tlat        \tlon     \talt (m)\t\tsats\n");
             }
             else if(rcvr_type == TSIP_RCVR) {
                fprintf(file,"pps(sec) \tosc(%s)\tdac(%s)  \ttemp(C)\t\tsats\n", ppb_string, "V");
@@ -1205,7 +3661,7 @@ void write_log_readings(FILE *file, long x)
       }
       else if(log_comments && ((log_fmt == XML) || (log_fmt == GPX) || (log_fmt == KML))) {
          sprintf(log_text,"#  %02d:%02d:%02d.%03d %s   %02d %s %04d - interval %.2f seconds", 
-            hours,minutes,seconds,(int)(raw_frac*1000.0+0.50), (time_flags & 0x0001)?"UTC":"GPS", day,months[month],year, (double)log_interval/(double)nav_rate);
+            hours,minutes,seconds,(int)(raw_frac*1000.0+0.50), (time_flags & TFLAGS_UTC)?"UTC":"GPS", day,months[month],year, (double)log_interval/(double)nav_rate);
          write_log_comment(2);
       }
    }
@@ -1216,13 +3672,17 @@ void write_log_readings(FILE *file, long x)
    }
 
 
-   if(log_fmt != HEATHER) {
+   if(log_fmt == RINEX) {
+      write_rinex_obs(file);
+      return;
+   }
+   else if(log_fmt != HEATHER) {
       write_xml_log(file);
       return;
    }
 
 //fprintf(file, "%ld: ", x);
-   if(nav_rate != 1.0) {
+   if((nav_rate != 1.0) || (rcvr_type == BRANDY_RCVR)) {
       fprintf(file, "%02d:%02d:%02d.%03d", hours,minutes,seconds,(int)(raw_frac*1000.0+0.5));
       if(csv_char == '\t') {
          fprintf(file, "  ");
@@ -1230,8 +3690,9 @@ void write_log_readings(FILE *file, long x)
       else {
          fprintf(file, "%c", csv_char);
       }
-      if(rcvr_type == NO_RCVR) fprintf(file, "%6lu.%03d%c",   (unsigned long) tow, (int) (raw_frac*1000.0+0.5), ' '); 
-      else                     fprintf(file, "%6lu.%03d%c",   (unsigned long) tow, (int) (raw_frac*1000.0+0.5), csv_char);
+      if(rcvr_type == TIDE_RCVR)    fprintf(file, "%6lu.%03d%c",   (unsigned long) tow, (int) (raw_frac*1000.0+0.5), ' '); 
+      else if(rcvr_type == NO_RCVR) fprintf(file, "%6lu.%03d%c",   (unsigned long) tow, (int) (raw_frac*1000.0+0.5), ' '); 
+      else                          fprintf(file, "%6lu.%03d%c",   (unsigned long) tow, (int) (raw_frac*1000.0+0.5), csv_char);
    }
    else {
       fprintf(file, "%02d:%02d:%02d", hours,minutes,seconds);
@@ -1241,20 +3702,21 @@ void write_log_readings(FILE *file, long x)
       else {
          fprintf(file, "%c", csv_char);
       }
-      if(rcvr_type == NO_RCVR) fprintf(file, "%6lu%c",   (unsigned long) tow, ' '); 
-      else                     fprintf(file, "%6lu%c",   (unsigned long) tow, csv_char); 
+      if(rcvr_type == TIDE_RCVR)    fprintf(file, "%6lu%c",   (unsigned long) tow, ' '); 
+      else if(rcvr_type == NO_RCVR) fprintf(file, "%6lu%c",   (unsigned long) tow, ' '); 
+      else                          fprintf(file, "%6lu%c",   (unsigned long) tow, csv_char); 
    }
 
    if(luxor) {
       fprintf(file, "%7.3f%c%7.3f%c%7.3f%c%7.3f%c%7.3f%c%7.3f%c%7.3f%c%7.3f%c%7.0f%c%7.0f%c%7.0f%c%7.0f%c%7.0f%c%7.3f \n", 
-         (float) pps_offset, csv_char, // lux1
+         pps_offset, csv_char, // lux1
          lux2, csv_char,               // lux2
-         (float) osc_offset, csv_char, // batti
+         osc_offset, csv_char, // batti
          dac_voltage, csv_char,        // battv
          led_i, csv_char,              // ledi
          led_v, csv_char,              // ledv
          temperature, csv_char, 
-         tc2, csv_char, 
+         luxor_tc2, csv_char, 
          blue_hz, csv_char,
          green_hz, csv_char,
          red_hz, csv_char,
@@ -1263,39 +3725,107 @@ void write_log_readings(FILE *file, long x)
          adc2
       );
    }
-   else if((rcvr_type == NMEA_RCVR) || (rcvr_type == GPSD_RCVR)) {
-      fprintf(file, "%f%c%f%c%f%c%d \n", 
-         (float) lat*180.0/PI, csv_char,
-         (float) lon*180.0/PI,  csv_char,
-         (float) alt, csv_char,
+   else if(rcvr_type == BRANDY_RCVR) {
+      fprintf(file, "%-12g%c%f%c%f%c%f%c%d \n", 
+         pps_offset/1.0E9, csv_char, 
+         osc_offset, csv_char, 
+         dac_voltage, csv_char, 
+         temperature, csv_char, 
          sat_count
       );
    }
-   else if((rcvr_type == NO_RCVR) || (rcvr_type == ACRON_RCVR)) {  // nnnnnn
+   else if(rcvr_type == FURUNO_RCVR) {
+      fprintf(file, "%f%c%f%c%f%c%d \n", 
+         lat*180.0/PI, csv_char,
+         lon*180.0/PI,  csv_char,
+         alt, csv_char,
+         sat_count
+      );
+   }
+   else if(rcvr_type == LPFRS_RCVR) {  //!!!!!LPFRS
+      fprintf(file, "%g%c%f%c%f%c%f%c%d \n", 
+         pps_offset/1.0E9, csv_char, 
+         osc_offset, csv_char, 
+         lpfrs_dd, csv_char, 
+         lpfrs_gg, csv_char, 
+         sat_count
+      );
+   }
+   else if((rcvr_type == NMEA_RCVR) || (rcvr_type == GPSD_RCVR) || (rcvr_type == Z12_RCVR)) {
+      fprintf(file, "%f%c%f%c%f%c%d \n", 
+         lat*180.0/PI, csv_char,
+         lon*180.0/PI,  csv_char,
+         alt, csv_char,
+         sat_count
+      );
+   }
+   else if((rcvr_type == NO_RCVR) || (rcvr_type == ACRON_RCVR) || (rcvr_type == TSERVE_RCVR)) {
       fprintf(file, "\n");
+   }
+   else if(rcvr_type == SA35_RCVR) {  //!!!!!SA35
+      fprintf(file, "%g%c%f%c%f%c%f%c%d \n", 
+         pps_offset/1.0E9, csv_char, 
+         osc_offset, csv_char, 
+         lpfrs_dd, csv_char, 
+         lpfrs_gg, csv_char, 
+         sat_count
+      );
    }
    else if(rcvr_type == SCPI_RCVR) {
       fprintf(file, "%f%c%f%c%f%c%f%c%d \n", 
-         (float) (pps_offset), csv_char,
-         (float) (osc_offset*1000.0),  csv_char,
+         pps_offset, csv_char,
+         osc_offset*1000.0,  csv_char,
          dac_voltage, csv_char,
          temperature, csv_char, 
          sat_count
+      );
+   }
+   else if(rcvr_type == SRO_RCVR) {
+      fprintf(file, "%g%c%f%c%f%c%d%c%d \n", 
+         pps_offset/1.0E9, csv_char, 
+         osc_offset*1000.0, csv_char, 
+         sro_ff, csv_char, 
+         sro_vt, csv_char, 
+         sat_count
+      );
+   }
+   else if(rcvr_type == THERMO_RCVR) {
+      fprintf(file, "%7.3f%c%7.3f  %c%7.3f%c%7.3f%c%7.4f%c%7.4f \n", 
+         tc1,csv_char, tc2,csv_char, pressure,csv_char, humidity,csv_char, adc3,csv_char, adc4   // aaaahhhh  
+      );
+   }
+   else if(rcvr_type == TICC_RCVR) {
+      fprintf(file, "%14.12f%c%14.12f%c%14.12f%c%14.12f \n", 
+         (pps_phase), csv_char,    // aaaahhhh
+         (osc_phase),  csv_char,
+         (chc_phase), csv_char,
+         (chd_phase)
+      );
+   }
+   else if(rcvr_type == TIDE_RCVR) {  // ckckck
+      fprintf(file, "%f%c%f%c%f%c%f \n", 
+         lat_tide, csv_char,
+         lon_tide, csv_char,
+         alt_tide, csv_char,
+         ugals
       );
    }
    else if(TIMING_RCVR) {
       fprintf(file, "%f%c%f%c%f%c%f%c%d \n", 
-         (float) (pps_offset), csv_char,
-         (float) osc_offset,  csv_char,
+         pps_offset, csv_char,
+         osc_offset,  csv_char,
          dac_voltage, csv_char,
          temperature, csv_char, 
          sat_count
       );
    }
+   else if(rcvr_type == TM4_RCVR) {
+      fprintf(file, "\n");
+   }
    else {
       fprintf(file, "%g%c%f%c%f%c%f%c%d \n", 
-         (float) (pps_offset/1.0E9), csv_char, 
-         (float) osc_offset, csv_char, 
+         pps_offset/1.0E9, csv_char, 
+         osc_offset, csv_char, 
          dac_voltage, csv_char, 
          temperature, csv_char, 
          sat_count
@@ -1305,6 +3835,8 @@ void write_log_readings(FILE *file, long x)
    if(file && log_comments && log_db && (file == log_file)) {
       log_sky_data(file);
    }
+
+   if(file && log_flush_mode) fflush(file);
 }
 
 
@@ -1321,7 +3853,7 @@ u32 tow;
    jd = jd - GPS_EPOCH;
    jd *= (24.0*60.0*60.0);
 
-   tow = (u32) jd;
+   tow = (u32) (jd+0.50);
 // tow = tow % (u32) (24L*60L*60L*7L);
    return tow;
 }
@@ -1336,19 +3868,131 @@ double frac;
 u32 tow_save;
 int count_save;
 u08 flag_save;
+DATA_SIZE lux2_save;
+DATA_SIZE ledi_save;
+DATA_SIZE ledv_save;
+DATA_SIZE adc2_save;
+DATA_SIZE t_save, t2_save;
+DATA_SIZE blue_save, green_save, red_save, white_save;
+DATA_SIZE pwm_save;
+DATA_SIZE lux_save;
+DATA_SIZE lum_save;
+u08 hz_save, uw_save, pct_save;
+
+DATA_SIZE d_save;
 double o_save;
 double p_save;
-float lux2_save;
-float ledi_save;
-float ledv_save;
-float adc2_save;
-float d_save;
-float t_save, t2_save;
-float blue_save, green_save, red_save, white_save;
-float pwm_save;
-u08 hz_save, uw_save, pct_save;
-float lux_save;
-float lum_save;
+
+double  save_cs_pump;          
+double  save_cs_emul;          
+double  save_cs_volt_avg;         
+double  save_pps_tie;          
+double  save_osc_tie;          
+double  save_chc_tie;          
+double  save_chd_tie;          
+double  save_cs_rfam1;         
+double  save_cs_rfam2;         
+double  save_cs_gain;          
+double  save_cs_coven;         
+double  save_cs_qoven;         
+double  save_cs_pll_dro;       
+double  save_cs_pll_saw;       
+double  save_cs_pll_87;        
+double  save_cs_pll_up;        
+double  save_cs_beam;          
+double  save_cs_cfield;        
+double  save_cs_hwi;           
+double  save_cs_msp;           
+double  save_lpfrs_dd;         
+double  save_lpfrs_gg;         
+double  save_lpfrs_hh;         
+double  save_lpfrs_ee;         
+double  save_lpfrs_cc;         
+double  save_lpfrs_bb;         
+double  save_lpfrs_aa;         
+double  save_lpfrs_ff;         
+double  save_prs_ad5;        
+double  save_prs_ad6;        
+double  save_prs_ad7;        
+double  save_prs_ad8;        
+double  save_prs_ad9;        
+double  save_prs_ad14;        
+double  save_prs_ad_pwr;        
+double  save_prs_ad_therm;        
+double  save_prs_ds1;          
+double  save_prs_ds2;          
+double  save_sro_hh;           
+double  save_sro_ff;           
+double  save_sro_ee;           
+double  save_sro_dd;           
+double  save_sro_cc;           
+double  save_sro_bb;           
+double  save_sro_vt;           
+double  save_sro_gg;           
+double  save_sro_aa;           
+double  save_sro_fc;           
+double  save_pps_phase;        
+double  save_osc_phase;        
+double  save_chc_phase;        
+double  save_chd_phase;        
+double  save_x72_dmvoutc;      
+double  save_x72_dlvoutc;      
+double  save_x72_drvoutc;      
+double  save_x72_dmv2demavg;   
+double  save_x72_dlvolt;   
+double  save_x72_dmp17;        
+double  save_x72_dmp5;         
+double  save_x72_pres;         
+double  save_x72_plmp;         
+double  save_x72_dhtrvolt;     
+double  save_zyfer_hefe;       
+double  save_zyfer_hete;       
+double  save_zyfer_hest;       
+double  save_zyfer_drift;      
+double  save_zyfer_tdev;       
+double  save_zyfer_essn;       
+double  save_true_debug;       
+double  save_true_eval;        
+double  save_tfom;             
+double  save_ffom;             
+double  save_avg_phase;        
+double  save_rftg_oscv;        
+double  save_rftg_ant1;        
+double  save_rftg_ant2;        
+double  save_rftg_ma;          
+//double  save_jitter;           
+double  save_msg_ofs;          
+double  save_speed;            
+double  save_heading;          
+double  save_datum;          
+double  save_cha_time2;        
+double  save_chb_time2;        
+
+double  save_lat;         
+double  save_lon;         
+double  save_alt;         
+double  save_freq_trend;
+double  save_avg_dop;
+
+double  save_lat_tide;         
+double  save_lon_tide;         
+double  save_alt_tide;         
+double  save_ugals;            
+
+double  save_humidity;         
+double  save_pressure;        
+double  save_temp1;
+double  save_temp2;
+double  save_adc1;
+double  save_adc2;
+double  save_adc3;
+double  save_adc4;
+double  save_lars_dac;
+double  save_lars_pps;
+double  save_lars_temp;
+
+
+
 
     // write queue entry "i"'s data to the log file
     if(queue_interval <= 0) return;
@@ -1362,16 +4006,17 @@ float lum_save;
     mo = month;   
     yy = year;    
 
-    tow_save = tow;
     o_save = osc_offset;
     p_save = pps_offset;
-    lux2_save = lux2;
     d_save = dac_voltage;
     t_save = temperature;
+
+    tow_save = tow;
+    lux2_save = lux2;
     ledi_save = led_i;
     ledv_save = led_v;
     adc2_save = adc2;
-    t2_save = tc2;
+    t2_save = luxor_tc2;        
     count_save = sat_count;
     flag_save = time_flags;
 
@@ -1381,21 +4026,242 @@ float lum_save;
     white_save = white_hz;
     pwm_save = pwm_hz;
 
-    pct_save = show_color_pct;
-    uw_save = show_color_uw;
-    hz_save = show_color_hz;
     lux_save = lux_scale;
     lum_save = lum_scale;
     lux_scale = 1.0F;
     lum_scale = 1.0F;
+
+    pct_save = show_color_pct;
+    uw_save = show_color_uw;
+    hz_save = show_color_hz;
     show_color_hz = 1;           // always log Hz
     show_color_pct= 0;
     show_color_uw = 0;
+
+
+    // save the current raw values       
+    save_cs_pump =        cs_pump; 
+    save_cs_emul =        cs_emul;          
+    save_cs_volt_avg =    cs_volt_avg;          
+    save_pps_tie =        pps_tie;          
+    save_osc_tie =        osc_tie;          
+    save_chc_tie =        chc_tie;          
+    save_chd_tie =        chd_tie;          
+    save_cs_rfam1 =       cs_rfam1;         
+    save_cs_rfam2 =       cs_rfam2;         
+    save_cs_gain =        cs_gain;          
+    save_cs_coven =       cs_coven;         
+    save_cs_qoven =       cs_qoven;         
+    save_cs_pll_dro =     cs_pll_dro;       
+    save_cs_pll_saw =     cs_pll_saw;       
+    save_cs_pll_87 =      cs_pll_87;        
+    save_cs_pll_up =      cs_pll_up;        
+    save_cs_beam =        cs_beam;          
+    save_cs_cfield =      cs_cfield;        
+    save_cs_hwi =         cs_hwi;           
+    save_cs_msp =         cs_msp;           
+    save_lpfrs_dd =       lpfrs_dd;         
+    save_lpfrs_gg =       lpfrs_gg;         
+    save_lpfrs_hh =       lpfrs_hh;         
+    save_lpfrs_ee =       lpfrs_ee;         
+    save_lpfrs_cc =       lpfrs_cc;         
+    save_lpfrs_bb =       lpfrs_bb;         
+    save_lpfrs_aa =       lpfrs_aa;         
+    save_lpfrs_ff =       lpfrs_ff;         
+    save_prs_ad5 =        prs_ad[5];        
+    save_prs_ad6 =        prs_ad[6];        
+    save_prs_ad7 =        prs_ad[7];        
+    save_prs_ad8 =        prs_ad[8];        
+    save_prs_ad9 =        prs_ad[9];        
+    save_prs_ad14 =       prs_ad[14];        
+    save_prs_ad_pwr =     prs_ad_pwr;        
+    save_prs_ad_therm =   prs_ad_therm;        
+    save_prs_ds1 =        prs_ds1;          
+    save_prs_ds2 =        prs_ds2;          
+    save_sro_hh =         sro_hh;           
+    save_sro_ff =         sro_ff;           
+    save_sro_ee =         sro_ee;           
+    save_sro_dd =         sro_dd;           
+    save_sro_cc =         sro_cc;           
+    save_sro_bb =         sro_bb;           
+    save_sro_vt =         sro_vt;           
+    save_sro_gg =         sro_gg;           
+    save_sro_aa =         sro_aa;           
+    save_sro_fc =         sro_fc;           
+    save_pps_phase =      pps_phase;        
+    save_osc_phase =      osc_phase;        
+    save_chc_phase =      chc_phase;        
+    save_chd_phase =      chd_phase;        
+    save_x72_dmvoutc =    x72_dmvoutc;      
+    save_x72_dlvoutc =    x72_dlvoutc;      
+    save_x72_drvoutc =    x72_drvoutc;      
+    save_x72_dmv2demavg = x72_dmv2demavg;   
+    save_x72_dlvolt =     x72_dlvolt;   
+    save_x72_dmp17 =      x72_dmp17;        
+    save_x72_dmp5 =       x72_dmp5;         
+    save_x72_pres =       x72_pres;         
+    save_x72_plmp =       x72_plmp;         
+    save_x72_dhtrvolt =   x72_dhtrvolt;     
+    save_zyfer_hefe =     zyfer_hefe;       
+    save_zyfer_hete =     zyfer_hete;       
+    save_zyfer_hest =     zyfer_hest;       
+    save_zyfer_drift =    zyfer_drift;      
+    save_zyfer_tdev =     zyfer_tdev;       
+    save_zyfer_essn =     zyfer_essn;       
+    save_true_debug =     true_debug;       
+    save_true_eval =      true_eval;        
+    save_tfom =           tfom;             
+    save_ffom =           ffom;             
+    save_avg_phase =      avg_phase;        
+    save_rftg_oscv =      rftg_oscv;        
+    save_rftg_ant1 =      ant_v1;        
+    save_rftg_ant2 =      ant_v2;        
+    save_rftg_ma =        ant_ma;          
+//  save_jitter =         jitter;           
+    save_msg_ofs =        msg_ofs;          
+    save_speed =          speed;            
+    save_heading =        heading;          
+    save_datum =          datum;
+    save_cha_time2 =      cha_time2;        
+    save_chb_time2 =      chb_time2;        
+
+    save_lat =            lat;         
+    save_lon =            lon;         
+    save_alt =            alt;         
+    save_freq_trend =     freq_trend;         
+    save_avg_dop =        avg_dop;
+                                        
+    save_lat_tide =       lat_tide;         
+    save_lon_tide =       lon_tide;         
+    save_alt_tide =       alt_tide;         
+    save_ugals =          ugals;            
+
+    save_humidity =       humidity;         
+    save_pressure =       pressure;        
+    save_temp1 =          tc1;         
+    save_temp2 =          tc2;            
+    save_adc1 =           adc1;
+    save_adc2 =           adc2;
+    save_adc3 =           adc3;
+    save_adc4 =           adc4;
+    save_lars_dac =       lars_dac;
+    save_lars_pps =       lars_pps;
+    save_lars_temp =      lars_temp;
+
     
     if(filter_log && filter_count) q = filter_plot_q(i);
     else                           q = get_plot_q(i);
 
-    gregorian(q.q_jd);
+    // regenerate the raw values from the plot queue entries so that
+    // write_log_readings() writes the queued values
+    cs_pump =           (DATA_SIZE)  q.data[PPS] / (DATA_SIZE) queue_interval;     
+    cs_emul =           (DATA_SIZE)  q.data[OSC] / (DATA_SIZE) queue_interval;     
+    pps_tie =           (DATA_SIZE)  q.data[PPS] / (DATA_SIZE) queue_interval;     
+    osc_tie =           (DATA_SIZE)  q.data[OSC] / (DATA_SIZE) queue_interval;     
+    chc_tie =           (DATA_SIZE)  q.data[CHC] / (DATA_SIZE) queue_interval;     
+    chd_tie =           (DATA_SIZE)  q.data[CHD] / (DATA_SIZE) queue_interval;     
+    cs_rfam1 =          (DATA_SIZE)  q.data[ONE] / (DATA_SIZE) queue_interval;     
+    cs_rfam2 =          (DATA_SIZE)  q.data[TWO] / (DATA_SIZE) queue_interval;     
+    cs_gain =           (DATA_SIZE)  q.data[THREE] / (DATA_SIZE) queue_interval;   
+    cs_coven =          (DATA_SIZE)  q.data[FOUR] / (DATA_SIZE) queue_interval;    
+    cs_qoven =          (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    cs_pll_dro =        (DATA_SIZE)  q.data[SIX] / (DATA_SIZE) queue_interval;     
+    cs_pll_saw =        (DATA_SIZE)  q.data[SEVEN] / (DATA_SIZE) queue_interval;   
+    cs_pll_87 =         (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    cs_pll_up =         (DATA_SIZE)  q.data[NINE] / (DATA_SIZE) queue_interval;    
+    cs_beam =           (DATA_SIZE)  q.data[TEN] / (DATA_SIZE) queue_interval;     
+    cs_cfield =         (DATA_SIZE)  q.data[ELEVEN] / (DATA_SIZE) queue_interval;  
+    cs_hwi =            (DATA_SIZE)  q.data[TWELVE] / (DATA_SIZE) queue_interval;  
+    cs_msp =            (DATA_SIZE)  q.data[THIRTEEN] / (DATA_SIZE) queue_interval;
+    cs_volt_avg =       (DATA_SIZE)  q.data[FOURTEEN] / (DATA_SIZE) queue_interval;
+    lpfrs_dd =          (DATA_SIZE)  q.data[ONE] / (DATA_SIZE) queue_interval;     
+    lpfrs_gg =          (DATA_SIZE)  q.data[TWO] / (DATA_SIZE) queue_interval;     
+    lpfrs_hh =          (DATA_SIZE)  q.data[THREE] / (DATA_SIZE) queue_interval;   
+    lpfrs_ee =          (DATA_SIZE)  q.data[FOUR] / (DATA_SIZE) queue_interval;    
+    lpfrs_cc =          (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    lpfrs_bb =          (DATA_SIZE)  q.data[SIX] / (DATA_SIZE) queue_interval;     
+    lpfrs_aa =          (DATA_SIZE)  q.data[SEVEN] / (DATA_SIZE) queue_interval;   
+    lpfrs_ff =          (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    prs_ad[5] =         (DATA_SIZE)  q.data[ONE] / (DATA_SIZE) queue_interval;     
+    prs_ad[6] =         (DATA_SIZE)  q.data[TWO] / (DATA_SIZE) queue_interval;     
+    prs_ad[7] =         (DATA_SIZE)  q.data[THREE] / (DATA_SIZE) queue_interval;   
+    prs_ad[8] =         (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    prs_ad[9] =         (DATA_SIZE)  q.data[SEVEN] / (DATA_SIZE) queue_interval;   
+    prs_ad[14] =        (DATA_SIZE)  q.data[FOUR] / (DATA_SIZE) queue_interval;    
+    prs_ad_pwr =        (DATA_SIZE)  q.data[SIX] / (DATA_SIZE) queue_interval;    
+    prs_ad_therm =      (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    prs_ds1 =           (int)  (q.data[NINE] / (DATA_SIZE) queue_interval);    
+    prs_ds2 =           (int)  (q.data[TEN] / (DATA_SIZE) queue_interval);     
+    sro_hh =            (DATA_SIZE)  q.data[ONE] / (DATA_SIZE) queue_interval;     
+    sro_ff =            (DATA_SIZE)  q.data[TWO] / (DATA_SIZE) queue_interval;     
+    sro_ee =            (DATA_SIZE)  q.data[THREE] / (DATA_SIZE) queue_interval;   
+    sro_dd =            (DATA_SIZE)  q.data[FOUR] / (DATA_SIZE) queue_interval;    
+    sro_cc =            (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    sro_bb =            (DATA_SIZE)  q.data[SIX] / (DATA_SIZE) queue_interval;     
+    sro_vt =            (int)  (q.data[SEVEN] / (DATA_SIZE) queue_interval);   
+    sro_gg =            (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    sro_aa =            (DATA_SIZE)  q.data[NINE] / (DATA_SIZE) queue_interval;    
+    pps_phase =         (DATA_SIZE)  q.data[ONE] / (DATA_SIZE) queue_interval;     
+    osc_phase =         (DATA_SIZE)  q.data[TWO] / (DATA_SIZE) queue_interval;     
+    chc_phase =         (DATA_SIZE)  q.data[THREE] / (DATA_SIZE) queue_interval;   
+    chd_phase =         (DATA_SIZE)  q.data[FOUR] / (DATA_SIZE) queue_interval;    
+    x72_dmvoutc =       (DATA_SIZE)  q.data[ONE] / (DATA_SIZE) queue_interval;     
+    x72_dlvoutc =       (DATA_SIZE)  q.data[TWO] / (DATA_SIZE) queue_interval;     
+    x72_drvoutc =       (DATA_SIZE)  q.data[THREE] / (DATA_SIZE) queue_interval;   
+    x72_dmv2demavg =    (DATA_SIZE)  q.data[FOUR] / (DATA_SIZE) queue_interval;    
+    x72_dlvolt =        (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    x72_dmp17 =         (DATA_SIZE)  q.data[SIX] / (DATA_SIZE) queue_interval;     
+    x72_dmp5 =          (DATA_SIZE)  q.data[SEVEN] / (DATA_SIZE) queue_interval;   
+    x72_pres =          (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    x72_plmp =          (DATA_SIZE)  q.data[NINE] / (DATA_SIZE) queue_interval;    
+    x72_dhtrvolt =      (DATA_SIZE)  q.data[TEN] / (DATA_SIZE) queue_interval;     
+    zyfer_hefe =        (DATA_SIZE)  q.data[ONE] / (DATA_SIZE) queue_interval;     
+    zyfer_hete =        (DATA_SIZE)  q.data[TWO] / (DATA_SIZE) queue_interval;     
+    zyfer_hest =        (DATA_SIZE)  q.data[THREE] / (DATA_SIZE) queue_interval;   
+    zyfer_drift =       (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    zyfer_tdev =        (DATA_SIZE)  q.data[SEVEN] / (DATA_SIZE) queue_interval;   
+    zyfer_essn =        (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    true_debug =        (int)  (q.data[FIVE] / (DATA_SIZE) queue_interval);    
+    true_eval =         (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    tfom =              (int)  (q.data[FOUR] / (DATA_SIZE) queue_interval);    
+    ffom =              (int)  (q.data[FIVE] / (DATA_SIZE) queue_interval);    
+    avg_phase =         (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    rftg_oscv =         (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    ant_v1 =            (DATA_SIZE)  q.data[SEVEN] / (DATA_SIZE) queue_interval;   
+    ant_v2 =            (DATA_SIZE)  q.data[EIGHT] / (DATA_SIZE) queue_interval;   
+    ant_ma =            (DATA_SIZE)  q.data[SIX] / (DATA_SIZE) queue_interval;     
+//  jitter =            (DATA_SIZE)  q.data[MSGJIT] / (DATA_SIZE) queue_interval;  
+    msg_ofs =           (DATA_SIZE)  q.data[MSGOFS] / (DATA_SIZE) queue_interval;  
+    speed =             (DATA_SIZE)  q.data[FOUR] / (DATA_SIZE) queue_interval;    
+    heading =           (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    cha_time2 =         (DATA_SIZE)  q.data[FIVE] / (DATA_SIZE) queue_interval;    
+    chb_time2 =         (DATA_SIZE)  q.data[SIX] / (DATA_SIZE) queue_interval;     
+                                                     
+    lat_tide =          (DATA_SIZE)  q.data[ELEVEN] / (DATA_SIZE) queue_interval;  
+    lon_tide =          (DATA_SIZE)  q.data[TWELVE] / (DATA_SIZE) queue_interval;  
+    alt_tide =          (DATA_SIZE)  q.data[THIRTEEN] / (DATA_SIZE) queue_interval;
+    ugals =             (DATA_SIZE)  q.data[FOURTEEN] / (DATA_SIZE) queue_interval;
+                                                     
+    humidity =          (DATA_SIZE)  q.data[HUMIDITY] / (DATA_SIZE) queue_interval;  
+    pressure =          (DATA_SIZE)  q.data[PRESSURE] / (DATA_SIZE) queue_interval;  
+    tc1 =               (DATA_SIZE)  q.data[TEMP1] / (DATA_SIZE) queue_interval;
+    tc2 =               (DATA_SIZE)  q.data[TEMP2] / (DATA_SIZE) queue_interval;
+    adc3 =              (DATA_SIZE)  q.data[ADC3] / (DATA_SIZE) queue_interval;
+    adc4 =              (DATA_SIZE)  q.data[ADC4] / (DATA_SIZE) queue_interval;
+
+    // !!!! these queue entries have values that are scaled from the raw data values... unscale them
+    lat =               (DATA_SIZE)  (q.data[ONE] / (DATA_SIZE) queue_interval / (DATA_SIZE) RAD_TO_DEG);  
+    lon =               (DATA_SIZE)  (q.data[TWO] / (DATA_SIZE) queue_interval / (DATA_SIZE) RAD_TO_DEG);
+    alt =               (DATA_SIZE)  (q.data[THREE] / (DATA_SIZE) queue_interval);
+    freq_trend =        (DATA_SIZE)  (q.data[SEVEN] / (DATA_SIZE) queue_interval / (DATA_SIZE) 1.0E12);
+    sro_fc =            (int)        (q.data[OSC] / (DATA_SIZE) queue_interval / (SRO_DDS_STEP*1.0E12/1000.0));
+    avg_dop =           (DATA_SIZE)  (q.data[SIX] / (DATA_SIZE) queue_interval / (DATA_SIZE) 1.0E12);
+    lars_dac =          (DATA_SIZE)  (q.data[DAC] / (DATA_SIZE) queue_interval);
+    lars_pps =          (DATA_SIZE)  (q.data[PPS] / (DATA_SIZE) queue_interval);
+    lars_temp =         (DATA_SIZE)  (q.data[TEMP] / (DATA_SIZE) queue_interval);
+
+
+    gregorian(0, q.q_jd);
 
     hours    = g_hours;
     minutes  = g_minutes;
@@ -1405,33 +4271,33 @@ float lum_save;
     month    = g_month;
     year     = g_year;
        
-    tow = fake_tow(q.q_jd);
+    tow = fake_tow(q.q_jd);  // % (7L*24L*60L*60L); 
 
     if(luxor) {
-       osc_offset  = q.data[BATTI] / (OFS_SIZE) queue_interval;
-       pps_offset  = q.data[LUX1] / (OFS_SIZE) queue_interval;
-       dac_voltage = q.data[BATTV] / (float) queue_interval;
+       osc_offset  = (OFS_SIZE) q.data[BATTI] / (OFS_SIZE) queue_interval;
+       pps_offset  = (OFS_SIZE) q.data[LUX1] / (OFS_SIZE) queue_interval;
+       dac_voltage = (DATA_SIZE) q.data[BATTV] / (DATA_SIZE) queue_interval;
     }
     else {
-       osc_offset  = q.data[OSC] / (OFS_SIZE) queue_interval;
-       pps_offset  = q.data[PPS] / (OFS_SIZE) queue_interval;
-       dac_voltage = q.data[DAC] / (float) queue_interval;
+       osc_offset  = (OFS_SIZE) q.data[OSC] / (OFS_SIZE) queue_interval;
+       pps_offset  = (OFS_SIZE) q.data[PPS] / (OFS_SIZE) queue_interval;
+       dac_voltage = (DATA_SIZE) q.data[DAC] / (DATA_SIZE) queue_interval;
     }
-    temperature = q.data[TEMP] / (float) queue_interval;
-    tc2         = q.data[TC2] / (float) queue_interval;
-    lux2        = q.data[LUX2] / (float) queue_interval;
-    led_v       = q.data[LEDV] / (float) queue_interval;
-    led_i       = q.data[LEDI] / (float) queue_interval;
-    pwm_hz      = q.data[PWMHZ] / (float) queue_interval;
-    blue_hz     = q.data[BLUEHZ] / (float) queue_interval;
-    green_hz    = q.data[GREENHZ] / (float) queue_interval;
-    red_hz      = q.data[REDHZ] / (float) queue_interval;
-    white_hz    = q.data[WHITEHZ] / (float) queue_interval;
-    adc2        = q.data[AUXV] / (float) queue_interval;
+    temperature = (DATA_SIZE) q.data[TEMP] / (DATA_SIZE) queue_interval;
+    luxor_tc2   = (DATA_SIZE) q.data[TC2] / (DATA_SIZE) queue_interval;
+    lux2        = (DATA_SIZE) q.data[LUX2] / (DATA_SIZE) queue_interval;
+    led_v       = (DATA_SIZE) q.data[LEDV] / (DATA_SIZE) queue_interval;
+    led_i       = (DATA_SIZE) q.data[LEDI] / (DATA_SIZE) queue_interval;
+    pwm_hz      = (DATA_SIZE) q.data[PWMHZ] / (DATA_SIZE) queue_interval;
+    blue_hz     = (DATA_SIZE) q.data[BLUEHZ] / (DATA_SIZE) queue_interval;
+    green_hz    = (DATA_SIZE) q.data[GREENHZ] / (DATA_SIZE) queue_interval;
+    red_hz      = (DATA_SIZE) q.data[REDHZ] / (DATA_SIZE) queue_interval;
+    white_hz    = (DATA_SIZE) q.data[WHITEHZ] / (DATA_SIZE) queue_interval;
+    adc2        = (DATA_SIZE) q.data[AUXV] / (DATA_SIZE) queue_interval;
 
-    sat_count = q.sat_flags & SAT_COUNT;
-    if(q.sat_flags & UTC_TIME) time_flags = 0x0001;
-    else                       time_flags = 0x0000;
+    sat_count = q.sat_flags & SAT_COUNT_MASK;
+    if(q.sat_flags & UTC_TIME) time_flags = TFLAGS_UTC;
+    else                       time_flags = TFLAGS_NULL;
 
 #ifdef SCI_LOG
 if(sci_file == 0) sci_file = topen(SCI_LOG, "w");
@@ -1459,14 +4325,17 @@ nnn += queue_interval;
     year        = yy;
     tow         = tow_save;
 
-    sat_count   = count_save;
-    time_flags  = flag_save;
+    // restore the raw values
     osc_offset  = o_save; 
     pps_offset  = p_save;
-    lux2        = lux2_save;
     dac_voltage = d_save; 
     temperature = t_save; 
-    tc2         = t2_save;
+    luxor_tc2   = t2_save;
+
+    sat_count   = count_save;
+    time_flags  = flag_save;
+    lux2        = lux2_save;
+
     led_i       = ledi_save;
     led_v       = ledv_save;
     adc2        = adc2_save;
@@ -1480,11 +4349,229 @@ nnn += queue_interval;
     show_color_pct = pct_save;
     show_color_uw = uw_save; 
     show_color_hz = hz_save; 
+
+
+    cs_pump =        save_cs_pump;          
+    cs_emul =        save_cs_emul;          
+    cs_volt_avg =    save_cs_volt_avg;          
+    pps_tie =        save_pps_tie;          
+    osc_tie =        save_osc_tie;          
+    chc_tie =        save_chc_tie;          
+    chd_tie =        save_chd_tie;          
+    cs_rfam1 =       save_cs_rfam1;         
+    cs_rfam2 =       save_cs_rfam2;         
+    cs_gain =        save_cs_gain;          
+    cs_coven =       save_cs_coven;         
+    cs_qoven =       save_cs_qoven;         
+    cs_pll_dro =     save_cs_pll_dro;       
+    cs_pll_saw =     save_cs_pll_saw;       
+    cs_pll_87 =      save_cs_pll_87;        
+    cs_pll_up =      save_cs_pll_up;        
+    cs_beam =        save_cs_beam;          
+    cs_cfield =      save_cs_cfield;        
+    cs_hwi =         save_cs_hwi;           
+    cs_msp =         save_cs_msp;           
+    lpfrs_dd =       save_lpfrs_dd;         
+    lpfrs_gg =       save_lpfrs_gg;         
+    lpfrs_hh =       save_lpfrs_hh;         
+    lpfrs_ee =       save_lpfrs_ee;         
+    lpfrs_cc =       save_lpfrs_cc;         
+    lpfrs_bb =       save_lpfrs_bb;         
+    lpfrs_aa =       save_lpfrs_aa;         
+    lpfrs_ff =       save_lpfrs_ff;         
+    prs_ad[5] =      save_prs_ad5;        
+    prs_ad[6] =      save_prs_ad6;        
+    prs_ad[7] =      save_prs_ad7;        
+    prs_ad[8] =      save_prs_ad8;        
+    prs_ad[9] =      save_prs_ad9;        
+    prs_ad[14] =     save_prs_ad14;        
+    prs_ad_pwr =     save_prs_ad_pwr;        
+    prs_ad_therm =   save_prs_ad_therm;        
+    prs_ds1 =        (int) save_prs_ds1;          
+    prs_ds2 =        (int) save_prs_ds2;          
+    sro_hh =         save_sro_hh;           
+    sro_ff =         save_sro_ff;           
+    sro_ee =         save_sro_ee;           
+    sro_dd =         save_sro_dd;           
+    sro_cc =         save_sro_cc;           
+    sro_bb =         save_sro_bb;           
+    sro_vt =         (int) save_sro_vt;           
+    sro_gg =         save_sro_gg;           
+    sro_aa =         save_sro_aa;           
+    pps_phase =      save_pps_phase;        
+    osc_phase =      save_osc_phase;        
+    chc_phase =      save_chc_phase;        
+    chd_phase =      save_chd_phase;        
+    x72_dmvoutc =    save_x72_dmvoutc;      
+    x72_dlvoutc =    save_x72_dlvoutc;      
+    x72_drvoutc =    save_x72_drvoutc;      
+    x72_dmv2demavg = save_x72_dmv2demavg;   
+    x72_dlvolt =     save_x72_dlvolt;   
+    x72_dmp17 =      save_x72_dmp17;        
+    x72_dmp5 =       save_x72_dmp5;         
+    x72_pres =       save_x72_pres;         
+    x72_plmp =       save_x72_plmp;         
+    x72_dhtrvolt =   save_x72_dhtrvolt;     
+    zyfer_hefe =     save_zyfer_hefe;       
+    zyfer_hete =     save_zyfer_hete;       
+    zyfer_hest =     save_zyfer_hest;       
+    zyfer_drift =    (DATA_SIZE) save_zyfer_drift;      
+    zyfer_tdev =     (DATA_SIZE) save_zyfer_tdev;       
+    zyfer_essn =     (DATA_SIZE) save_zyfer_essn;       
+    true_debug =     (int) save_true_debug;       
+    true_eval =      save_true_eval;        
+    tfom =           (int) save_tfom;             
+    ffom =           (int) save_ffom;             
+    avg_phase =      save_avg_phase;        
+    rftg_oscv =      save_rftg_oscv;        
+    ant_v1 =         save_rftg_ant1;        
+    ant_v2 =         save_rftg_ant2;        
+    ant_ma =         save_rftg_ma;          
+//  jitter =         save_jitter;           
+    msg_ofs =        save_msg_ofs;          
+    speed =          save_speed;            
+    heading =        save_heading;          
+    datum =          (int) save_datum;          
+    cha_time2 =      save_cha_time2;        
+    chb_time2 =      save_chb_time2;        
+                                        
+    lat_tide =       save_lat_tide;         
+    lon_tide =       save_lon_tide;         
+    alt_tide =       save_alt_tide;         
+    ugals =          save_ugals;            
+
+    humidity =       (DATA_SIZE) save_humidity;         
+    pressure =       (DATA_SIZE) save_pressure;        
+    tc1 =            (DATA_SIZE) save_temp1;         
+    tc2 =            (DATA_SIZE) save_temp2;            
+    adc1 =           (DATA_SIZE) save_adc1;            
+    adc2 =           (DATA_SIZE) save_adc2;            
+    adc3 =           (DATA_SIZE) save_adc3;            
+    adc4 =           (DATA_SIZE) save_adc4;            
+
+    lars_dac =       (DATA_SIZE) save_lars_dac;
+    lars_pps =       (DATA_SIZE) save_lars_pps;
+    lars_temp =      (DATA_SIZE) save_lars_temp;
+
+    lat =            save_lat;         
+    lon =            save_lon;         
+    alt =            save_alt;         
+    freq_trend =     save_freq_trend;         
+    avg_dop =        (DATA_SIZE) save_avg_dop;         
+    sro_fc =         (int) save_sro_fc;           
 }
+
+void log_stats()
+{
+int old_stat;
+DATA_SIZE val;
+int id;
+char units[SLEN+1];
+char *s;
+int old_interval;
+int old_col0;
+int old_last_col;
+
+   // write plot queue statistics (of the plot window when the log file was
+   // closed) when the log file is closed
+
+   if(log_file == 0) return;
+   if(log_comments == 0) return;
+
+if(1) {
+   old_interval = view_interval;   // don't downsample the queue data
+   old_col0 = plot_q_col0;
+   old_last_col = plot_q_last_col;
+
+   view_interval = 1;
+   plot_q_col0 = plot_q_out;
+   calc_queue_stats(STOP_AT_Q_END);
+
+   view_interval = old_interval;
+   plot_q_col0 = old_col0;
+   plot_q_last_col = old_last_col;
+}
+
+   sprintf(log_text, "#");
+   write_log_comment(1);
+   write_log_comment(1);
+   write_log_comment(1);
+   sprintf(log_text,    "#  Plot statistics:");
+   write_log_comment(1);
+
+   for(id=0; id<=FIFTEEN; id++) {
+      plot[id].show_stat = SHOW_SPAN;
+      val = (DATA_SIZE) fabs(get_stat_val(id));
+      plot[id].show_stat = SDEV;
+      val += (DATA_SIZE) fabs(get_stat_val(id));
+      plot[id].show_stat = RMS;
+      val += (DATA_SIZE) fabs(get_stat_val(id));
+      if(val == 0.0) continue;    // plot has no data
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+      sprintf(log_text, "#     %s:", plot[id].plot_id);
+      write_log_comment(1);
+      strcpy(units, plot[id].plot_id);
+      strupr(units);
+      if((plot_loc == 0) && (!strcmp(units, "LAT") || !strcmp(units, "LON"))) {
+         sprintf(log_text, "#       (private)");
+         write_log_comment(1);
+         continue;
+      }
+      
+      old_stat = plot[id].show_stat;
+      strcpy(units, plot[id].units);
+      s = strchr(units, DEGREES);
+      if(s) *s = ' ';
+
+      plot[id].show_stat = RMS;
+      val = get_stat_val(id);
+      sprintf(log_text, "#       %s %.9f %s", stat_id, val, units);
+      write_log_comment(1);
+
+      plot[id].show_stat = AVG;
+      val = get_stat_val(id);
+      sprintf(log_text, "#       %s %.9f %s", stat_id, val, units);
+      write_log_comment(1);
+
+      plot[id].show_stat = SDEV;
+      val = get_stat_val(id);
+      sprintf(log_text, "#       %s %.9f %s", stat_id, val, units);
+      write_log_comment(1);
+
+      plot[id].show_stat = VAR;
+      val = get_stat_val(id);
+      sprintf(log_text, "#       %s %.9f %s", stat_id, val, units);
+      write_log_comment(1);
+
+      plot[id].show_stat = SHOW_MIN;
+      val = get_stat_val(id);
+      sprintf(log_text, "#       %s %.9f %s", stat_id, val, units);
+      write_log_comment(1);
+
+      plot[id].show_stat = SHOW_MAX;
+      val = get_stat_val(id);
+      sprintf(log_text, "#       %s %.9f %s", stat_id, val, units);
+      write_log_comment(1);
+
+      plot[id].show_stat = SHOW_SPAN;
+      val = get_stat_val(id);
+      sprintf(log_text, "#       %s %.9f %s", stat_id, val, units);
+      write_log_comment(1);
+
+      plot[id].show_stat = old_stat;
+   }
+
+   sprintf(log_text, "#");
+   write_log_comment(1);
+}
+
 
 void dump_log(char *name, u08 dump_size)
 {
 FILE *file;
+FILE *lock_file;
 char temp_name[128];
 long temp_interval;
 u08 temp_flags;
@@ -1499,16 +4586,22 @@ long val;
 int row;
 char *s;
 char filter[32];
-FILE *temp_log;
 
    if(queue_interval <= 0) return;
+
+   doing_log_dump = 1;
+   lock_file = topen(lock_name, "w");  // create file tblock to signify dump file is being written
+   if(lock_file) {
+      fprintf(lock_file, "2");
+      fclose(lock_file);
+   }
 
    row = PLOT_TEXT_ROW+4;
    if(dump_size == 'p') s = "plot area";
    else                 s = "queue";
 
    filter[0] = 0;
-   if(filter_log && filter_count) sprintf(filter, "%ld point filtered ", filter_count); 
+   if(filter_log && filter_count) sprintf(filter, "%ld point filtered ", disp_filter_size()); 
 
    temp_interval = log_interval;
    temp_flags = time_flags;
@@ -1531,6 +4624,8 @@ FILE *temp_log;
    else if(strstr(log_name, ".GPX")) log_fmt = GPX;
    else if(strstr(log_name, ".kml")) log_fmt = KML;
    else if(strstr(log_name, ".KML")) log_fmt = KML;
+//   else if(strstr(log_name, ".obs")) log_fmt = RINEX;  // cannot write RINEX file from queue data
+//   else if(strstr(log_name, ".OBS")) log_fmt = RINEX;
    else log_fmt = HEATHER;
 
    erase_help();
@@ -1538,7 +4633,9 @@ FILE *temp_log;
       log_file = 0;
       file = open_log_file(log_mode);
    }
-   else file = topen(log_name, log_mode);
+   else {
+      file = topen(log_name, log_mode);
+   }
 
    if(file == 0) {
       sprintf(out, "Cannot dump log file: %s", log_name);
@@ -1546,18 +4643,21 @@ FILE *temp_log;
       goto dump_exit;
    }
 
+   log_file = file;
+write_log_header(file, 2);
    if(log_comments) {
-      temp_log = log_file;
-      log_file = file;
       sprintf(log_text, "#TITLE: From log file %s (%s%s data)", log_name, filter, s);
       write_log_comment(1);
 
-      if((luxor == 0) && (!TIMING_RCVR)) {
+      if((luxor == 0) && have_gain) {
          sprintf(log_text, "#OSC_GAIN %f", osc_gain);
          write_log_comment(1);
       }
-      log_file = temp_log;
    }
+
+if(log_fmt != HEATHER) {
+   log_file = 0;
+}
 
    if(log_mode[0] == 'a') sprintf(out, "Appending %s%s data to file: %s", filter, s, log_name);
    else                   sprintf(out, "Writing %s%s data to file: %s", filter, s, log_name);
@@ -1570,16 +4670,20 @@ FILE *temp_log;
    }
    else {
       i = plot_q_out;   // dumping the full queue
+//plot_q_col0 = plot_q_out;
+
    }
    while((i != plot_q_in) || (dump_size == 'p')) {
       write_q_entry(file, i);
       have_info |= INFO_LOGGED;
       update_pwm();   // if doing pwm temperature control
 
-      if((++counter & 0xFFF) == 0x0000) {   // keep serial data from overruning
-         get_pending_gps();  //!!!! possible recursion
+      ++counter;
+      if((counter % LOG_GPS_CHECK) == 0) {   // keep serial data from overruning
+         get_pending_gps(10);  //!!!! possible recursion
       }
-      if((counter % 1000L) == 1L) {
+//    if((counter % 1000L) == 1L) {
+      if((counter % LOG_SCREEN_RFSH) == 1L) {
          sprintf(out, "Line %ld", counter-1L);
          vidstr(row+2, PLOT_TEXT_COL, PROMPT_COLOR, out);
          refresh_page();
@@ -1599,12 +4703,19 @@ FILE *temp_log;
       sci_file = 0;
    #endif
 
+   log_file = file;
    #ifdef ADEV_STUFF
       log_adevs();
    #endif
 
-   if(log_fmt != HEATHER) close_log_file();
-   else fclose(file);      // close this log and restore original one
+   log_stats();
+
+   if(log_fmt != HEATHER) {
+      close_log_file();
+   }
+   else {
+      fclose(file);      // close this log and restore original one
+   }
 
    dump_exit:
    log_interval = temp_interval;
@@ -1612,10 +4723,14 @@ FILE *temp_log;
    time_flags = temp_flags;
    pause_data = temp_pause;
    have_info = temp_info;
+have_info |= INFO_LOGGED;
    log_fmt = temp_fmt;
    log_file = temp_file;
    strcpy(log_name, temp_name);
    show_log_state();
+
+   doing_log_dump = 0;
+   path_unlink(lock_name);
 }
 
 void write_log_tow(int spaces)
@@ -1628,14 +4743,16 @@ void write_log_tow(int spaces)
 
 void write_log_changes()
 {
-u16 change;
+int change;
 
    // write receiver state changes to the log file
 
    if(log_file == 0) return;
    if(log_errors == 0) return;
 
-   if(log_comments && (rcvr_mode != last_rmode) && (check_precise_posn == 0)) {
+   if(rcvr_type == CS_RCVR) ;
+   else if(NO_SATS) ;
+   else if(log_comments && (rcvr_mode != last_rmode) && (check_precise_posn == 0)) {
       sprintf(log_text, "#! new reciever mode: ");
 
       if(rcvr_type == ZODIAC_RCVR) {
@@ -1648,19 +4765,17 @@ u16 change;
             strcat(log_text, out);
          }
       }
-      else if(single_sat_prn)  strcat(log_text, "Single sat mode");
-      else if(rcvr_mode == RCVR_MODE_2D_3D)  strcat(log_text, "2D/3D positioning");
-      else if(rcvr_mode == RCVR_MODE_SINGLE) strcat(log_text, "Single satellite");
-      else if(rcvr_mode == RCVR_MODE_2D)     strcat(log_text, "2D positioning");
-      else if(rcvr_mode == RCVR_MODE_3D)     strcat(log_text, "3D positioning");
-      else if(rcvr_mode == RCVR_MODE_DGPS)   strcat(log_text, "DGPS reference");
-      else if(rcvr_mode == RCVR_MODE_2DCLK)  strcat(log_text, "2D clock hold");
+      else if(single_sat_prn)                 strcat(log_text, "Single sat mode");
+      else if(rcvr_mode == RCVR_MODE_2D_3D)   strcat(log_text, "2D/3D positioning");
+      else if(rcvr_mode == RCVR_MODE_SINGLE)  strcat(log_text, "Single satellite");
+      else if(rcvr_mode == RCVR_MODE_NO_SATS) strcat(log_text, "No sats");
+      else if(rcvr_mode == RCVR_MODE_2D)      strcat(log_text, "2D positioning");
+      else if(rcvr_mode == RCVR_MODE_3D)      strcat(log_text, "3D positioning");
+      else if(rcvr_mode == RCVR_MODE_DGPS)    strcat(log_text, "DGPS reference");
+      else if(rcvr_mode == RCVR_MODE_2DCLK)   strcat(log_text, "2D clock hold");
       else if(rcvr_mode == RCVR_MODE_HOLD)  {
-         if     (rcvr_type == MOTO_RCVR)     strcat(log_text, "Position hold mode");
-         else if(rcvr_type == SCPI_RCVR)     strcat(log_text, "Position hold mode");
-         else if(rcvr_type == UCCM_RCVR)     strcat(log_text, "Position hold mode");
-         else if(rcvr_type == ZODIAC_RCVR)   strcat(log_text, "Position hold mode");
-         else                                strcat(log_text, "Overdetermined clock");
+         if(rcvr_type == TSIP_RCVR) strcat(log_text, "Overdetermined clock"); 
+         else                       strcat(log_text, "Position hold mode");
       }
       else if(rcvr_mode == RCVR_MODE_PROP)  {
          if((rcvr_type == SCPI_RCVR) || (rcvr_type == UCCM_RCVR)) {
@@ -1672,6 +4787,7 @@ u16 change;
       }
       else if(rcvr_mode == RCVR_MODE_ACQUIRE)  strcat(log_text, "Acquiring sats");
       else if(rcvr_mode == RCVR_MODE_BAD_GEOM) strcat(log_text, "Bad sat geometry");
+      else if(rcvr_mode == RCVR_MODE_SURVEY)   strcat(log_text, "Survey mode");
       else {
          sprintf(out, "Receiver mode ?%02X?", rcvr_mode);
          strcat(log_text, out);
@@ -1685,15 +4801,15 @@ u16 change;
 
    if(log_comments && (gps_status != last_status) && (check_precise_posn == 0)) {
       sprintf(log_text,"#! new gps status: ");
-      if(gps_status == 0x00)      strcat(log_text, "Doing fixes");
-      else if(gps_status == 0x01) strcat(log_text, "No GPS time");
-      else if(gps_status == 0x03) strcat(log_text, "PDOP too high");
-      else if(gps_status == 0x08) strcat(log_text, "No usable sats");
-      else if(gps_status == 0x09) strcat(log_text, "1 usable sat");
-      else if(gps_status == 0x0A) strcat(log_text, "2 usable sats");
-      else if(gps_status == 0x0B) strcat(log_text, "3 usable sats");
-      else if(gps_status == 0x0C) strcat(log_text, "chosen sat unusable");
-      else if(gps_status == 0x10) strcat(log_text, "TRAIM rejected fix");
+      if     (gps_status == GPS_FIXES)       strcat(log_text, "Doing fixes");
+      else if(gps_status == GPS_NO_TIME)     strcat(log_text, "No GPS time");
+      else if(gps_status == GPS_PDOP_HIGH)   strcat(log_text, "PDOP too high");
+      else if(gps_status == GPS_NO_SATS)     strcat(log_text, "No usable sats");
+      else if(gps_status == GPS_ONE_SAT)     strcat(log_text, "1 usable sat");
+      else if(gps_status == GPS_TWO_SATS)    strcat(log_text, "2 usable sats");
+      else if(gps_status == GPS_THREE_SATS)  strcat(log_text, "3 usable sats");
+      else if(gps_status == GPS_SAT_UNAVAIL) strcat(log_text, "chosen sat unusable");
+      else if(gps_status == GPS_TRAIM_ERR)   strcat(log_text, "TRAIM rejected fix");
       else {
          sprintf(out, "?%02X?", gps_status);
          strcat(log_text, out);                  
@@ -1706,17 +4822,30 @@ u16 change;
    if(log_comments && (discipline_mode != last_dmode) && (check_precise_posn == 0)) { 
       // !!!!!!!! if you change any of this text,  you must also change reload_log();
       sprintf(log_text,"#! new discipline mode: ");
-      if     (discipline_mode == 0)  strcat(log_text, "Normal");
-      else if(discipline_mode == 1)  strcat(log_text, "Power-up");
-      else if(discipline_mode == 2)  strcat(log_text, "Auto holdover");
-      else if(discipline_mode == 3)  strcat(log_text, "Manual holdover");
-      else if(discipline_mode == 4)  strcat(log_text, "Recovery mode");
-      else if(discipline_mode == 5)  strcat(log_text, "Fast recovery");
-      else if(discipline_mode == 6)  strcat(log_text, "Disabled");
-      else if(discipline_mode == 10) {
-         if(saw_uccm_dmode == 2)         strcat(log_text, "Warming up");
-         else if(rcvr_type == STAR_RCVR) strcat(log_text, "Warming up");
-         else                            strcat(log_text, "Settling");
+      if     (discipline_mode == DIS_MODE_NORMAL)        strcat(log_text, "Normal");
+      else if(discipline_mode == DIS_MODE_POWERUP)       strcat(log_text, "Power-up");
+      else if(discipline_mode == DIS_MODE_AUTO_HOLD)     strcat(log_text, "Auto holdover");
+      else if(discipline_mode == DIS_MODE_MANUAL_HOLD)   strcat(log_text, "Manual holdover");
+      else if(discipline_mode == DIS_MODE_RECOVERY)      strcat(log_text, "Recovery mode");
+      else if(discipline_mode == DIS_MODE_FAST_RECOVERY) strcat(log_text, "Fast recovery");
+      else if(discipline_mode == DIS_MODE_DISABLED)      strcat(log_text, "Disabled");
+      else if(discipline_mode == DIS_MODE_LEARNING)      strcat(log_text, "Learning");
+      else if(discipline_mode == DIS_MODE_NO_GPS)        strcat(log_text, "No GPS");
+      else if(discipline_mode == DIS_MODE_SOFT_HOLD)     strcat(log_text, "Soft holdover");
+      else if(discipline_mode == DIS_MODE_ACQUIRE)       strcat(log_text, "Acquire");
+      else if(discipline_mode == DIS_MODE_WAIT)          strcat(log_text, "Wait");
+      else if(discipline_mode == DIS_MODE_UNLOCK)        strcat(log_text, "Unlocked");
+      else if(discipline_mode == DIS_MODE_UNKNOWN)       strcat(log_text, "Unknown");
+      else if(discipline_mode == DIS_MODE_WARMUP) {
+         if (saw_uccm_dmode == 1) strcat(log_text, "Settling  ");
+         else                     strcat(log_text, "Warming up");
+      }
+      else if(discipline_mode == DIS_MODE_FAILED) {
+         if     (rcvr_type == LPFRS_RCVR) strcat(log_text, "RB unlocked");
+         else if(rcvr_type == RFTG_RCVR)  strcat(log_text, "Module failed");
+         else if(rcvr_type == SA35_RCVR)  strcat(log_text, "RB unlocked");
+         else if(rcvr_type == SRO_RCVR)   strcat(log_text, "RB unlocked");
+         else                             strcat(log_text, "Module failed");
       }
       else {
          sprintf(out, "?%u?", discipline_mode);
@@ -1729,14 +4858,14 @@ u16 change;
 
    if(log_comments && (discipline != last_discipline) && (check_precise_posn == 0)) { 
       sprintf(log_text,"#! new discipline state: ");
-      if(discipline == 0)      strcat(log_text, "Phase locking");
-      else if(discipline == 1) strcat(log_text, "Warming up");
-      else if(discipline == 2) strcat(log_text, "Frequency locking");
-      else if(discipline == 3) strcat(log_text, "Placing PPS");
-      else if(discipline == 4) strcat(log_text, "Initializing loop filter");
-      else if(discipline == 5) strcat(log_text, "Compensating OCXO");
-      else if(discipline == 6) strcat(log_text, "Inactive");
-      else if(discipline == 8) strcat(log_text, "Recovery");
+      if     (discipline == DIS_LOCKED)   strcat(log_text, "Phase locking");
+      else if(discipline == DIS_WARMING)  strcat(log_text, "Warming up");
+      else if(discipline == DIS_FLOCK)    strcat(log_text, "Frequency locking");
+      else if(discipline == DIS_PLACING)  strcat(log_text, "Placing PPS");
+      else if(discipline == DIS_FINIT)    strcat(log_text, "Initializing loop filter");
+      else if(discipline == DIS_COMP)     strcat(log_text, "Compensating OCXO");
+      else if(discipline == DIS_OFF)      strcat(log_text, "Inactive");
+      else if(discipline == DIS_RECOVERY) strcat(log_text, "Recovery");
       else {
          sprintf(out, "?%02X?", discipline);
          strcat(log_text, out);
@@ -1746,29 +4875,42 @@ u16 change;
    last_discipline = discipline;
 
 
+   if(log_comments && (timing_mode != last_tmode)) { 
+      sprintf(log_text,"#! new timing mode: %04X", timing_mode);
+      write_log_tow(1);
+   }
+   last_tmode = timing_mode;
+
+   if(log_comments && (time_flags != last_tflags)) { 
+      sprintf(log_text,"#! new time flags: %04X", time_flags);
+      write_log_tow(1);
+   }
+   last_tflags = time_flags;
+
+
    if(log_comments && (last_critical != critical_alarms)) {
       sprintf(log_text, "#! new critical alarm state %04X:  ", critical_alarms);
 
       change = last_critical ^ critical_alarms;
-      if(change & 0x0001) {
-         if(critical_alarms & 0x0001)   strcat(log_text, "  ROM:BAD");
-         else                           strcat(log_text, "  ROM:OK");
+      if(change & CRIT_ROM) {
+         if(critical_alarms & CRIT_ROM)   strcat(log_text, "  ROM:BAD");
+         else                             strcat(log_text, "  ROM:OK");
       }
-      if(change & 0x0002) {
-         if(critical_alarms & 0x0002)   strcat(log_text, "  RAM:BAD");
-         else                           strcat(log_text, "  RAM:OK");
+      if(change & CRIT_RAM) {
+         if(critical_alarms & CRIT_RAM)   strcat(log_text, "  RAM:BAD");
+         else                             strcat(log_text, "  RAM:OK");
       }
-      if(change & 0x0004) {
-         if(critical_alarms & 0x0004)   strcat(log_text, "  Power:BAD");
-         else                           strcat(log_text, "  Power:OK ");
+      if(change & CRIT_PWR) {
+         if(critical_alarms & CRIT_PWR)   strcat(log_text, "  Power:BAD");
+         else                             strcat(log_text, "  Power:OK ");
       }
-      if(change & 0x0008) {
-         if(critical_alarms & 0x0008)   strcat(log_text, "  FPGA:BAD");
-         else                           strcat(log_text, "  FPGA:OK ");
+      if(change & CRIT_FPGA) {
+         if(critical_alarms & CRIT_FPGA)  strcat(log_text, "  FPGA:BAD");
+         else                             strcat(log_text, "  FPGA:OK ");
       }
-      if(change & 0x0010) {
-         if(critical_alarms & 0x0010)   strcat(log_text, "  OSC: BAD");
-         else                           strcat(log_text, "  OSC: OK ");
+      if(change & CRIT_OCXO) {
+         if(critical_alarms & CRIT_OCXO)  strcat(log_text, "  OSC: BAD");
+         else                             strcat(log_text, "  OSC: OK ");
       }
       write_log_tow(1);
    }
@@ -1776,57 +4918,151 @@ u16 change;
 
 
    change = last_minor ^ minor_alarms;
-   change &= (~0x1000);  // PP2S pulse skip is probably not an error
+   change &= (~MINOR_PPS_SKIPPED);  // PP2S pulse skip is probably not an error
    if(log_comments && change && (check_precise_posn == 0)) {
       sprintf(log_text, "#! new minor alarm state %04X:  ", minor_alarms);
-      if(change & 0x0001) {
-         if(minor_alarms & 0x0001)  strcat(log_text, "OSC age alarm   ");
-         else                       strcat(log_text, "OSC age normal   ");
+      if(change & MINOR_OSC_AGE) {
+         if(minor_alarms & MINOR_OSC_AGE) strcat(log_text, "OSC age alarm   ");
+         else                              strcat(log_text, "OSC age normal   ");
       }
-      if(change & 0x0006) {
-         if(minor_alarms & 0x0002)       strcat(log_text, "Antenna open   ");
-         else if(minor_alarms & 0x0004)  strcat(log_text, "Antenna short   ");
-         else                            strcat(log_text, "Antenna OK   ");
+      if(change & (MINOR_ANT_OPEN | MINOR_ANT_SHORT)) {
+         if((minor_alarms & MINOR_ANT_OPEN) && (minor_alarms & MINOR_ANT_SHORT)) {
+            strcat(log_text, "Antenna power  ");
+         }
+         else if(minor_alarms & MINOR_ANT_OPEN)  strcat(log_text, "Antenna open   ");
+         else if(minor_alarms & MINOR_ANT_SHORT) strcat(log_text, "Antenna short   ");
+         else                                    strcat(log_text, "Antenna OK   ");
       }
-      if(change & 0x0008) {
-         if(minor_alarms & 0x0008)   strcat(log_text, "No sats usable   ");
-         else                        strcat(log_text, "Tracking sats   ");
+      if(change & MINOR_NO_TRACK) {
+         if(minor_alarms & MINOR_NO_TRACK)  {
+            if(rcvr_type == BRANDY_RCVR) strcat(log_text, "Positioning interrupted   ");
+            else                         strcat(log_text, "No sats usable   ");
+         }
+         else strcat(log_text, "Tracking sats   ");
       }
-      if(change & 0x0010) {
-         if(minor_alarms & 0x0010)   strcat(log_text, "Undisciplined   ");
-         else                        strcat(log_text, "Discipline OK   ");
+      if(change & MINOR_OSC_CTRL) {
+         if(minor_alarms & MINOR_OSC_CTRL)  strcat(log_text, "Undisciplined   ");
+         else                               strcat(log_text, "Discipline OK   ");
       }
-      if(change & 0x0020) {
-         if(minor_alarms & 0x0020)   strcat(log_text, "Survey started  ");
-         else                        strcat(log_text, "Survey stopped  ");
+      if(change & MINOR_SURVEY) {
+         if(minor_alarms & MINOR_SURVEY)    strcat(log_text, "Survey started  ");
+         else                               strcat(log_text, "Survey stopped  ");
       }
-      if(change & 0x0040) {
-         if(minor_alarms & 0x0040)   strcat(log_text, "No saved posn   ");
-         else                        strcat(log_text, "Position saved   ");
+      if(change & MINOR_NO_POSN) {
+         if(minor_alarms & MINOR_NO_POSN)   strcat(log_text, "No saved posn   ");
+         else                               strcat(log_text, "Position saved   ");
       }
-      if(change & 0x0080) {
-         if(minor_alarms & 0x0080)   strcat(log_text, "LEAP PENDING!    ");
-         else                        strcat(log_text, "No leap second   ");
+      if(change & MINOR_LEAP_PEND) {
+         if(minor_alarms & MINOR_LEAP_PEND) strcat(log_text, "LEAP PENDING!    ");
+         else                               strcat(log_text, "No leap second   ");
       }
-      if(change & 0x0100) {
-         if(minor_alarms & 0x0100)   strcat(log_text, "Test mode set    ");
-         else                        strcat(log_text, "Normal op mode   ");
+      if(change & MINOR_TEST_MODE) {
+         if(minor_alarms & MINOR_TEST_MODE) strcat(log_text, "Test mode set    ");
+         else                               strcat(log_text, "Normal op mode   ");
       }
-      if(change & 0x0200) {
-         if(minor_alarms & 0x0200)   strcat(log_text, "Saved posn BAD   ");
-         else                        strcat(log_text, "Saved posn OK    ");
+      if(change & MINOR_BAD_POSN) {
+         if(minor_alarms & MINOR_BAD_POSN)  strcat(log_text, "Saved posn BAD   ");
+         else                               strcat(log_text, "Saved posn OK    ");
       }
-      if(change & 0x0400) {
-         if(minor_alarms & 0x0400)   strcat(log_text, "EEPROM corrupt   ");
-         else                        strcat(log_text, "EEPROM data OK   ");
+      if(change & MINOR_EEPROM) {
+         if(minor_alarms & MINOR_EEPROM)    strcat(log_text, "EEPROM corrupt   ");
+         else                               strcat(log_text, "EEPROM data OK   ");
       }
-      if(change & 0x0800) {
-         if(minor_alarms & 0x0800)   strcat(log_text, "No almanac    ");
-         else                        strcat(log_text, "Almanac OK    ");
+      if(change & MINOR_ALMANAC) {
+         if(minor_alarms & MINOR_ALMANAC)   strcat(log_text, "No almanac    ");
+         else                               strcat(log_text, "Almanac OK    ");
+      }
+      if((change & MINOR_PPS_SKIPPED) && (res_t == 0)) {
+         if(minor_alarms & MINOR_PPS_SKIPPED)  strcat(log_text, "PPS error     ");
+         else                                  strcat(log_text, "PPS OK        ");
+      }
+
+      if(change & MINOR_JL_PHASE) {
+         if(minor_alarms & MINOR_JL_PHASE)   strcat(log_text, "Phase >250 ns ");
+         else                                strcat(log_text, "Phase OK      ");
+      }
+      if(change & MINOR_JL_RUNTIME) {
+         if(minor_alarms & MINOR_JL_RUNTIME) strcat(log_text, "Runtime <300s ");
+         else                                strcat(log_text, "Runtime OK    ");
+      }
+      if(change & MINOR_JL_HOLD) {
+         if(minor_alarms & MINOR_JL_HOLD)    strcat(log_text, "Holdover >60s ");
+         else                                strcat(log_text, "Holdover OK   ");
+      }
+      if(change & MINOR_JL_FREQ) {
+         if(minor_alarms & MINOR_JL_FREQ)    strcat(log_text, "Freq error    ");
+         else                                strcat(log_text, "Freq OK       ");
+      }
+      if(change & MINOR_JL_CHANGE) {
+         if(minor_alarms & MINOR_JL_CHANGE)  strcat(log_text, "Phase reset   ");
+         else                                strcat(log_text, "Phase set     ");
+      }
+
+      if(change & MINOR_DISCIPLINE) {
+         if(minor_alarms & MINOR_DISCIPLINE) strcat(log_text, "Large PPS error");
+         else                                strcat(log_text, "PPS error OK   ");
+      }
+      if(change & MINOR_WARMUP) {
+         if(minor_alarms & MINOR_WARMUP)     strcat(log_text, "Warmup error  ");
+         else                                strcat(log_text, "Warmup OK     ");
+      }
+      if(change & MINOR_INACTIVE)  {
+         if(minor_alarms & MINOR_INACTIVE)   strcat(log_text, "Inactive      ");
+         else                                strcat(log_text, "Active        ");
+      }
+      if(change & MINOR_HOLDOVER)  {
+         if(minor_alarms & MINOR_HOLDOVER)   strcat(log_text, "Holdover>8hrs ");
+         else                                strcat(log_text, "Holdover OK   ");
+      }
+      if(change & MINOR_PLL)  {
+         if(minor_alarms & MINOR_PLL)        strcat(log_text, "PLL error     ");
+         else                                strcat(log_text, "PLL OK        ");
+      }
+      if(change & MINOR_JAMMING)  {
+         if(minor_alarms & MINOR_JAMMING)    strcat(log_text, "Jamming seen  ");
+         else                                strcat(log_text, "Jamming OK    ");
       }
       write_log_tow(1);
    }
    last_minor = minor_alarms;
+
+   if(eclipse_flag != last_eclipse) {
+      if(eclipse_flag) {
+         if(eclipse_flag == 1) {
+            sprintf(log_text, "#! solar eclipse started");
+            write_log_tow(1);
+         }
+         else if(0) {
+            sprintf(log_text, "#! lunar eclipse started");
+            write_log_tow(1);
+         }
+      }
+      else {
+         if(last_eclipse == 1) {
+            sprintf(log_text, "#! solar eclipse ended");
+            write_log_tow(1);
+         }
+         else if(0) {
+            sprintf(log_text, "#! lunar eclipse ended");
+            write_log_tow(1);
+         }
+      }
+
+      last_eclipse = eclipse_flag;
+   }
+
+   if(eclipse_flag != 1) {
+      eclipse_d1 = BIG_NUM;
+      eclipse_d2 = BIG_NUM;
+      eclipse_d3 = BIG_NUM;
+   }
+   else if(eclipse_d1 == BIG_NUM) ;
+   else if(eclipse_d2 == BIG_NUM) ;
+   else if(eclipse_d3 == BIG_NUM) ;
+   else if((eclipse_d1 > eclipse_d2) && (eclipse_d2 < eclipse_d3)) {
+      sprintf(log_text, "#! solar eclipse closest sun-moon distance");
+      write_log_tow(1);
+   }
 }
 
 void write_log_error(char *s, u32 val)
@@ -1864,8 +5100,9 @@ void write_log_leapsecond()
    sprintf(log_text,"#");
    write_log_comment(1);
 
+   month = fix_month(month);
    sprintf(log_text,"#! Leapsecond: %02d:%02d:%02d %s   %02d %s %04d - interval %ld secs", 
-      hours,minutes,seconds, (time_flags & 0x0001)?"UTC":"GPS", day,months[month],year, log_interval);
+      hours,minutes,seconds, (time_flags & TFLAGS_UTC)?"UTC":"GPS", day,months[month],year, log_interval);
    write_log_comment(1);
 
    sprintf(log_text,"#");
@@ -1888,7 +5125,7 @@ float x;
       x = (float) precise_lat;   lat = (double) x;
       x = (float) precise_lon;   lon = (double) x;
       x = (float) precise_alt;   alt = (double) x;
-      if(type == 1)      sprintf(log_text, "#User stopped precise save of manually entered position.  TSIP message used.");
+      if     (type == 1) sprintf(log_text, "#User stopped precise save of manually entered position.  TSIP message used.");
       else if(type == 2) sprintf(log_text, "#User stopped precise save of surveyed position.  TSIP message used.");
       else if(type == 3) sprintf(log_text, "#User stopped precise survey.  Averaged position saved using TSIP message.");
       else if(type)      sprintf(log_text, "#Precise survey stopped.  Reason=%d.", type);
@@ -1903,19 +5140,18 @@ float x;
    d_lon = (lon-precise_lon)*RAD_TO_DEG/ANGLE_SCALE*cos_factor;
    d_alt = (alt-precise_alt);
 
-   sprintf(log_text, "#DESIRED POSITION: %.9lf  %.9lf  %.9lf",
+   sprintf(log_text, "#DESIRED POSITION: %.9f  %.9f  %.9f",
                         precise_lat*RAD_TO_DEG, precise_lon*RAD_TO_DEG, precise_alt);
    write_log_comment(1);
 
-   sprintf(log_text, "#SAVED POSITION:   %.9lf  %.9lf  %.9lf",
+   sprintf(log_text, "#SAVED POSITION:   %.9f  %.9f  %.9f",
                         lat*RAD_TO_DEG, lon*RAD_TO_DEG, alt);
    write_log_comment(1);
 
-   sprintf(log_text, "#ROUNDOFF ERROR:   lat=%.8lf %s   lon=%.8lf %s   rms=%.8lf %s", 
+   sprintf(log_text, "#ROUNDOFF ERROR:   lat: %.9f %s   lon: %.9f %s   rms: %.9f %s", 
       d_lat,angle_units,  d_lon,angle_units,  sqrt(d_lat*d_lat + d_lon*d_lon),angle_units);
    write_log_comment(1);
 }
-
 
 
 void restore_plot_config()
@@ -1929,74 +5165,18 @@ int i;
       }
       plot_sat_count = old_sat_plot;
       plot_adev_data = old_adev_plot;
-      adev_period = old_adev_period;
+      if(plot_adev_data == 0) adev_decades_shown = 0;
+      adev_period = xxx_adev_period;       // aaaaaapppppp other periods
       keep_adevs_fresh = old_keep_fresh;
    }
-}
-
-void close_script(u08 close_all)
-{
-int i;
-
-   if(script_file == 0) return;
-
-   if(close_all) {
-      for(i=0; i<script_nest; i++) fclose(scripts[i].file);
-      script_file = 0;
-      script_pause = 0;
-      script_nest = 0;
-   }
-   else if(script_nest) {
-      fclose(script_file);
-      --script_nest;
-      strcpy(script_name, scripts[script_nest].name);
-      script_file   = scripts[script_nest].file;
-      script_line   = scripts[script_nest].line;
-      script_col    = scripts[script_nest].col;
-      script_err    = scripts[script_nest].err;
-      script_fault  = scripts[script_nest].fault;
-      script_pause  = scripts[script_nest].pause;
-   }
-   else {
-     fclose(script_file);
-     script_file  = 0;
-     script_pause = 0;
-   }
-}
-
-void open_script(char *fn)
-{
-   if(script_file) { // nested script files
-      if(script_nest < SCRIPT_NEST) {
-         strcpy(scripts[script_nest].name, script_name);
-         scripts[script_nest].file  = script_file;
-         scripts[script_nest].line  = script_line;
-         scripts[script_nest].col   = script_col;
-         scripts[script_nest].fault = script_fault;
-         scripts[script_nest].err   = script_err;
-         scripts[script_nest].pause = script_pause;
-         ++script_nest;
-      }
-      else {
-         edit_error("Script files nested too deep");
-         close_script(1);
-         return;
-      }
-   }
-
-   strncpy(script_name, fn, SCRIPT_LEN);
-   script_file  = topen(fn, "r");
-   script_line  = 1;
-   script_col   = 0;
-   script_fault = 0;
-   script_pause = 0;
-   skip_comment = 0;
-   return;
 }
 
 FILE *open_it(char *line, char *fn)
 {
 FILE *file;
+
+    if(line == 0) return 0;
+    if(fn == 0) return 0;
 
     strcpy(line, fn);
     file = topen(line, "r");
@@ -2004,12 +5184,47 @@ FILE *file;
 
     if(strstr(fn, ".")) return file; // extension given,  we are done trying
 
-    // try to open file with default extensions
+    // no extension give. try to open file with default extensions
+    if(rcvr_type == CS_RCVR) {
+       strcpy(line, fn);
+       strcat(line, ".xml");
+       file = topen(line, "r");
+       if(file) return file;
+
+       strcpy(line, fn);
+       strcat(line, ".log");
+       file = topen(line, "r");
+       if(file) return file;
+    }
+    else {
+       strcpy(line, fn);
+       strcat(line, ".log");
+       file = topen(line, "r");
+       if(file) return file;
+
+       strcpy(line, fn);
+       strcat(line, ".xml");
+       file = topen(line, "r");
+       if(file) return file;
+    }
+
     strcpy(line, fn);
-    strcat(line, ".log");
+    strcat(line, ".gpx");
     file = topen(line, "r");
     if(file) return file;
 
+    strcpy(line, fn);
+    strcat(line, ".kml");
+    file = topen(line, "r");
+    if(file) return file;
+
+    strcpy(line, fn);         // RINEX
+    strcat(line, ".obs");
+    file = topen(line, "r");
+    if(file) return file;
+
+
+    // try non-log file names
     strcpy(line, fn);
     strcat(line, ".scr");
     file = topen(line, "r");
@@ -2031,6 +5246,11 @@ FILE *file;
     if(file) return file;
 
     strcpy(line, fn);
+    strcat(line, ".prn");
+    file = topen(line, "r");
+    if(file) return file;
+
+    strcpy(line, fn);
     strcat(line, ".adv");
     file = topen(line, "r");
     if(file) return file;
@@ -2040,11 +5260,21 @@ FILE *file;
     file = topen(line, "r");
     if(file) return file;
 
+    strcpy(line, fn);
+    strcat(line, ".tie");
+    file = topen(line, "r");
+    if(file) return file;
+
+    strcpy(line, fn);
+    strcat(line, ".rpn");
+    file = topen(line, "r");
+    if(file) return file;
+
     return 0;
 }
 
 
-int time_check(int reading_log, float interval, int yy,int mon,int dd,  int hours,int minutes,int seconds,double frac)
+int time_check(int reading_log, DATA_SIZE interval, int yy,int mon,int dd,  int hours,int minutes,int seconds,double frac)
 {
 double t;
 int warn;
@@ -2054,12 +5284,13 @@ double nav_step;
 double delta;
 
    // This routine verfies that time stamps are sequential
+   // NEW_RCVR
    if(log_errors == 0) return 0;
 
    t = jdate(yy, mon, dd) - jdate(2012,0,0);
    t += jtime(hours,minutes,seconds,frac);
    t *= (24.0*60.0*60.0*1000.0);
-   t = (double) (LONG_LONG) (t+0.5);
+   t = (double) (s64) (t+0.5);
 
    if(!have_last_stamp) {
       last_stamp = t;
@@ -2071,21 +5302,46 @@ double delta;
    warn = 0;   // assume properly consecutive time stamps
 
    nav_step = 1000.0;
-   if(reading_log && interval) nav_step =  (double) (int) ((1000.0 * interval)+0.50);
+   if(reading_log && interval) nav_step =  (double) (int) (((DATA_SIZE) 1000.0 * interval)+(DATA_SIZE) 0.50);
    else if(nav_rate) nav_step = (double) (int) ((1000.0 / nav_rate)+0.50);
 
    delta = fabs((t - last_stamp) - nav_step);
 
-   if(status_second(seconds)) ;  // seconds value is when a long status message is being processed
-   else if(rcvr_type == NO_RCVR) ; // nnnnnn
+   if((rcvr_type == ACRON_RCVR) && status_second(seconds)) ;  // seconds value is when a long status message is being processed
+   else if((rcvr_type == BRANDY_RCVR) && (delta < 800.0)) warn = 0;   // !!!! brandywine receiver can send multiple time stamps per second with millisecond fractions
+   else if((rcvr_type == ESIP_RCVR) && (delta < 100.0)) warn = 0;
+   else if((rcvr_type == LPFRS_RCVR) && (delta < 1400.0)) warn = 0;
+   else if((rcvr_type == SA35_RCVR) && (delta < 1400.0)) warn = 0;
+   else if((rcvr_type == RT17_RCVR) && (delta < 100.0)) warn = 0;  // toots
+   else if((rcvr_type == SRO_RCVR) && (delta < 1400.0)) warn = 0;
+   else if(STARLOC && starloc_skip_delay) --starloc_skip_delay;
+   else if(STARLOC && bad_starloc_time && (delta == 1000.0)) warn = 0;
+   else if((rcvr_type == TSIP_RCVR) && (tsip_type == SV6_TYPE) && (delta < 1100.0)) warn = 0;
+   else if((rcvr_type == TSIP_RCVR) && (res_t == RES_T) && (raw_msg_rate >= 3) && (delta < 2100.0)) warn = 0;
+   else if((rcvr_type == Z12_RCVR) && (delta < 750.0)) warn = 0;   // !!!! Z12 can send 0.5 sec backwards time stamps
+//OSA   else if((rcvr_type == STAR_RCVR) && (star_type == OSA_TYPE) && (delta < 2200.0)) warn = 0;  // OSA
+   else if(rcvr_type == TICC_RCVR) ;
+   else if(lte_lite && (have_sawtooth == 0)) ;
    else if(time_checked == 0) warn = 0;   // it's the first time 
-   else if((t-last_stamp) == 0.0) warn = 1;   // duplicate time stamp
-   else if(nav_rate && (reading_log == 0) && (delta > 1.0)) warn = 2; // checking live readings
-   else if(reading_log && (delta > 1.0)) warn = 3;   // checking log readings
-if(0 && warn) {
-   sprintf(debug_text2, "unt:%f step:%f last_stamp:%f  t:%f  delta:%f nav:%f warn:%d", 
-   interval, nav_step, last_stamp, t, delta, 1.0/nav_rate, warn);
-}
+   else if((t-last_stamp) == 0.0) {  // duplicate time stamp
+      warn = 1;
+       if((rcvr_type == STAR_RCVR) && (star_type == OSA_TYPE)) warn = 0;  // OSA
+   }
+   else if(HIGH_TS_THRESH && (delta < TS_CHECK_THRESHOLD)) { // allow larger time stamp differences
+      warn = 0;
+   }
+   else if(nav_rate && (reading_log == 0) && (delta > 1.0)) {  // more than 1msec err in time stamp sequence
+      warn = 2;  // checking live readings
+   }
+   else if(reading_log && (delta > 1.0)) {  // time stamp sequence error > 1 msec
+      warn = 3;   // checking log readings
+   }
+   bad_starloc_time = 0;
+
+   if(0 && warn) {
+      sprintf(debug_text2, "unt:%f step:%f last_stamp:%f  t:%f  delta:%f nav:%f warn:%d", 
+      interval, nav_step, last_stamp, t, delta, 1.0/nav_rate, warn);
+   }
 
 //if(log_file) fprintf(log_file, "#! (%d) pri=%02d:%02d:%02d  adj:%02d:%02d:%02d\n", warn, pri_hours,pri_minutes,pri_seconds, hours,minutes,seconds);
 
@@ -2095,11 +5351,10 @@ if(0 && warn) {
       put_plot_q(plot_q_in, q);
 
       if(log_errors && (reading_log == 0)) {
-//       if(warn == 1)      fprintf(log_file, "#! time stamp duplicated.\n");
-         if     (warn == 1) sprintf(log_text, "#! time stamp duplicated.  t=%.3f last=%.3f", t, last_stamp);
-         else if(warn == 2) sprintf(log_text, "#! time stamp skipped.  t=%.3f  last=%.3f  err:%.0f ms", t, last_stamp, t-last_stamp);
-         else if(warn == 3) sprintf(log_text, "#! time stamp skipped in log file");
-         else               sprintf(log_text, "#! time stamp sequence error type: %d", warn);
+         if     (warn == 1) sprintf(log_text, "#! time stamp duplicated.  t=%.3f last=%.3f  delta=%.1f", t, last_stamp, delta);
+         else if(warn == 2) sprintf(log_text, "#! time stamp skipped.  t=%.1f  last=%.1f  err:%.0f ms  %02d:%02d:%02d  delta=%.1f", t, last_stamp, t-last_stamp, hours,minutes,seconds, delta);
+         else if(warn == 3) sprintf(log_text, "#! time stamp skipped in log file  delta=%.1f", delta);
+         else               sprintf(log_text, "#! time stamp sequence error type: %d  delta=%.1f", warn, delta);
 if(debug_file) fprintf(debug_file, "%s\n", log_text);
          write_log_comment(1);
       }
@@ -2121,26 +5376,1300 @@ if(debug_file) fprintf(debug_file, "%s\n", log_text);
    }
 
    last_stamp = t;
-if(warn) time_checked = 0; else
-   time_checked = have_time;
+   if(warn) time_checked = 0;
+   else     time_checked = have_time;
 
    return warn;
 }
 
 
-float llt;  // last log temperature;
-float tvb;
+DATA_SIZE llt;  // last log temperature;
+DATA_SIZE tvb;
+
+double vp, vo, vc, vd;
+double vdac, vtemp, vtemp2;
+double vpressure, vhumidity;
+double vadc1, vadc2, vadc3, vadc4;
+int log_hhh,log_mmm;
+double log_sss;
+long log_tow;
+int log_mark_number;
+int xml_log_fmt;
+DATA_SIZE read_log_interval;
+int valid_read_log;
+int saw_log_title;
+double log_pps_scale, log_osc_scale, log_chc_scale, log_chd_scale;
+double log_freq;
+int saw_timelab_tic;
+double read_log_jd;
 
 
-double xml_val(char *line)
+DATA_SIZE xml_val(char *line)
 {
 char *s;
 
+   // get a numeric value from an XML data point line
+
    if(line == 0) return 0.0;
+
    s = strchr(line, '>');
+
    if(s == 0) return 0.0;
    else if(s[0] == 0) return 0.0;
-   else return atof(s+1);
+   else return (DATA_SIZE) atof(s+1);
+}
+
+
+char *xml_string(char *line)
+{
+char *s;
+char *s2;
+
+   // get a string value from an XML data point line
+
+   if(line == 0) return "";
+
+   s = strchr(line, '>');
+   if(s == 0) return "";
+   else if(s[0] == 0) return "";
+
+   s2 = strchr(s, '<');
+   if(s2) *s2 = 0;
+
+   return s+1;
+}
+
+
+int parse_xml_value2(char *line)
+{
+   // process XML log data point values - second half of if() chain
+   // NEW_RCVR
+
+   if(line == 0) return 1;
+
+   // PRS-10 values
+   if(strstr(line, "<lm>")) {
+      prs_lm = (int) xml_val(line);
+      have_prs_lm = 1;
+   }
+   else if(strstr(line, "<lo>")) {
+      prs_lo = (int) xml_val(line);
+      have_prs_lo = 1;
+   }
+   else if(strstr(line, "<fc1>")) {
+      prs_fc1 = (int) xml_val(line);
+      have_prs_fc |= 0x01;
+   }
+   else if(strstr(line, "<fc2>")) {
+      prs_fc2 = (int) xml_val(line);
+      have_prs_fc |= 0x02;
+   }
+   else if(strstr(line, "<ds1>")) {
+      prs_ds1 = (int) xml_val(line);
+      have_prs_ds |= 0x01;
+   }
+   else if(strstr(line, "<fc2>")) {
+      prs_ds2 = (int) xml_val(line);
+      have_prs_ds |= 0x02;
+   }
+   else if(strstr(line, "<ss>")) {
+      prs_ss = (int) xml_val(line);
+      have_prs_ss = 1;
+   }
+   else if(strstr(line, "<sf>")) {
+      prs_sf = (int) xml_val(line);
+      have_prs_sf = 1;
+   }
+   else if(strstr(line, "<ph>")) {
+      prs_ph = (int) xml_val(line);
+      have_prs_ph = 1;
+   }
+   else if(strstr(line, "<sp1>")) {
+      prs_sp[0] = (int) xml_val(line);
+      have_prs_sp |= (1 << 0);
+   }
+   else if(strstr(line, "<sp2>")) {
+      prs_sp[1] = (int) xml_val(line);
+      have_prs_sp |= (1 << 1);
+   }
+   else if(strstr(line, "<sp3>")) {
+      prs_sp[2] = (int) xml_val(line);
+      have_prs_sp |= (1 << 2);
+   }
+   else if(strstr(line, "<mo>")) {
+      prs_mo = (int) xml_val(line);
+      have_prs_mo = 1;
+   }
+   else if(strstr(line, "<ms>")) {
+      prs_ms = (int) xml_val(line);
+      have_prs_ms = 1;
+   }
+   else if(strstr(line, "<mr>")) {
+      prs_mr = (int) xml_val(line);
+      have_prs_mr = 1;
+   }
+   else if(strstr(line, "<tt>")) {
+      prs_tt = (int) xml_val(line);
+      have_prs_tt = 1;
+   }
+   else if(strstr(line, "<ts>")) {
+      prs_ts = (int) xml_val(line);
+      have_prs_ts = 1;
+   }
+   else if(strstr(line, "<to>")) {
+      prs_to = (int) xml_val(line);
+      have_prs_to = 1;
+   }
+   else if(strstr(line, "<ps>")) {
+      prs_ps = (int) xml_val(line);
+      have_prs_ps = 1;
+   }
+   else if(strstr(line, "<pl>")) {
+      prs_pl = (int) xml_val(line);
+      have_prs_pl = 1;
+   }
+   else if(strstr(line, "<ep>")) {
+      prs_ep = (int) xml_val(line);
+      have_prs_ep = 1;
+   }
+   else if(strstr(line, "<ga>")) {
+      prs_ga = (int) xml_val(line);
+      have_prs_ga = 1;
+   }
+   else if(strstr(line, "<pt>")) {
+      prs_pt = (int) xml_val(line);
+      have_prs_pt = 1;
+   }
+   else if(strstr(line, "<pf>")) {
+      prs_pf = (int) xml_val(line);
+      have_prs_pf = 1;
+   }
+   else if(strstr(line, "<pi>")) {
+      prs_pi = (int) xml_val(line);
+      have_prs_pi = 1;
+   }
+   else if(strstr(line, "<ad0>")) {
+      prs_ad[0] = (double) xml_val(line);
+      have_prs_ad |= (1 << 0);
+   }
+   else if(strstr(line, "<ad1>")) {
+      prs_ad[1] = (double) xml_val(line);
+      have_prs_ad |= (1 << 1);
+   }
+   else if(strstr(line, "<ad2>")) {
+      prs_ad[2] = (double) xml_val(line);
+      have_prs_ad |= (1 << 2);
+   }
+   else if(strstr(line, "<ad3>")) {
+      prs_ad[3] = (double) xml_val(line);
+      have_prs_ad |= (1 << 3);
+   }
+   else if(strstr(line, "<ad4>")) {
+      prs_ad[4] = (double) xml_val(line);
+      have_prs_ad |= (1 << 4);
+   }
+   else if(strstr(line, "<ad5>")) {
+      prs_ad[5] = (double) xml_val(line);
+      have_prs_ad |= (1 << 5);
+   }
+   else if(strstr(line, "<ad6>")) {
+      prs_ad[6] = (double) xml_val(line);
+      have_prs_ad |= (1 << 6);
+   }
+   else if(strstr(line, "<ad7>")) {
+      prs_ad[7] = (double) xml_val(line);
+      have_prs_ad |= (1 << 7);
+   }
+   else if(strstr(line, "<ad8>")) {
+      prs_ad[8] = (double) xml_val(line);
+      have_prs_ad |= (1 << 8);
+   }
+   else if(strstr(line, "<ad9>")) {
+      prs_ad[9] = (double) xml_val(line);
+      have_prs_ad |= (1 << 9);
+   }
+   else if(strstr(line, "<ad10>")) {
+      prs_ad[10] = (double) xml_val(line);
+      have_prs_ad |= (1 << 10);
+   }
+   else if(strstr(line, "<ad11>")) {
+      prs_ad[11] = (double) xml_val(line);
+      have_prs_ad |= (1 << 11);
+   }
+   else if(strstr(line, "<ad12>")) {
+      prs_ad[12] = (double) xml_val(line);
+      have_prs_ad |= (1 << 12);
+   }
+   else if(strstr(line, "<ad13>")) {
+      prs_ad[13] = (double) xml_val(line);
+      have_prs_ad |= (1 << 13);
+   }
+   else if(strstr(line, "<ad14>")) {
+      prs_ad[14] = (double) xml_val(line);
+      have_prs_ad |= (1 << 14);
+   }
+   else if(strstr(line, "<ad15>")) {
+      prs_ad[15] = (double) xml_val(line);
+      have_prs_ad |= (1 << 15);
+   }
+   else if(strstr(line, "<ad16>")) {
+      prs_ad[16] = (double) xml_val(line);
+      have_prs_ad |= (1 << 16);
+   }
+   else if(strstr(line, "<ad17>")) {
+      prs_ad[17] = (double) xml_val(line);
+      have_prs_ad |= (1 << 17);
+   }
+   else if(strstr(line, "<ad18>")) {
+      prs_ad[18] = (double) xml_val(line);
+      have_prs_ad |= (1 << 18);
+   }
+   else if(strstr(line, "<ad19>")) {
+      prs_ad[19] = (double) xml_val(line);
+      have_prs_ad |= (1 << 19);
+   }
+   else if(strstr(line, "<sd0>")) {
+      prs_sd[0] = (int) xml_val(line);
+      have_prs_sd |= (1 << 0);
+   }
+   else if(strstr(line, "<sd1>")) {
+      prs_sd[1] = (int) xml_val(line);
+      have_prs_sd |= (1 << 1);
+   }
+   else if(strstr(line, "<sd2>")) {
+      prs_sd[2] = (int) xml_val(line);
+      have_prs_sd |= (1 << 2);
+   }
+   else if(strstr(line, "<sd3>")) {
+      prs_sd[3] = (int) xml_val(line);
+      have_prs_sd |= (1 << 3);
+   }
+   else if(strstr(line, "<sd4>")) {
+      prs_sd[4] = (int) xml_val(line);
+      have_prs_sd |= (1 << 4);
+   }
+   else if(strstr(line, "<sd5>")) {
+      prs_sd[5] = (int) xml_val(line);
+      have_prs_sd |= (1 << 5);
+   }
+   else if(strstr(line, "<sd6>")) {
+      prs_sd[6] = (int) xml_val(line);
+      have_prs_sd |= (1 << 6);
+   }
+   else if(strstr(line, "<sd7>")) {
+      prs_sd[7] = (int) xml_val(line);
+      have_prs_sd |= (1 << 7);
+   }
+   else if(strstr(line, "<st1>")) {
+      prs_st[0] = (int) xml_val(line);
+      have_prs_st |= (1 << 0);
+   }
+   else if(strstr(line, "<st2>")) {
+      prs_st[1] = (int) xml_val(line);
+      have_prs_st |= (1 << 1);
+   }
+   else if(strstr(line, "<st3>")) {
+      prs_st[2] = (int) xml_val(line);
+      have_prs_st |= (1 << 2);
+   }
+   else if(strstr(line, "<st4>")) {
+      prs_st[3] = (int) xml_val(line);
+      have_prs_st |= (1 << 3);
+   }
+   else if(strstr(line, "<st5>")) {
+      prs_st[4] = (int) xml_val(line);
+      have_prs_st |= (1 << 4);
+   }
+   else if(strstr(line, "<st6>")) {
+      prs_st[5] = (int) xml_val(line);
+      have_prs_st |= (1 << 5);
+   }
+
+   // X72 values
+   else if(strstr(line, "<creg>")) {
+       x72_creg = (int) xml_val(line);
+       have_x72_creg = 1;
+   }
+   else if(strstr(line, "<dmp17>")) {
+       x72_dmp17 = (double) xml_val(line);
+       have_x72_dmp17 = 1;
+   }
+   else if(strstr(line, "<dmp5>")) {
+       x72_dmp5 = (double) xml_val(line);
+       have_x72_dmp5 = 1;
+   }
+   else if(strstr(line, "<dhtrvolt>")) {
+       x72_dhtrvolt = (double) xml_val(line);
+       have_x72_dhtrvolt = 1;
+   }
+   else if(strstr(line, "<plmp>")) {
+       x72_plmp = (double) xml_val(line);
+       have_x72_plmp = 1;
+   }
+   else if(strstr(line, "<pres>")) {
+       x72_pres = (double) xml_val(line);
+       have_x72_pres = 1;
+   }
+   else if(strstr(line, "<dlvthermc>")) {
+       x72_dlvthermc = (double) xml_val(line);
+       have_x72_dlvthermc = 1;
+   }
+   else if(strstr(line, "<drvthermc>")) {
+       x72_drvthermc = (double) xml_val(line);
+       have_x72_drvthermc = 1;
+   }
+   else if(strstr(line, "<dlvolt>")) {
+       x72_dlvolt = (double) xml_val(line);
+       have_x72_dlvolt = 1;
+   }
+   else if(strstr(line, "<dmvoutc>")) {
+       x72_dmvoutc = (double) xml_val(line);
+       have_x72_dmvoutc = 1;
+   }
+   else if(strstr(line, "<dtemplo>")) {
+       x72_dtemplo = (double) xml_val(line);
+       have_x72_dtemplo = 1;
+   }
+   else if(strstr(line, "<dtemphi>")) {
+       x72_dtemphi = (double) xml_val(line);
+       have_x72_dtemphi = 1;
+   }
+   else if(strstr(line, "<dvoltlo>")) {
+       x72_dvoltlo = (double) xml_val(line);
+       have_x72_dvoltlo = 1;
+   }
+   else if(strstr(line, "<dvolthi>")) {
+       x72_dvolthi = (double) xml_val(line);
+       have_x72_dvolthi = 1;
+   }
+   else if(strstr(line, "<dlvoutc>")) {
+       x72_dlvoutc = (double) xml_val(line);
+       have_x72_dlvoutc = 1;
+   }
+   else if(strstr(line, "<drvoutc>")) {
+       x72_drvoutc = (double) xml_val(line);
+       have_x72_drvoutc = 1;
+   }
+   else if(strstr(line, "<dmv2demavg>")) {
+       x72_dmv2demavg = (double) xml_val(line);
+       have_x72_dmv2demavg = 1;
+   }
+   else if(strstr(line, "<scont>")) {
+       x72_scont = (int) xml_val(line);
+       have_x72_scont = 1;
+   }
+   else if(strstr(line, "<sernum>")) {
+       x72_sernum = (int) xml_val(line);
+       have_x72_sernum = 1;
+   }
+   else if(strstr(line, "<pwrticks>")) {
+       x72_pwrticks = (int) xml_val(line);
+       have_x72_pwrticks = 1;
+   }
+   else if(strstr(line, "<lhhrs>")) {
+       x72_lhhrs = (int) xml_val(line);
+       have_x72_lhhrs = 1;
+   }
+   else if(strstr(line, "<lhticks>")) {
+       x72_lhticks = (int) xml_val(line);
+       have_x72_lhticks = 1;
+   }
+   else if(strstr(line, "<rhhrs>")) {
+       x72_rhhrs = (int) xml_val(line);
+       have_x72_rhhrs = 1;
+   }
+   else if(strstr(line, "<rhticks>")) {
+       x72_rhticks = (int) xml_val(line);
+       have_x72_rhticks = 1;
+   }
+
+   // misc values
+   else if(strstr(line, "<led>")) {
+       star_led = (int) xml_val(line);
+       have_star_led = 1;
+   }
+   else if(rcvr_type == LPFRS_RCVR) {
+      if(strstr(line, "<aa>")) {
+         lpfrs_aa = xml_val(line);
+      }
+      else if(strstr(line, "<bb>")) {
+         lpfrs_bb = xml_val(line);
+      }
+      else if(strstr(line, "<cc>")) {
+         lpfrs_cc = xml_val(line);
+      }
+      else if(strstr(line, "<dd>")) {
+         lpfrs_dd = xml_val(line);
+      }
+      else if(strstr(line, "<ee>")) {
+         lpfrs_ee = xml_val(line);
+      }
+      else if(strstr(line, "<ff>")) {
+         lpfrs_ff = xml_val(line);
+      }
+      else if(strstr(line, "<gg>")) {
+         lpfrs_gg = xml_val(line);
+      }
+      else if(strstr(line, "<hh>")) {
+         lpfrs_hh = xml_val(line);
+      }
+   }
+   else if(rcvr_type == SA35_RCVR) {
+      // !!!!! placeholder
+   }
+   else if(rcvr_type == SRO_RCVR) {
+      if(strstr(line, "<aa>")) {
+         sro_aa = xml_val(line);
+      }
+      else if(strstr(line, "<bb>")) {
+         sro_bb = xml_val(line);
+      }
+      else if(strstr(line, "<cc>")) {
+         sro_cc = xml_val(line);
+      }
+      else if(strstr(line, "<dd>")) {
+         sro_dd = xml_val(line);
+      }
+      else if(strstr(line, "<ee>")) {
+         sro_ee = xml_val(line);
+      }
+      else if(strstr(line, "<ff>")) {
+         sro_ff = xml_val(line);
+      }
+      else if(strstr(line, "<gg>")) {
+         sro_gg = xml_val(line);
+      }
+      else if(strstr(line, "<hh>")) {
+         sro_hh = xml_val(line);
+      }
+   }
+
+   return 1;
+}
+
+int parse_xml_value(char *line)
+{
+char *s;
+char ti[20];
+static char supply[32];
+static char sync[32];
+
+   // process XML log data point values (first half of if() chain
+   // NEW_RCVR
+
+   if(line == 0) return 1;
+
+   if(strstr(line, "</trkpt>")) {  // end of data point's values
+      return 0;
+   }
+
+   if(strstr(line, "<trkpt")) {  // start of a data point entry
+      have_dops = 0;
+      s = strstr(line, "lat=");         // lat and lon
+      if(s) lat = atof(s+5)*PI/180.0;
+      s = strstr(line, "lon=");
+      if(s) lon = atof(s+5)*PI/180.0;
+   }
+   else if(strstr(line, "<ele>")) {     // altitude
+      alt = xml_val(line);
+   }
+   else if(strstr(line, "<course>")) {  // heading
+      heading = xml_val(line);
+      have_heading = 1;
+   }
+   else if(strstr(line, "<speed>")) {   // speed
+      speed = xml_val(line);
+      have_speed = 1;
+   }
+   else if(strstr(line, "<datum>")) {   // datum
+      datum = (int) xml_val(line);
+      have_datum = 1;
+   }
+   else if(strstr(line, "<time>")) {    // time code (in UTC)
+      s = strstr(line, "<time>");
+      if(s) {
+         sscanf(s+5+1, "%d%c%d%c%d%c%d%c%d%c%lf",
+            &year,&ti[0],&month,&ti[0],&day,&ti[0],
+            &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss
+         );
+      }
+   }
+   else if(strstr(line, "<tow>")) {   // time-of-week
+      log_tow = (long) xml_val(line);
+      have_tow = 1;
+   }
+   else if(strstr(line, "<temp>")) {  // things stored in the [TEMP] data queue variable 
+      temperature = (DATA_SIZE) xml_val(line);
+      have_temperature = 1;
+   }
+   else if(strstr(line, "<temp0>")) {  // things stored in the [TC2] data queue variable 
+      tc0 = (DATA_SIZE) xml_val(line);
+      have_temperature0 = 1;
+   }
+   else if(strstr(line, "<temp1>")) {  // things stored in the [TC2] data queue variable 
+      tc1 = (DATA_SIZE) xml_val(line);
+      have_temperature1 = 1;
+   }
+   else if(strstr(line, "<temp2>")) {  // things stored in the [TC2] data queue variable 
+      tc2 = (DATA_SIZE) xml_val(line);
+      have_temperature2 = 2;
+   }
+   else if(strstr(line, "<rh>")) { 
+      humidity = (DATA_SIZE) xml_val(line);
+      have_humidity = 1;
+   }
+   else if(strstr(line, "<mb>")) { 
+      pressure = (DATA_SIZE) xml_val(line);
+      have_pressure = 1;
+   }
+   else if(strstr(line, "<adc1>")) { 
+      adc1 = (DATA_SIZE) xml_val(line);
+      have_adc1 = 1;
+   }
+   else if(strstr(line, "<adc2>")) { 
+      adc2 = (DATA_SIZE) xml_val(line);
+      have_adc2 = 1;
+   }
+   else if(strstr(line, "<adc3>")) { 
+      adc3 = (DATA_SIZE) xml_val(line);
+      have_adc3 = 1;
+   }
+   else if(strstr(line, "<adc4>")) { 
+      adc4 = (DATA_SIZE) xml_val(line);
+      have_adc4 = 1;
+   }
+   else if(strstr(line, "<tcor>")) {
+      temperature = (DATA_SIZE) xml_val(line);
+      have_temperature = 1;
+   }
+   else if(strstr(line, "<dac>")) {   // things stored in the [DAC] data queue variable 
+      dac_voltage = (DATA_SIZE) xml_val(line);
+      have_dac = 1;
+   }
+   else if(strstr(line, "<sawtooth>")) {
+      dac_voltage = (DATA_SIZE) (xml_val(line));
+      have_sawtooth = 1;
+   }
+   else if(strstr(line, "<sawt>")) {
+      dac_voltage = (DATA_SIZE) (xml_val(line));
+      have_sawtooth = 1;
+   }
+   else if(strstr(line, "<dacl>")) {   // Lars GPSDO data
+      lars_dac = (DATA_SIZE) xml_val(line);
+      have_lars_dac = 1;
+   }
+   else if(strstr(line, "<templ>")) {  
+      lars_temp = (DATA_SIZE) xml_val(line);
+      have_lars_temp = 1;
+   }
+   else if(strstr(line, "<tiel>")) {  
+      lars_pps = (DATA_SIZE) xml_val(line);
+      have_lars_pps = 1;
+   }
+   else if(strstr(line, "<gclk>")) {
+      esip_pps_type = (int) (xml_val(line));
+      have_esip_pps_type = 1;
+   }
+   else if(strstr(line, "<eval>")) {
+      true_eval = (DATA_SIZE) (xml_val(line));
+      have_true_eval = 1;
+   }
+   else if(strstr(line, "<pps>")) {   // things stored in the [PPS] data queue variable 
+      vp = xml_val(line);             // aaalll
+      if(!TIMING_RCVR) vp /= 1.0E9;
+      have_pps_offset = 1;
+   }
+   else if(strstr(line, "<tt>")) {    // things stored in the [PPS] data queue variable 
+      vp = xml_val(line);             // aaalll
+      if(!TIMING_RCVR) vp /= 1.0E9;
+      have_prs_tt = 1;
+   }
+   else if(strstr(line, "<phase>")) { // things stored in the [PPS] data queue variable 
+      vp = xml_val(line);             // aaalll
+      if(!TIMING_RCVR) vp /= 1.0E9;
+      have_phase = 1;
+   }
+   else if(strstr(line, "<osc>")) {   // things stored in the [OSC] data queue variable
+      vo = xml_val(line);    // aaalll 
+      have_osc_offset = 1;
+   }
+   else if(strstr(line, "<freq>")) {   // things stored in the [OSC] data queue variable
+      vo = xml_val(line);    // aaalll 
+   }
+   else if(strstr(line, "<dds>")) {   // things stored in the [OSC] data queue variable
+      vo = xml_val(line);    // aaalll 
+   }
+   else if(strstr(line, "<fc>")) {   // things stored in the [OSC] data queue variable
+      vo = xml_val(line);    // aaalll 
+   }
+   else if(strstr(line, "<cha>")) {   // things stored in the [PPS] data queue variable 
+      vp = xml_val(line);    // aaalll 
+      pps_phase += vp;
+   }
+   else if(strstr(line, "<chb>")) {   // things stored in the [OSC] data queue variable
+      vo = xml_val(line);    // aaalll 
+      osc_phase += vo;
+   }
+   else if(strstr(line, "<chc>")) {   // things stored in the [CHC] data queue variable
+      vc = xml_val(line);    // aaalll 
+      chc_phase = vc;
+   }
+   else if(strstr(line, "<chd>")) {   // things stored in the [CHD] data queue variable
+      vd = xml_val(line);
+      chd_phase += vd;
+   }
+   else if(strstr(line, "<clk>")) {   // things stored in the [PPS] data queue variable 
+      vp = xml_val(line);   // GPS clock value  // aaalll 
+   }
+   else if(strstr(line, "<accu>")) {
+      vp = xml_val(line);    // aaalll 
+   }
+   else if(strstr(line, "<bias>")) {
+      vp = xml_val(line);    // aaalll 
+   }
+   else if(strstr(line, "<rgen>")) {
+      vp = xml_val(line);    // aaalll 
+   }
+   else if(strstr(line, "<drft>")) {
+      vp = xml_val(line);    // aaalll 
+   }
+   else if(strstr(line, "<unc>")) {
+      vo = xml_val(line);   // aaalll
+   }
+   else if(strstr(line, "<frac>")) {
+      vo = xml_val(line);   // aaalll 
+   }
+   else if(strstr(line, "<cofs>")) {
+      vo = xml_val(line);   // aaalll 
+   }
+   else if(strstr(line, "<rate>")) {
+      vo = xml_val(line);   // aaalll 
+   }
+   else if(strstr(line, "<sat>")) {   // sat count
+      sat_count = (int) xml_val(line);
+   }
+   else if(strstr(line, "<tfom>")) {  // figure of merits
+      tfom = (int) xml_val(line);
+      have_tfom = 1;
+   }
+   else if(strstr(line, "<ffom>")) {
+      ffom = (int) xml_val(line);
+      have_ffom = 1;
+   }
+   else if(strstr(line, "<pll>")) {
+      ffom = (int) xml_val(line);
+      have_pll = 1;
+   }
+   else if(strstr(line, "<pdop>")) {  // dops
+      pdop = (DATA_SIZE) xml_val(line);
+      have_dops |= PDOP;
+   }
+   else if(strstr(line, "<hdop>")) {
+      hdop = (DATA_SIZE) xml_val(line);
+      have_dops |= HDOP;
+   }
+   else if(strstr(line, "<vdop>")) {
+      vdop = (DATA_SIZE) xml_val(line);
+      have_dops |= VDOP;
+   }
+   else if(strstr(line, "<tdop>")) {
+      tdop = (DATA_SIZE) xml_val(line);
+      have_dops |= TDOP;
+   }
+   else if(strstr(line, "<gdop>")) {
+      gdop = (DATA_SIZE) xml_val(line);
+      have_dops |= GDOP;
+   }
+   else if(strstr(line, "<ndop>")) {
+      ndop = (DATA_SIZE) xml_val(line);
+      have_dops |= NDOP;
+   }
+   else if(strstr(line, "<edop>")) {
+      edop = (DATA_SIZE) xml_val(line);
+      have_dops |= EDOP;
+   }
+   else if(strstr(line, "<oscgain>")) {
+      osc_gain = (DATA_SIZE) xml_val(line);
+      user_osc_gain = osc_gain;
+      log_osc_gain = osc_gain;
+      gain_color = YELLOW;
+      have_gain = 1;
+   }
+   else if(strstr(line, "<beam>")) { 
+      cs_beam = xml_val(line);
+      have_cs_beam = 1;
+   }
+   else if(strstr(line, "<cfield>")) {
+      cs_cfield = xml_val(line);
+      have_cs_cfield = 1;
+   }
+   else if(strstr(line, "<pump>")) { 
+      cs_pump = xml_val(line);
+      have_cs_pump = 1;
+   }
+   else if(strstr(line, "<gain>")) { 
+      cs_gain = xml_val(line);
+      have_cs_gain = 1;
+   }
+   else if(strstr(line, "<emult>")) {
+      cs_emul = xml_val(line);
+      have_cs_emul = 1;
+   }
+   else if(strstr(line, "<hwi>")) { 
+      cs_hwi = xml_val(line);
+      have_cs_hwi = 1;
+   }
+   else if(strstr(line, "<mspec>")) {
+      cs_msp = xml_val(line);
+      have_cs_msp = 1;
+   }
+   else if(strstr(line, "<coven>")) {
+      cs_coven = xml_val(line);
+      have_cs_coven = 1;
+   }
+   else if(strstr(line, "<qoven>")) {
+      cs_qoven = xml_val(line);
+      have_cs_qoven = 1;
+   }
+   else if(strstr(line, "<rfampl1>")) { 
+      cs_rfam1 = xml_val(line);
+      have_cs_rfam |= 0x01;
+   }
+   else if(strstr(line, "<rfampl2>")) { 
+      cs_rfam2 = xml_val(line);
+      have_cs_rfam = 0x02;
+   }
+   else if(strstr(line, "<dro>")) { 
+      cs_pll_dro = xml_val(line);
+      have_cs_pll |= 0x01;
+   }
+   else if(strstr(line, "<saw>")) { 
+      cs_pll_saw = xml_val(line);
+      have_cs_pll |= 0x02;
+   }
+   else if(strstr(line, "<87mhz>")) { 
+      cs_pll_87 = xml_val(line);
+      have_cs_pll |= 0x04;
+   }
+   else if(strstr(line, "<up>")) { 
+      cs_pll_up = xml_val(line);
+      have_cs_pll |= 0x08;
+   }
+   else if(strstr(line, "<freq1>")) { 
+      cs_freq1 = xml_val(line);
+      have_cs_freq1 = 1;
+   }
+   else if(strstr(line, "<freq2>")) { 
+      cs_freq2 = xml_val(line);
+      have_cs_freq2 = 1;
+   }
+   else if(strstr(line, "<ster>")) { 
+      cs_ster = xml_val(line);
+      have_cs_ster = 1;
+   }
+   else if(strstr(line, "<slew>")) { 
+      cs_slew = xml_val(line);
+      have_cs_slew = 1;
+   }
+   else if(strstr(line, "<volt1>")) {
+      cs_volt1 = xml_val(line);
+      have_cs_volt |= 0x01;
+   }
+   else if(strstr(line, "<volt2>")) {
+      cs_volt2 = xml_val(line);
+      have_cs_volt |= 0x02;
+   }
+   else if(strstr(line, "<volt3>")) {
+      cs_volt3 = xml_val(line);
+      have_cs_volt |= 0x04;
+   }
+   else if(strstr(line, "<leapdur>")) { 
+      cs_leapdur = (int) xml_val(line);
+      have_cs_leapdur = 1;
+   }
+   else if(strstr(line, "<leapmjd>")) { 
+      cs_leapmjd = xml_val(line);
+      have_cs_leapmjd = 1;
+   }
+   else if(strstr(line, "<supply>")) {  // %s
+      strcpy(out, xml_string(line));
+      out[30] = 0;
+      strcpy(supply, out);
+      cs_supply = &supply[0];
+      have_cs_supply = 1;
+   }
+   else if(strstr(line, "<sync>")) {   // %s
+      strcpy(out, xml_string(line));
+      out[30] = 0;
+      strcpy(sync, out);
+      cs_sync = &sync[0];
+      have_cs_sync = 1;
+   }
+   else if(strstr(line, "<cont>")) { 
+      cs_cont = (int) xml_val(line); 
+      have_cs_cont = 1;
+   }
+   else if(strstr(line, "<disp>")) { 
+      cs_disp = (int) xml_val(line); 
+      have_cs_disp = 1;
+   }
+   else if(strstr(line, "<standby>")) {
+      cs_standby = (int) xml_val(line) ;
+      have_cs_standby = 1;
+   }
+   else if(strstr(line, "<remote>")) {
+      cs_remote = (int) xml_val(line);
+      have_cs_remote = 1;
+   }
+   else if(strstr(line, "<antv1>")) {
+      ant_v1 = (double) xml_val(line);
+      have_ant_v1 = 1;
+   }
+   else if(strstr(line, "<antv2>")) {
+      ant_v2 = (double) xml_val(line);
+      have_ant_v2 = 1;
+   }
+   else if(strstr(line, "<antma>")) {
+      ant_ma = (double) xml_val(line);
+      have_ant_v1 = 1;
+   }
+   else if(strstr(line, "<lampv>")) {
+      ant_v1 = (double) xml_val(line);
+   }
+   else if(strstr(line, "<ocxov>")) {
+      ant_v2 = (double) xml_val(line);
+   }
+   else if(strstr(line, "<oscv>")) {
+      rftg_oscv = (double) xml_val(line);
+   }
+   else if(strstr(line, "<lattide>")) {
+      lat_tide = (double) xml_val(line);
+      have_tides = 1;
+   }
+   else if(strstr(line, "<lontide>")) {
+      lon_tide = (double) xml_val(line);
+      have_tides = 1;
+   }
+   else if(strstr(line, "<alttide>")) {
+      alt_tide = (double) xml_val(line);
+      have_tides = 1;
+   }
+   else if(strstr(line, "<ugals>")) {
+      ugals = (double) xml_val(line);
+      have_ugals = 1;
+   }
+   else {  // break up if() chain into two pieces - reached compiler limit
+      return parse_xml_value2(line);
+   }
+
+   return 1;
+}
+
+void set_log_title(char *plot_title)
+{
+int i;
+
+   // set the plot title string from info in a log file
+   if(plot_title == 0) return;
+
+   i = strlen(plot_title);
+
+   if(i && (plot_title[i-1] == 0x0D)) plot_title[i-1] = 0;
+   if(i && (plot_title[i-1] == 0x0A)) plot_title[i-1] = 0;
+   if(plot_title[0]) title_type = USER;
+   else              title_type = NONE;
+
+   saw_log_title = 1;
+   show_title();
+   refresh_page();
+}
+
+
+int parse_log_comment(char *line)
+{
+char *s;
+char ti[120];
+
+   // process comment line in a log file
+
+   // !!! This is a VERY crude parser that depends upon fixed spacing.
+   // !!! If you change any of the log file output formats,  you will need
+   // !!! to make changes in this code also.
+
+   if(line == 0) return 1;
+
+   if(xml_log_fmt && strstr(line, "<!--")) {  // XML comment
+      if(strlen(line) < 6) return 1;
+
+      if((line[10] == ':') && (line[13] == ':')) goto time_cmt;  // time comment
+      if(!strnicmp(&line[6], "TITLE:", 6)) {
+         strcpy(plot_title, &line[6+6]);
+         s = strstr(plot_title, "-->");
+         if(s) *s = 0;
+         goto set_title;
+      }
+      else if(!strnicmp(&line[6], "DEBUG1:", 7)) {
+         strcpy(debug_text, &line[7+6]);
+         s = strstr(debug_text, "-->");
+         if(s) *s = 0;
+         goto set_title1;
+      }
+      else if(!strnicmp(&line[6], "DEBUG2:", 7)) {
+         strcpy(debug_text2, &line[7+6]);
+         s = strstr(debug_text2, "-->");
+         if(s) *s = 0;
+         goto set_title2;
+      }
+      else if(!strnicmp(&line[6], "DEBUG3:", 7)) {
+         strcpy(debug_text3, &line[7+6]);
+         s = strstr(debug_text3, "-->");
+         if(s) *s = 0;
+         goto set_title3;
+      }
+      else if(!strnicmp(&line[6], "DEBUG4:", 7)) {
+         strcpy(debug_text4, &line[7+6]);
+         s = strstr(debug_text4, "-->");
+         if(s) *s = 0;
+         goto set_title4;
+      }
+      else if(!strnicmp(&line[6], "DEBUG5:", 7)) {
+         strcpy(debug_text5, &line[7+6]);
+         s = strstr(debug_text5, "-->");
+         if(s) *s = 0;
+         goto set_title5;
+      }
+      else if(!strnicmp(&line[6], "DEBUG6:", 7)) {
+         strcpy(debug_text6, &line[7+6]);
+         s = strstr(debug_text6, "-->");
+         if(s) *s = 0;
+         goto set_title6;
+      }
+      else if(!strnicmp(&line[6], "DEBUG7:", 7)) {
+         strcpy(debug_text7, &line[7+6]);
+         s = strstr(debug_text7, "-->");
+         if(s) *s = 0;
+         goto set_title7;
+      }
+      else if(!strnicmp(&line[6], "MARKER", 6)) {
+         log_mark_number = atoi(&line[6+6]);
+         if((log_mark_number >= 0) && (log_mark_number < MAX_MARKER)) {
+            mark_q_entry[log_mark_number] = plot_q_in;
+         }
+      }
+      else if(!strnicmp(&line[6], "OSC_GAIN", 8)) {
+         osc_gain = (DATA_SIZE) atof(&line[6+8]);
+         user_osc_gain = osc_gain;
+         lars_gain = osc_gain;
+         log_osc_gain = osc_gain;
+         gain_color = YELLOW;
+      }
+
+      return 1;
+   }
+   else if((line[0] == '#') || (line[0] == ';') || (line[0] == '*') || (line[0] == '/')) { 
+      if((line[5] == ':') && (line[8] == ':')) {  // time comment
+         time_cmt:
+         if(strstr(line, "seconds") == 0) return 1;
+
+         s = strstr(line, "interval");
+         if(s == 0) return 1;
+
+         read_log_interval = (DATA_SIZE) atof(s+8);
+if(read_log_interval && (user_set_qi == 0)) queue_interval = (long) read_log_interval;
+         if(read_log_interval && pause_data) {
+            if(!restore_nav_rate) {            // save current nav rate
+               saved_nav_rate = nav_rate;
+               restore_nav_rate = 1;
+            }
+            if(0 && read_log_interval) {
+               nav_rate = ((DATA_SIZE) 1.0 / read_log_interval); // set nav rate to what's in the log so plots scale properly
+            }
+            else nav_rate = 1.0;
+         }
+
+         if(strstr(line, "GPS")) {
+            time_flags = TFLAGS_NULL;
+            s = strstr(line, "GPS");
+         }
+         else if(strstr(line, "UTC")) {
+            time_flags = TFLAGS_UTC;
+            s = strstr(line, "UTC");
+         }
+
+         if(s) sscanf(s+3, "%d %s %d", &day, &ti[0], &year);
+         for(month=1; month<=12; month++) {
+            if(!strcmp(months[month], &ti[0])) goto got_month;
+         }
+         month = 0;
+
+         got_month:
+         valid_read_log = 1;
+      }
+      else if((line[1] == '!') && strstr(line, "discipline mode")) {  // discipline mode comment
+         discipline_mode = DIS_MODE_NORMAL;
+         if     (strstr(line, "Normal"))          discipline_mode = DIS_MODE_NORMAL;
+         else if(strstr(line, "Power-up"))        discipline_mode = DIS_MODE_POWERUP;
+         else if(strstr(line, "Auto holdover"))   discipline_mode = DIS_MODE_AUTO_HOLD;
+         else if(strstr(line, "Manual holdover")) discipline_mode = DIS_MODE_MANUAL_HOLD;
+         else if(strstr(line, "Recovery mode"))   discipline_mode = DIS_MODE_RECOVERY;
+         else if(strstr(line, "Fast recovery"))   discipline_mode = DIS_MODE_FAST_RECOVERY;
+         else if(strstr(line, "Disabled"))        discipline_mode = DIS_MODE_DISABLED;
+         else if(strstr(line, "Warming up"))      discipline_mode = DIS_MODE_WARMUP;
+         else if(strstr(line, "Settling"))        discipline_mode = DIS_MODE_WARMUP;
+      }
+      else if(!strnicmp(line, "#TITLE", 6)) {
+         strcpy(plot_title, &line[7]);
+         set_title:
+         set_log_title(plot_title);
+      }
+      else if(!strnicmp(line, "#DEBUG1", 7)) {
+         strcpy(debug_text, &line[8]);
+         set_title1:
+         set_log_title(debug_text);
+      }
+      else if(!strnicmp(line, "#DEBUG2", 7)) {
+         strcpy(debug_text2, &line[8]);
+         set_title2:
+         set_log_title(debug_text2);
+      }
+      else if(!strnicmp(line, "#DEBUG3", 7)) {
+         strcpy(debug_text3, &line[8]);
+         set_title3:
+         set_log_title(debug_text3);
+      }
+      else if(!strnicmp(line, "#DEBUG4", 7)) {
+         strcpy(debug_text4, &line[8]);
+         set_title4:
+         set_log_title(debug_text4);
+      }
+      else if(!strnicmp(line, "#DEBUG5", 7)) {
+         strcpy(debug_text5, &line[8]);
+         set_title5:
+         set_log_title(debug_text5);
+      }
+      else if(!strnicmp(line, "#DEBUG6", 7)) {
+         strcpy(debug_text6, &line[8]);
+         set_title6:
+         set_log_title(debug_text6);
+      }
+      else if(!strnicmp(line, "#DEBUG7", 7)) {
+         strcpy(debug_text7, &line[8]);
+         set_title7:
+         set_log_title(debug_text7);
+      }
+      else if(!strnicmp(line, "#MARKER", 7)) {
+         log_mark_number = 0;
+         sscanf(&line[8], "%d", &log_mark_number);
+         if((log_mark_number >= 0) && (log_mark_number < MAX_MARKER)) {
+            mark_q_entry[log_mark_number] = plot_q_in;
+         }
+      }
+      else if(!strnicmp(line, "#OSC_GAIN", 9)) {
+         osc_gain = (-3.5);
+         osc_gain = (DATA_SIZE) atof(&line[10]);
+         user_osc_gain = osc_gain;
+         lars_gain = osc_gain;
+         log_osc_gain = osc_gain;
+         gain_color = YELLOW;
+      }
+      else if(!strnicmp(line, "#SCALE", 6)) {
+         log_pps_scale = log_osc_scale = 1.0;
+         sscanf(&line[7], "%lf %lf", &log_pps_scale, &log_osc_scale);
+      }
+      else if(!strnicmp(line, "#INTERVAL", 9)) {
+         adev_period = 1.0;
+         sscanf(&line[10], "%lf", &adev_period);   // aaaaaapppppp other periods 
+      }
+      else if(!strnicmp(line, "#PERIOD", 7)) {
+         adev_period = 1.0;
+         sscanf(&line[8], "%lf", &adev_period);    // aaaaaapppppp other periods 
+      }
+      else if(!strnicmp(line, "#LLA", 4)) {
+         sscanf(&line[5], "%lf %lf %lf", &precise_lat, &precise_lon, &precise_alt);
+         precise_lon /= RAD_TO_DEG;
+         precise_lat /= RAD_TO_DEG;
+         cos_factor = cos(precise_lat);
+         if(cos_factor == 0.0) cos_factor = 0.001;
+      }
+      return 1;
+   }
+
+   return 0;
+}
+
+
+int tim_command(char *line)
+{
+   if(line == 0) return 1;
+
+   if(!strnicmp(line, "BLN", 3)) {  // new format file
+      return 1;
+   }
+   else if(!strnicmp(line, "DBL", 3)) {
+      return 1;
+   }
+   else if(!strnicmp(line, "S32", 3)) {
+      return 1;
+   }
+   else if(!strnicmp(line, "STR", 3)) {
+      return 1;
+   }
+
+   else if(!strnicmp(line, "CAP", 3)) {
+      if(strlen(line) > 4) {
+         if(saw_log_title) strcat(plot_title, " | ");
+         strcat(plot_title, &line[4]);
+         set_log_title(plot_title);
+         return 1;
+      }
+   }
+   else if(!strnicmp(line, "DRIVER", 6)) {
+      if(strlen(line) > 6+2) {
+         if(saw_log_title) strcat(plot_title, " | ");
+         strcat(plot_title, &line[6+2]);
+         set_log_title(plot_title);
+         return 1;
+      }
+   }
+   else if(!strnicmp(line, "IMO", 3)) {
+      if(strlen(line) > 4) {
+         if(saw_log_title) strcat(plot_title, " | ");
+         strcat(plot_title, &line[4]);
+         set_log_title(plot_title);
+         return 1;
+      }
+   }
+   else if(!strnicmp(line, "INSTRUMENT", 10)) {
+      if(strlen(line) > 10+2) {
+         if(saw_log_title) strcat(plot_title, " | ");
+         strcat(plot_title, &line[10+2]);
+         set_log_title(plot_title);
+         return 1;
+      }
+   }
+   else if(!strnicmp(line, "MJD", 3)) {  // modified Julian date
+      if(strlen(line) > 4) {
+         sscanf(&line[4], "%lf", &read_log_jd);
+         read_log_jd += JD_MJD;
+         return 1;
+      }
+   }
+   else if(!strnicmp(line, "NOM", 3)) {  // nominal freq
+      if(strlen(line) > 4) {
+         log_freq = NOMINAL_FREQ;
+         sscanf(&line[4], "%lf", &log_freq);
+         if(log_freq > 0.0) cha_phase_wrap_interval = 1.0 / log_freq;
+         else               cha_phase_wrap_interval = 1.0 / NOMINAL_FREQ;
+         return 1;
+      }
+   }           
+   else if(!strnicmp(line, "PER", 3)) {
+      if(strlen(line) > 4) {
+         adev_period = 1.0;
+         sscanf(&line[4], "%lf", &adev_period);   // aaaaaapppppp other periods 
+         pps_adev_period = adev_period;
+         osc_adev_period = adev_period;
+         chc_adev_period = adev_period;
+         chd_adev_period = adev_period;
+         return 1;
+      }
+   }
+   else if(!strnicmp(line, "SCA", 3)) {
+      if(strlen(line) > 4) {
+         log_pps_scale = log_osc_scale = 1.0;
+         sscanf(&line[4], "%lf %lf", &log_pps_scale, &log_osc_scale);
+         return 1;
+      }
+   }
+   else if(!strnicmp(line, "TIC", 3)) {
+      saw_timelab_tic = 1;
+      return 1;
+   }
+   else if(!strnicmp(line, "TIM", 3)) {
+      if(strlen(line) > 4) {
+         if(saw_log_title) strcat(plot_title, " | ");
+         strcat(plot_title, &line[4]);
+         set_log_title(plot_title);
+         return 1;
+      }
+   }
+   else {
+      saw_timelab_tic = 0;
+      return 1;
+   }
+
+   return 0;
+}
+
+
+void read_tie_file(char *s)
+{
+FILE *tie_file;
+double cha, chb, chc, chd;
+int n;
+int count;
+
+   // stop recording live signal strength data and load in signal strength 
+   // data from a log file
+
+   tie_file = topen(s, "r");
+   if(tie_file == 0) return;
+
+   ATYPE = A_MTIE;
+   if(rcvr_type == TICC_RCVR) all_adevs = ALL_CHANS;
+   else                       all_adevs = SINGLE_ADEVS;
+   alloc_mtie(10);
+
+   count = 0;
+
+   while(fgets(out, sizeof out, tie_file) != NULL) {
+      if((out[0] == '*') || (out[0] == ';') || (out[0] == '/') || (out[0] == '#')) {
+         continue;  // comment line
+      }
+      n = sscanf(out, "%lg %lg %lg %lg", &cha, &chb, &chc, &chd);
+      if(n >= 1) add_mtie_point(CHA_MTIE, cha);
+      if(n >= 2) add_mtie_point(CHB_MTIE, chb);
+      if(n >= 3) add_mtie_point(CHC_MTIE, chc);
+      if(n >= 4) add_mtie_point(CHD_MTIE, chd);
+      if(++count > adev_q_size) break;
+   }
+
+   fclose(tie_file);
+
+   find_global_max();
+   force_adev_redraw(10);
+   config_screen(108);
+   if(adevs_active(0)) last_was_adev = 'I';
+
+// show_all_adevs();
+}
+
+
+int read_rawfile(char *s)
+{
+long seek_addr;
+
+   // load a .raw capture file and treat it as a simulation file
+
+   if(s == 0) return 0;
+   strcpy(sim_name, s);
+
+   s = strchr(sim_name, ',');
+   if(s) {  // seek offset set
+      *s = 0;
+      seek_addr = (long) atoi(s+1);
+   }
+   else seek_addr = 0;
+
+   sim_file = topen(sim_name, "rb");
+   if(sim_file == 0) return 1;
+   if(rcvr_type != CS_RCVR) sim_file_read |= 0x01;
+
+   kbd_sim = 1;  // flag that a keyboard command opened the simulation file
+   fseek(sim_file, seek_addr, SEEK_SET);
+   sim_eof = 0;
+
+   return 2;
 }
 
 
@@ -2148,56 +6677,66 @@ int reload_log(char *fn, u08 cmd_line)
 {
 FILE *file;
 char line[SLEN];
-char ti[20];
-char *s;
-long tow;
-float log_interval;
+int append_log;
+char ti[120];
 u32 i, j;
-int hh,mm;
-double ss;
+int k;
 double frac;
 u08 temp_pause;
-u32 counter;
+long counter;
 COORD row, col;
 int color;
-u08 valid_log;
+int err;
 
 u08 temp_dmode;
 u08 temp_tflags;
 int temp_day, temp_month, temp_year;
 double temp_utc;
 
-double pps_scale, osc_scale;
-double pps_val, osc_val;
-double pps_ref, osc_ref;
-double vp, vo;
+double pps_val, osc_val, chc_val, chd_val;
+double pps_ref, osc_ref, chc_ref, chd_ref;
+double pps_phase, osc_phase, chc_phase, chd_phase;
+static double last_pps;
+
 u08 lla_seen;
-u08 saw_osc;
-u08 saw_title;
 u08 have_ref;
 u08 old_fixes;
 u08 tim_file;
 FILE *afile;
-int mark_number;
-int add_path;
-int xml_log;
-afile = 0;  // topen("ADEV.XXX", "w");
+double old_jd;
 
-    // returns 1=bad file name
-    //         2=bad file format
-    //         3=lla file
-    //         4=script file opened
-    //         0=all other file types
-    color = 0;
-    adev_log = lla_log = lla_seen = have_ref = 0;
-    pps_scale = osc_scale = 1.0;
-    pps_val = osc_val = 0.0;
-    pps_ref = osc_ref = 0.0;
-    saw_osc = 0;
-    saw_title = 0;
-    tim_file = 0;
-    xml_log = 0;
-    vp = vo = 0.0;
+   // returns 1=bad file name
+   //         2=bad file format
+   //         3=lla file
+   //         4=script file opened
+   //         0=all other file types
+   //
+   //  PS: Sorry for this overly long horrible kludge of a function...
+   //
+   // NEW_RCVR
+
+   if(fn == 0) return 1;
+   afile = 0;  // topen("ADEV.XXX", "w");
+
+   color = 0;
+   adev_log = lla_log = lla_seen = have_ref = 0;
+   log_pps_scale = log_osc_scale = log_chc_scale = log_chd_scale = 1.0;
+   pps_val = osc_val = chc_val = chd_val = 0.0;
+   pps_ref = osc_ref = chc_ref = chd_ref = 0.0;
+   pps_phase = osc_phase = chc_phase = chd_phase = 0.0;
+   pps_count = osc_count = chc_count = chd_count = 0.0;  // aaalll
+   vp = vo = vc = vd = 0.0;
+   have_pps_offset = have_osc_offset = have_chc_offset = have_chd_offset = 0;
+   saw_log_title = 0;
+   tim_file = 0;
+   xml_log_fmt = 0;
+   saw_timelab_tic = 0;
+   log_freq = nominal_cha_freq;  // NOMINAL_FREQ  !!!!! independent channel values?
+
+
+   get_clock_time();       // initialize TICC simulation file time
+   read_log_jd = jdate(clk_year,clk_month,clk_day) + jtime(clk_hours,clk_minutes,clk_seconds,0.0);
+    
 
     temp_utc = jd_utc;
     temp_pause = pause_data;
@@ -2212,30 +6751,38 @@ afile = 0;  // topen("ADEV.XXX", "w");
     erase_help();
 
     
-    file = open_it(line, fn);
+    if(fn[0] == '+') {
+       file = open_it(line, &fn[1]);
+       append_log = 1;
+    }
+    else {
+       file = open_it(line, fn);
+       append_log = 0;
+    }
+
     llt = 0.0F;
     if(file == 0) {  // file not found
-       sprintf(out, "Cannot open log file: %s", fn);
+       sprintf(out, "Cannot open file: %s", fn);
        edit_error(out);
        pause_data = temp_pause;
        return 1;
     }
 
     strcpy(fn, line);
-//  strlwr(line);
     if(cmd_line && (strstr(read_log, ".scr") == 0) && (strstr(read_log, ".SCR") == 0)) {
        pause_data ^= 1;  
        temp_pause ^= 1;
     }
+
     if(strstr(line, ".adv") || strstr(line, ".ADV")) {  // file is an adev file
        sprintf(out, "Reading adev file: %s", line);
        read_adev_file:
        adev_log = 3;
        if(showing_adv_file == 0) {
-          old_adev_period = adev_period;
+          xxx_adev_period = adev_period;
           old_keep_fresh = keep_adevs_fresh;
        }
-       adev_period = 1.0;     // ppppppp
+       adev_period = 1.0;       // aaaaaapppppp other periods 
        keep_adevs_fresh = 0;
 // hours = minutes = seconds = day = month = year = 0;
 // afile = topen("adev.adv", "w");
@@ -2257,18 +6804,29 @@ afile = 0;  // topen("ADEV.XXX", "w");
        }
        return 6;
     }
+    else if(strstr(line, ".gpx") || strstr(line, ".GPX")) {  // file is a GPX format log
+       xml_log_fmt = GPX;
+       if(rcvr_type != CS_RCVR) sim_file_read |= 0x02;
+if(time_flags == 0) time_flags = TFLAGS_UTC;  //lfs
+       goto do_log;
+    }
+    else if(strstr(line, ".kml") || strstr(line, ".KML")) {  // file is a KML format log
+       xml_log_fmt = KML;
+       goto do_log;
+    }
     else if(strstr(line, ".lla") || strstr(line, ".LLA")) { // file is a lat/lon/altitude file
        lla_log = 3;
        plot_lla = 1;
        change_zoom_config(1);
        zoom_screen = 'L'; 
        reading_lla = 1;
-       all_adevs = 0;
-       first_key = 0;
+       if(rcvr_type == TICC_RCVR) all_adevs = ALL_CHANS;
+       else                       all_adevs = SINGLE_ADEVS;
+       reset_first_key(10);
        prot_menu = 0;
        plot_signals = 0;
        if((shared_plot == 0) && (WIDE_SCREEN == 0)) plot_azel = 0;
-       if(SCREEN_WIDTH < 800) {
+       if(SCREEN_WIDTH < NARROW_SCREEN) {
           shared_plot = plot_azel = 1;
           update_azel = 1;
        }
@@ -2280,7 +6838,17 @@ afile = 0;  // topen("ADEV.XXX", "w");
        show_fixes = old_fixes;
 
        sprintf(out, "Reading lat/lon/alt file: %s", line);
-//start_precision_survey();
+//start_precision_survey(1);  // medsurv
+    }
+    else if(strstr(line, ".raw") || strstr(line, ".RAW")) {  // file is a raw capture file, read as a simulation input
+       fclose(file);
+       read_rawfile(fn);
+       return 4;
+    }
+    else if(strstr(line, ".rpn") || strstr(line, ".RPN")) {  // file is calculator user defined operations
+       fclose(file);
+       err = read_rpn_file(fn, 0);
+       return 4;
     }
     else if(strstr(line, ".scr") || strstr(line, ".SCR")) {  // file is a script file
        fclose(file);
@@ -2293,46 +6861,37 @@ afile = 0;  // topen("ADEV.XXX", "w");
        return 0;
     }
 #endif
+    else if(strstr(line, ".prn") || strstr(line, ".PRN")) { // file is a sat az/el/signal level file
+       read_prn(line);
+       return 0;
+    }
     else if(strstr(line, ".tim") || strstr(line, ".TIM")) {  // file is a TI.EXE .TIM file
        tim_file = 1;
        sprintf(out, "Reading TI.EXE .tim file: %s", line);
        goto read_adev_file;
     }
+    else if(strstr(line, ".tie") || strstr(line, ".TIE")) {  // file is a Time Interval Error file
+       read_tie_file(line);
+       return 5;
+    }
     else if(strstr(line, ".wav") || strstr(line, ".WAV")) {  // file is a audio file
        fclose(file);
-
-       add_path = 1;
-
-       #ifdef WINDOWS
-          if(strchr(fn, '\\')) add_path = 0;
-       #endif
-       #ifdef __linux__
-          if(strchr(fn, '/')) add_path = 0;
-       #endif
-       #ifdef __MACH__
-          if(strchr(fn, '/')) add_path = 0;
-       #endif
-
-       play_tune(fn, add_path);
+       play_user_sound(fn);
        return 5;
     }
     else if(strstr(line, ".xml") || strstr(line, ".XML")) {  // file is a XML format log
-       xml_log = XML;
-       goto do_log;
-    }
-    else if(strstr(line, ".gpx") || strstr(line, ".GPX")) {  // file is a GPX format log
-       xml_log = GPX;
-       goto do_log;
-    }
-    else if(strstr(line, ".kml") || strstr(line, ".KML")) {  // file is a KML format log
-       xml_log = KML;
+       xml_log_fmt = XML;
        goto do_log;
     }
     else {    // file is a data log file
        do_log:
        sprintf(out, "Reading log file: %s", line);
-       for(mark_number=0; mark_number<MAX_MARKER; mark_number++) {
-          mark_q_entry[mark_number] = 0;
+       if(rcvr_type != CS_RCVR) sim_file_read |= 0x02;
+if(time_flags == 0) time_flags = TFLAGS_UTC;  //lfs
+       if(append_log == 0) {  // erase current markers
+          for(log_mark_number=0; log_mark_number<MAX_MARKER; log_mark_number++) {
+             mark_q_entry[log_mark_number] = 0;
+          }
        }
     }
 
@@ -2345,41 +6904,48 @@ afile = 0;  // topen("ADEV.XXX", "w");
     refresh_page();
 
     log_loaded = 1;
-    if(log_comments) valid_log = 0;
-    else             valid_log = 1;
+    if(log_comments) valid_read_log = 0;
+    else             valid_read_log = 1;
+
     new_const = 0;
-    log_interval = 1.0;
+    read_log_interval = (DATA_SIZE) 1.0;
     have_time = 3;
     counter = 0;
     pause_data = 1;
 
     restore_plot_config();
-    reset_queues(0x03);    // clear out the old data
+    if(append_log == 0) {
+       reset_queues(RESET_ALL_QUEUES, 1100);    // clear out the old data if not appending logs
+    }
 
     reading_log = 1;
     time_checked = 0;
-    while(fgets(line, sizeof line, file) != NULL) {
-        update_pwm();   // if doing pwm temperature control
+    while(fgets(line, sizeof line, file) != NULL) {  // for each line in the log file
+        update_pwm();     // if doing pwm temperature control
+        serve_os_queue(); // so keypress check works
+
         if(script_file) ;
-        else if(KBHIT()) {
+        else if(KBHIT()) {  // user pressed a key, pause or stop reading the log
            GETCH();
            i = edit_error("Reading paused...  press ESC to stop");
-           if(i == 0x1B) break;
+           if(i == ESC_CHAR) break;
+           k = TEXT_COLS-80;
+           if(k < 0) k = 0;
            if(reading_lla && (zoom_screen == 'L')) {
-              vidstr(TEXT_ROWS-4, TEXT_COLS/2, PROMPT_COLOR, &blanks[TEXT_COLS-80]);
+              vidstr(TEXT_ROWS-4, TEXT_COLS/2, PROMPT_COLOR, &blanks[k]);
            }
            else {
-              vidstr(EDIT_ROW+3, EDIT_COL, PROMPT_COLOR, &blanks[TEXT_COLS-80]);
+              vidstr(EDIT_ROW+3, EDIT_COL, PROMPT_COLOR, &blanks[k]);
            }
            refresh_page();
         }
 
-        if((counter == 0) && xml_log) {
+        if((counter == 0) && xml_log_fmt) {  // validate the log file by checking the first line
            if(!strstr(line, "<?xml")) {
               edit_error(".XML file format not recognized.  First line must start with '<?xml'.");
               goto not_log;
            }
-           valid_log = 1;
+           valid_read_log = 1;
         }
         else if((counter == 0) && (line[0] != '#') && (tim_file == 0) && log_comments) {  // it ain't no log file
            edit_error("File format not recognized.  First line must start with '#'.");
@@ -2394,8 +6960,9 @@ afile = 0;  // topen("ADEV.XXX", "w");
            return 2;
         }
 
-        if((++counter % 1000L) == 1L) {
-           sprintf(out, "Line %ld", counter-1L);
+        if((++counter % LOG_SCREEN_RFSH) == 1L) {  // show progress info
+           if(counter == 1) sprintf(out, "Line %ld", counter);
+           else             sprintf(out, "Line %ld", counter-1L);
            if(reading_lla && (zoom_screen == 'L')) {
               vidstr(TEXT_ROWS-2, TEXT_COLS/2, PROMPT_COLOR, out);
            }
@@ -2406,423 +6973,197 @@ afile = 0;  // topen("ADEV.XXX", "w");
         }
 
         // Parse the log file comment lines for relevent data.
-        // !!! This is a VERY crude parser that depends upon fixed spacing.
-        // !!! If you change any of the log file output formats,  you will need
-        // !!! to make changes in this code also.
-        if(xml_log && strstr(line, "<!--")) {  // XML comment
-           if(strlen(line) < 6) continue;
-
-           if((line[10] == ':') && (line[13] == ':')) goto time_cmt;  // time comment
-           if(!strnicmp(&line[6], "TITLE:", 6)) {
-              strcpy(plot_title, &line[6+6]);
-              s = strstr(plot_title, "-->");
-              if(s) *s = 0;
-              goto set_title;
-           }
-           else if(!strnicmp(&line[6], "MARKER", 6)) {
-              mark_number = atoi(&line[6+6]);
-              if((mark_number >= 0) && (mark_number < MAX_MARKER)) {
-                 mark_q_entry[mark_number] = plot_q_in;
-              }
-           }
-           else if(!strnicmp(&line[6], "OSC_GAIN", 8)) {
-              osc_gain = (float) atof(&line[6+8]);
-              user_osc_gain = osc_gain;
-              log_osc_gain = osc_gain;
-              gain_color = YELLOW;
-           }
-
-           continue;
-        }
-        else if((line[0] == '#') || (line[0] == ';') || (line[0] == '*') || (line[0] == '/')) { 
-           if((line[5] == ':') && (line[8] == ':')) {  // time comment
-              time_cmt:
-              if(strstr(line, "seconds") == 0) continue;
-              s = strstr(line, "interval");
-              if(s == 0) continue;
-
-              sscanf(s+8, "%f", &log_interval);
-              if(log_interval && pause_data) {
-                 if(!restore_nav_rate) {            // save current nav rate
-                    saved_nav_rate = nav_rate;
-                    restore_nav_rate = 1;
-                 }
-                 nav_rate =  (1.0F / log_interval); // set nav rate to what's in the log so plots scale properly
-              }
-
-              if(strstr(line, "GPS")) {
-                 time_flags = 0x0000;
-                 s = strstr(line, "GPS");
-              }
-              else if(strstr(line, "UTC")) {
-                 time_flags = 0x0001;
-                 s = strstr(line, "UTC");
-              }
-
-              if(s) sscanf(s+3, "%d %s %d", &day, &ti[0], &year);
-              for(month=1; month<=12; month++) {
-                 if(!strcmp(months[month], &ti[0])) goto got_month;
-              }
-              month = 0;
-
-              got_month:
-              valid_log = 1;
-           }
-           else if((line[1] == '!') && strstr(line, "discipline mode")) {  // discipline mode comment
-              discipline_mode = 0;
-              if     (strstr(line, "Normal"))          discipline_mode = 0;
-              else if(strstr(line, "Power-up"))        discipline_mode = 1; 
-              else if(strstr(line, "Auto holdover"))   discipline_mode = 2; 
-              else if(strstr(line, "Manual holdover")) discipline_mode = 3; 
-              else if(strstr(line, "Recovery mode"))   discipline_mode = 4; 
-              else if(strstr(line, "Fast recovery"))   discipline_mode = 5; 
-              else if(strstr(line, "Disabled"))        discipline_mode = 6; 
-           }
-           else if(!strnicmp(line, "#TITLE", 6)) {
-              strcpy(plot_title, &line[7]);
-              set_title:
-              i = strlen(plot_title);
-              if(i && (plot_title[i-1] == 0x0D)) plot_title[i-1] = 0;
-              if(i && (plot_title[i-1] == 0x0A)) plot_title[i-1] = 0;
-              if(plot_title[0]) title_type = USER;
-              else              title_type = NONE;
-              saw_title = 1;
-              show_title();
-              refresh_page();
-           }
-           else if(!strnicmp(line, "#MARKER", 7)) {
-              mark_number = 0;
-              sscanf(&line[8], "%d", &mark_number);
-              if((mark_number >= 0) && (mark_number < MAX_MARKER)) {
-                 mark_q_entry[mark_number] = plot_q_in;
-              }
-           }
-           else if(!strnicmp(line, "#OSC_GAIN", 9)) {
-              osc_gain = (-3.5);
-              sscanf(&line[10], "%f", &osc_gain);
-              user_osc_gain = osc_gain;
-              log_osc_gain = osc_gain;
-              gain_color = YELLOW;
-           }
-           else if(!strnicmp(line, "#SCALE", 6)) {
-              pps_scale = osc_scale = 1.0;
-              sscanf(&line[7], "%lf %lf", &pps_scale, &osc_scale);
-           }
-           else if(!strnicmp(line, "#INTERVAL", 9)) {
-              adev_period = 1.0F;
-              sscanf(&line[10], "%f", &adev_period);
-           }
-           else if(!strnicmp(line, "#PERIOD", 7)) {
-              adev_period = 1.0F;
-              sscanf(&line[8], "%f", &adev_period);
-           }
-           else if(!strnicmp(line, "#LLA", 4)) {
-              sscanf(&line[5], "%lf %lf %lf", &precise_lat, &precise_lon, &precise_alt);
-              precise_lon /= RAD_TO_DEG;
-              precise_lat /= RAD_TO_DEG;
-              cos_factor = cos(precise_lat);
-           }
-           continue;
-        }
+        if(parse_log_comment(line)) continue;
 
         // filter out or parse lines that don't start with numbers
-        if(xml_log) goto good_line;
+        if(xml_log_fmt) goto data_line;
 
         j = strlen(line);
-        for(i=0; i<j; i++) {
-           if((line[i] >= '0') && (line[i] <= '9')) goto good_line;
-           else if((line[i] == '.') || (line[i] == '+') || (line[i] == '-')) goto good_line;
-           else if((line[i] == ' ') || (line[i] == '\t')) continue;
-           else if(tim_file) {
-              if(!strnicmp(&line[i], "CAP", 3)) {
-                 if(strlen(&line[4])+4 < SLEN) {
-                    if(saw_title) strcat(plot_title, " | ");
-                    strcat(plot_title, &line[i+4]);
-                    goto set_title;
-                 }
-              }
-              else if(!strnicmp(&line[i], "TIM", 3)) {
-                 if(strlen(&line[4])+4 < SLEN) {
-                    if(saw_title) strcat(plot_title, " | ");
-                    strcat(plot_title, &line[i+4]);
-                    goto set_title;
-                 }
-              }
-              else if(!strnicmp(&line[i], "IMO", 3)) {
-                 if(strlen(&line[4])+4 < SLEN) {
-                    if(saw_title) strcat(plot_title, " | ");
-                    strcat(plot_title, &line[i+4]);
-                    goto set_title;
-                 }
-              }
-              else if(!strnicmp(&line[i], "PER", 3)) {
-                 adev_period = 1.0F;
-                 sscanf(&line[i+4], "%f", &adev_period);
-                 break;
-              }
-              else if(!strnicmp(&line[i], "SCA", 3)) {
-                 pps_scale = osc_scale = 1.0;
-                 sscanf(&line[i+4], "%lf %lf", &pps_scale, &osc_scale);
-                 break;
-              }
-              else break;
+        for(i=0; i<j; i++) {  // scan the line for a number or command
+           if((line[i] == ' ') || (line[i] == '\t')) {  // skip whitespace
+              continue;
            }
-           else break;
+           else if((line[i] >= '0') && (line[i] <= '9')) {
+if(tim_file && (saw_timelab_tic == 0)) break;  // we are not in the TIC section
+              goto data_line;
+           }
+           else if((line[i] == '.') || (line[i] == '+') || (line[i] == '-')) {
+if(tim_file && (saw_timelab_tic == 0)) break;  // we are not in the TIC section
+              goto data_line;
+           }
+           else if(tim_file) {
+              if(tim_command(&line[i])) break;
+           }
+           else break;  // line does not start with something we are interested in
         }
-        continue;
+        continue;  // get next log line
 
-        good_line:
+        data_line:  // the line has data we want to process on it
         if(lla_log) {  // read lat/lon/altitude info
            #ifdef PRECISE_STUFF
-              sscanf(line, "%u %d %lf %lf %lf", &this_tow, &gps_status, &lat, &lon, &alt);
-              if(gps_status == 0) {
+              sscanf(line, "%u %X %lf %lf %lf", &this_tow, &gps_status, &lat, &lon, &alt);
+              if(gps_status == GPS_FIXES) {
                  if(lla_seen == 0) plot_lla_axes(1);
                  lla_seen = 1;
                  lat /= RAD_TO_DEG;
                  lon /= RAD_TO_DEG;
-                 color = counter / 3600L;
-                 color %= 14;
-                 plot_lla_point(1, color+1);
+                 color = counter / (60L*60L);
+                 color %= 12;
+                 plot_lla_point(1, color+3);  // ckckckck - what about earth tides?
                  survey_tow = this_tow;
               }
            #endif  // PRECISE_STUFF
         }
         else if(adev_log) {  // read adev values
-              pps_val = osc_val = 0.0;
-              sscanf(line, "%le %le", &pps_val, &osc_val);
-//if(afile) fprintf(afile, "%.11le %.11le\n", pps_val, osc_val);
-              if(have_ref == 0) {  // we can remove the first data point as a constant offset from all points
-                 pps_ref = pps_val;
-                 osc_ref = osc_val;
-                 have_ref = 1;
-              }
-              if(osc_val != 0.0) saw_osc = 1;
+           pps_val = osc_val = chc_val = chd_val = 0.0;
+           sscanf(line, "%le %le %le %le", &pps_val, &osc_val, &chc_val, &chd_val);
+           if(have_ref == 0) {  // we can remove the first data point as a constant offset from all points
+              pps_ref = pps_val;
+              osc_ref = osc_val;
+              chc_ref = chc_val;
+              chd_ref = chc_val;
+              have_ref = 1;
+           }
 
-              if(subtract_base_value == 2) {
-                 pps_val -= pps_ref;
-                 osc_val -= osc_ref;
-              }
+           if(pps_val != 0.0) have_pps_offset = 1;
+           if(osc_val != 0.0) have_osc_offset = 1;
+           if(chc_val != 0.0) have_chc_offset = 1;
+           if(chd_val != 0.0) have_chd_offset = 1;
 
-              if(luxor) ;
-              else pps_val /= (1.0e-9);           // convert to ns
-              pps_offset = (pps_val * pps_scale);
+           if(subtract_base_value == 2) {
+              pps_val -= pps_ref;
+              osc_val -= osc_ref;
+              chc_val -= chc_ref;
+              chd_val -= chd_ref;
+           }
 
-              if(luxor) ;
-              else osc_val /= (100.0 * 1.0e-9);
-              osc_offset = (osc_val * osc_scale);
+           if(luxor) ;
+           else pps_val /= (1.0e-9);           // convert to ns
+           pps_offset = (pps_val * log_pps_scale);
 
-              #ifdef ADEV_STUFF
-                 add_adev_point(osc_offset, pps_offset);
-              #endif
+           if(luxor) ;
+           else osc_val /= (100.0 * 1.0e-9);   // aaahhh
+           osc_offset = (osc_val * log_osc_scale);
 
-              if(1) {
-                 dac_voltage = 0.0F;
-                 temperature = 0.0F;
-                 bump_time();
+           if(luxor) ;
+           else chc_val /= (1.0e-9);           // convert to ns
+           chc_offset = (chc_val * log_chc_scale);
+
+           if(luxor) ;
+           else chd_val /= (1.0e-9);           // convert to ns
+           chd_offset = (chd_val * log_chd_scale);
+
+
+           #ifdef ADEV_STUFF
+              add_rcvr_adev_point(2);
+           #endif
+
+           if(1) {
+//            dac_voltage = 0.0F;
+//            temperature = 0.0F;
+              bump_time();
 //if(afile) fprintf(afile, "%.11le %.11le\n", pps_offset, osc_offset);
-                 update_plot(0);
-              }
+              old_jd = jd_utc;
+if(tim_file) {
+   pps_tie = pps_offset;
+   osc_tie = osc_offset;
+   chc_tie = chc_offset;
+   chd_tie = chd_offset;
+   pps_offset += (pps_adev_period * 1.0E9);   // TICC_RATE
+   osc_offset += (osc_adev_period * 1.0E9);
+   chc_offset += (chc_adev_period * 1.0E9);
+   chd_offset += (chd_adev_period * 1.0E9);
+   read_log_jd += jtime(0,0,0, adev_period);
+   jd_utc = read_log_jd;
+}
+              update_plot(NO_REFRESH);
+              jd_utc = old_jd;
+           }
         }
         else {  // read log info
-           if(valid_log == 0) goto not_log;
+           if(valid_read_log == 0) goto not_log;
 
-           if(xml_log) {   // .GPX and .XML logs
-              if(strstr(line, "<trkpt")) {  // start of a data point entry
-                 have_dops = 0;
-                 s = strstr(line, "lat=");         // lat and lon
-                 if(s) lat = atof(s+5)*PI/180.0;
-                 s = strstr(line, "lon=");
-                 if(s) lon = atof(s+5)*PI/180.0;
-                 continue;
-              }
-              else if(strstr(line, "<ele>")) {     // altitude
-                 alt = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<course>")) {  // heading
-                 heading = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<speed>")) {   // speed
-                 speed = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<time>")) {    // time code (in UTC)
-                 s = strstr(line, "<time>");
-                 if(s) {
-                    sscanf(s+5+1, "%d%c%d%c%d%c%d%c%d%c%lf",
-                       &year,&ti[0],&month,&ti[0],&day,&ti[0],
-                       &hh,&ti[0],&mm,&ti[0],&ss
-                    );
-                 }
-                 continue;
-              }
-              else if(strstr(line, "<tow>")) {   // time-of-week
-                 tow = (long) xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<temp>")) {  // things stored in the [TEMP] data queue variable 
-                 temperature = (float) xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<tcor>")) {
-                 temperature = (float) xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<dac>")) {   // things stored in the [DAC] data queue variable 
-                 dac_voltage = (float) xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<sawtooth>")) {
-                 dac_voltage = (float) (xml_val(line));
-                 continue;
-              }
-              else if(strstr(line, "<sawt>")) {
-                 dac_voltage = (float) (xml_val(line));
-                 continue;
-              }
-              else if(strstr(line, "<pps>")) {   // things stored in the [PPS] data queue variable 
-                 vp = xml_val(line);
-                 if(!TIMING_RCVR) vp /= 1.0E9;
-                 continue;
-              }
-              else if(strstr(line, "<accu>")) {
-                 vp = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<bias>")) {
-                 vp = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<rgen>")) {
-                 vp = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<drft>")) {
-                 vp = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<osc>")) {   // things stored in the [OSC] data queue variable
-                 vo = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<unc>")) {
-                 vo = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<frac>")) {
-                 vo = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<cofs>")) {
-                 vo = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<rate>")) {
-                 vo = xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<sat>")) {   // sat count
-                 sat_count = (int) xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<tfom>")) {  // figure of merits
-                 tfom = (int) xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<ffom>")) {
-                 ffom = (int) xml_val(line);
-                 continue;
-              }
-              else if(strstr(line, "<pdop>")) {  // dops
-                 pdop = (float) xml_val(line);
-                 have_dops |= PDOP;
-                 continue;
-              }
-              else if(strstr(line, "<hdop>")) {
-                 hdop = (float) xml_val(line);
-                 have_dops |= HDOP;
-                 continue;
-              }
-              else if(strstr(line, "<vdop>")) {
-                 vdop = (float) xml_val(line);
-                 have_dops |= VDOP;
-                 continue;
-              }
-              else if(strstr(line, "<tdop>")) {
-                 tdop = (float) xml_val(line);
-                 have_dops |= TDOP;
-                 continue;
-              }
-              else if(strstr(line, "<gdop>")) {
-                 gdop = (float) xml_val(line);
-                 have_dops |= GDOP;
-                 continue;
-              }
-              else if(strstr(line, "<ndop>")) {
-                 ndop = (float) xml_val(line);
-                 have_dops |= NDOP;
-                 continue;
-              }
-              else if(strstr(line, "<edop>")) {
-                 edop = (float) xml_val(line);
-                 have_dops |= EDOP;
-                 continue;
-              }
-              else if(strstr(line, "<gain>")) {
-                 osc_gain = (float) xml_val(line);
-                 user_osc_gain = osc_gain;
-                 log_osc_gain = osc_gain;
-                 gain_color = YELLOW;
-                 continue;
-              }
-              else if(strstr(line, "</trkpt>")) {  // end of data point
-              }
-              else {  // ignored parameters
-                 continue;
-              }
+           if(xml_log_fmt) {   // .GPX and .XML logs
+              if(parse_xml_value(line)) continue;
            }
            else if(luxor) {
-              if(old_log_format) {   // old log format
-                 sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%f%c%f%c%f%c%f%c%f%c%f", 
-                   &hh,&ti[0],&mm,&ti[0],&ss,&ti[0], 
-                   &tow,&ti[0], 
-                   &vp,&ti[0],
-                   &vo,&ti[0],
-                   &dac_voltage,&ti[0],
-                   &temperature,&ti[0],
-                   &blue_hz,&ti[0],
-                   &green_hz,&ti[0],
-                   &red_hz,&ti[0],
-                   &white_hz
-                 );
-              }
-              else {
-                 sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%f%c%lf%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f", 
-                   &hh,&ti[0],&mm,&ti[0],&ss,&ti[0], 
-                   &tow,&ti[0], 
-                   &vp,&ti[0],
-                   &lux2,&ti[0],
-                   &vo,&ti[0],
-                   &dac_voltage,&ti[0],
-                   &led_i,&ti[0],
-                   &led_v,&ti[0],
-                   &temperature,&ti[0],
-                   &tc2,&ti[0],
-                   &blue_hz,&ti[0],
-                   &green_hz,&ti[0],
-                   &red_hz,&ti[0],
-                   &white_hz,&ti[0],
-                   &pwm_hz,&ti[0],
-                   &adc2
-                 );
-              }
-              cct = calc_cct(cct_type, 0, red_hz, green_hz, blue_hz);
+              #ifdef DOUBLE_DATA
+                 if(old_log_format) {   // old log format
+                    sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf", 
+                      &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                      &log_tow,&ti[0], 
+                      &vp,&ti[0],               // aaalll
+                      &vo,&ti[0],
+                      &dac_voltage,&ti[0],
+                      &temperature,&ti[0],
+                      &blue_hz,&ti[0],
+                      &green_hz,&ti[0],
+                      &red_hz,&ti[0],
+                      &white_hz
+                    );
+                 }
+                 else {
+                    sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf", 
+                      &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                      &log_tow,&ti[0], 
+                      &vp,&ti[0],               // aaalll 
+                      &lux2,&ti[0],
+                      &vo,&ti[0],
+                      &dac_voltage,&ti[0],
+                      &led_i,&ti[0],
+                      &led_v,&ti[0],
+                      &temperature,&ti[0],
+                      &luxor_tc2,&ti[0],
+                      &blue_hz,&ti[0],
+                      &green_hz,&ti[0],
+                      &red_hz,&ti[0],
+                      &white_hz,&ti[0],
+                      &pwm_hz,&ti[0],
+                      &adc2
+                    );
+                 }
+              #else
+                 if(old_log_format) {   // old log format
+                    sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%f%c%f%c%f%c%f%c%f%c%f", 
+                      &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                      &log_tow,&ti[0], 
+                      &vp,&ti[0],               // aaalll
+                      &vo,&ti[0],
+                      &dac_voltage,&ti[0],
+                      &temperature,&ti[0],
+                      &blue_hz,&ti[0],
+                      &green_hz,&ti[0],
+                      &red_hz,&ti[0],
+                      &white_hz
+                    );
+                 }
+                 else {
+                    sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%f%c%lf%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f%c%f", 
+                      &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                      &log_tow,&ti[0], 
+                      &vp,&ti[0],               // aaalll 
+                      &lux2,&ti[0],
+                      &vo,&ti[0],
+                      &dac_voltage,&ti[0],
+                      &led_i,&ti[0],
+                      &led_v,&ti[0],
+                      &temperature,&ti[0],
+                      &luxor_tc2,&ti[0],
+                      &blue_hz,&ti[0],
+                      &green_hz,&ti[0],
+                      &red_hz,&ti[0],
+                      &white_hz,&ti[0],
+                      &pwm_hz,&ti[0],
+                      &adc2
+                    );
+                 }
+              #endif   // DOUBLE_DATA
+              cct = calc_cct(cct_type, 0, (double) red_hz, (double) green_hz, (double) blue_hz);
            }
-           else if((rcvr_type == NMEA_RCVR) || (rcvr_type == GPSD_RCVR)) {
+           else if(rcvr_type == FURUNO_RCVR) {
               sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%d", 
-                &hh,&ti[0],&mm,&ti[0],&ss,&ti[0], 
-                &tow,&ti[0], 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
                 &lat,&ti[0],
                 &lon,&ti[0],
                 &alt,&ti[0],
@@ -2831,37 +7172,151 @@ afile = 0;  // topen("ADEV.XXX", "w");
               lat = lat * PI / 180.0;
               lon = lon * PI / 180.0;
            }
-           else if((rcvr_type == NO_RCVR) || (rcvr_type == ACRON_RCVR)) { // nnnnnnn
+           else if(rcvr_type == LPFRS_RCVR) {  //!!!!!LPFRS
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%d", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vp,&ti[0],             // aaalll 
+                &vo,&ti[0],
+                &lpfrs_dd,&ti[0],
+                &lpfrs_gg,&ti[0],
+                &sat_count
+              );
+           }
+           else if((rcvr_type == NMEA_RCVR) || (rcvr_type == GPSD_RCVR) || (rcvr_type == Z12_RCVR)) {
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%d", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &lat,&ti[0],
+                &lon,&ti[0],
+                &alt,&ti[0],
+                &sat_count
+              );
+              lat = lat * PI / 180.0;
+              lon = lon * PI / 180.0;
+           }
+           else if((rcvr_type == NO_RCVR) || (rcvr_type == ACRON_RCVR)) { 
               sscanf(line, "%02d%c%02d%c%lf%c%ld", 
-                &hh,&ti[0],&mm,&ti[0],&ss,&ti[0], 
-                &tow 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow 
               );
            }
            else if(rcvr_type == SCPI_RCVR) {
-              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%f%c%f%c%d", 
-                &hh,&ti[0],&mm,&ti[0],&ss,&ti[0], 
-                &tow,&ti[0], 
-                &vp,&ti[0],
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%d", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vp,&ti[0],             // aaalll 
                 &vo,&ti[0],
-                &dac_voltage,&ti[0],
-                &temperature,&ti[0],
+                &vdac,&ti[0],
+                &vtemp,&ti[0],
                 &sat_count
               );
+              dac_voltage = (DATA_SIZE) vdac;
+              temperature = (DATA_SIZE) vtemp;
               vp /= 1.0E9;
               vo /= 1000.0;
            }
-           else {
-              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%f%c%f%c%d", 
-                &hh,&ti[0],&mm,&ti[0],&ss,&ti[0], 
-                &tow,&ti[0], 
-                &vp,&ti[0],
+           else if(rcvr_type == SA35_RCVR) {  //!!!!!SA35
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%d", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vp,&ti[0],             // aaalll 
                 &vo,&ti[0],
-                &dac_voltage,&ti[0],
-                &temperature,&ti[0],
+                &lpfrs_dd,&ti[0],
+                &lpfrs_gg,&ti[0],
                 &sat_count
               );
            }
-if(llt == 0.0F) llt = temperature;
+           else if(rcvr_type == SRO_RCVR) {
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%d%c%d", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vp,&ti[0],             // aaalll 
+                &vo,&ti[0],
+                &sro_ff,&ti[0],
+                &sro_vt,&ti[0],
+                &sat_count
+              );
+           }
+           else if(rcvr_type == THERMO_RCVR) {
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%lf%c%lf", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vtemp,&ti[0],
+                &vtemp2,&ti[0],
+                &vpressure,&ti[0],
+                &vhumidity,&ti[0],
+                &vadc3,&ti[0],
+                &vadc4
+              );
+              tc1 = (DATA_SIZE) vtemp;
+              tc2 = (DATA_SIZE) vtemp2;
+              pressure = (DATA_SIZE) vpressure;
+              humidity = (DATA_SIZE) vhumidity;
+              adc3 = (DATA_SIZE) vadc3;
+              adc4 = (DATA_SIZE) vadc4;
+           }
+           else if(rcvr_type == TICC_RCVR) {
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vp,&ti[0],
+                &vo,&ti[0],
+                &vc,&ti[0],
+                &vd
+              );
+
+              pps_phase = vp;   // aaalll
+              osc_phase = vo;
+              chc_phase = vc;
+              chd_phase = vd;
+
+              vp /= 1.0E9;
+              vo /= 1.0E9;
+              vc /= 1.0E9;
+              vd /= 1.0E9;
+           }
+           else if(rcvr_type == TIDE_RCVR) { // ckckck
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &lat_tide,&ti[0],
+                &lon_tide,&ti[0],
+                &alt_tide,&ti[0],
+                &ugals
+              );
+           }
+           else if(rcvr_type == TSIP_RCVR) {
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%d", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vp,&ti[0],             // aaalll 
+                &vo,&ti[0],
+                &vdac,&ti[0],
+                &vtemp,&ti[0],
+                &sat_count
+              );
+              dac_voltage = (DATA_SIZE) vdac;
+              temperature = (DATA_SIZE) vtemp;
+
+              pps_phase += ((vp * 1.0E9) / 100.0);   // aaalll
+              osc_phase += ((vo * 1.0E0) / 100.0);
+           }
+           else {
+              sscanf(line, "%02d%c%02d%c%lf%c%ld%c%lf%c%lf%c%lf%c%lf%c%d", 
+                &log_hhh,&ti[0],&log_mmm,&ti[0],&log_sss,&ti[0], 
+                &log_tow,&ti[0], 
+                &vp,&ti[0],             // aaalll 
+                &vo,&ti[0],
+                &vdac,&ti[0],
+                &vtemp,&ti[0],
+                &sat_count
+              );
+              dac_voltage = (DATA_SIZE) vdac;
+              temperature = (DATA_SIZE) vtemp;
+           }
+
+if(llt == (DATA_SIZE) 0.0) llt = temperature;
 if(undo_fw_temp_filter) {
    tvb = (SENSOR_TC * temperature) - ((SENSOR_TC-1.0F) * llt);
    llt = temperature;
@@ -2869,10 +7324,11 @@ if(undo_fw_temp_filter) {
 }
 
            osc_offset = vo;
+
            if(luxor) {
               pps_offset  = vp;
-              batt_w = ((float) dac_voltage * (float) osc_offset);
-              led_w = ((float) led_v * (float) led_i);
+              batt_w = (DATA_SIZE) (dac_voltage * osc_offset);
+              led_w = led_v * led_i;
            }
            else if(TIMING_RCVR) {
               pps_offset = vp;
@@ -2881,38 +7337,42 @@ if(undo_fw_temp_filter) {
               pps_offset = vp * 1.0E9;
            }
 
-           hours = hh;
-           minutes = mm;
-           seconds = (int) ss;
-           frac = (ss - (double) seconds);
+           if(pps_offset) have_pps_offset = 1;
+           if(osc_offset) have_osc_offset = 1;
+           if(chc_offset) have_chc_offset = 1;
+           if(chd_offset) have_chd_offset = 1;
+
+           hours = log_hhh;
+           minutes = log_mmm;
+           seconds = (int) log_sss;
+           frac = (log_sss - (double) seconds);
 
            tsip_error = msg_fault = 0;
-           time_check(1, log_interval, year,month,day, hours,minutes,seconds,frac);
-           jd_utc = jdate(year,month,day) + jtime(hh,mm,0,ss);  // set time code for log entry
+           time_check(1, read_log_interval, year,month,day, hours,minutes,seconds,frac);
+           jd_utc = jdate(year,month,day) + jtime(log_hhh,log_mmm,0,log_sss);  // set time code for log entry
 
-           if(log_interval >= 1.0) j = (int) log_interval;
+           if(read_log_interval >= 1.0) j = (int) read_log_interval;
            else j = 1;
-           for(i=0; i<j; i++) {
-              update_plot(0);
+
+           old_jd = jd_utc;
+           for(i=0; i<j; i++) {  // duplicate missing log entries
+              update_plot(NO_REFRESH);
               #ifdef ADEV_STUFF
-                 if(adev_period > 0.0F) {
-                    if(++adev_time >= (int) (adev_period+0.5F)) {  // add this data point to adev data queue
-                       add_adev_point(osc_offset, pps_offset);   
-                       adev_time = 0;
-                    }
-                 }
+                 add_rcvr_adev_point(3);
               #endif
+              jd_utc += jtime(0,0,0,1.0);  // !!!!!! what if not 1Hz queue?
            }
+           jd_utc = old_jd;
         }
 
         // every so often,  process any pending GPS messages 
         // to keep the serial port buffer from overflowing
-        if((counter & 0xFFF) == 0x0000) {  
+        if((counter % LOG_GPS_CHECK) == 0) {  
            temp_dmode = discipline_mode;
            temp_tflags = time_flags;
            temp_day = day;   temp_month = month;   temp_year = year;
 
-////       get_pending_gps();  //!!!! possible recursion
+           get_pending_gps(20);  //!!!! possible recursion
 
            day = temp_day;   month = temp_month;   year = temp_year;
            time_flags = temp_tflags;
@@ -2927,7 +7387,7 @@ if(undo_fw_temp_filter) {
     time_checked = 0;
     reading_lla = 0;
 
-    if(saw_title == 0) {
+    if(saw_log_title == 0) {
        sprintf(plot_title, "From file: %s", fn);
        title_type = USER;
        show_title();
@@ -2958,7 +7418,7 @@ if(undo_fw_temp_filter) {
           plot[i].show_plot = 0;
        }
        plot[PPS].show_plot = 1;
-       plot[OSC].show_plot = saw_osc;
+       plot[OSC].show_plot = have_osc_offset;
        plot_sat_count = 0;
        plot_adev_data = 1;
        keep_adevs_fresh = 0;  // allow adevs to be calculated over all points
@@ -2966,6 +7426,1675 @@ if(undo_fw_temp_filter) {
     }
     return 0;
 }
+
+
+//
+//
+// RINEX file stuff
+//
+//
+
+int gps_prn(int prn)
+{
+   if((prn >= 1) && (prn <= 32)) return prn;
+   return 0;
+}
+
+int gps_sat(int prn)
+{
+   // return RINEX GNSS system id character if sat is a GPS satellite
+   if(gps_prn(prn)) return 'G';
+   return 0;
+}
+
+
+int sbas_prn(int prn)
+{
+   // convert receiver PRN id to RINEX standard values
+   // Ublox IMES is 183 .. 192
+   // Ublox QZSS is 193 .. 197
+
+   if(rcvr_type == GPSD_RCVR) {  // we don't know the actual receiver type GPSD is using
+      return 0;
+   }
+   else if(rcvr_type == ESIP_RCVR) {
+      if((prn >= 33) && (prn < 64)) {
+         return prn + (120-33) - 100;
+      }
+   }
+   else if(rcvr_type == NMEA_RCVR) {  
+      if((prn >= 33) && (prn < 64)) {
+         return (prn+87) - 100;
+      }
+   }
+   else if(rcvr_type == TSIP_RCVR) {
+      return 0;
+   }
+   else if(rcvr_type == VENUS_RCVR) {  // ???? is this correct
+      if((prn >= 33) && (prn < 64)) {
+         return (prn+87) - 100;
+      }
+   }
+   else if((prn >= 120) && (prn <= 158))  {
+      return prn-100;
+   }
+
+   return 0;
+}
+
+int sbas_sat(int prn)
+{
+   // return RINEX GNSS system id character if sat is a SBAS satellite
+   if(sbas_prn(prn)) return 'S';
+   return 0;
+}
+
+
+int glonass_prn(int prn)
+{
+   if(rcvr_type == GPSD_RCVR) { // we don't know the actual receiver type GPSD is using 
+      return 0;
+   }
+   else if(rcvr_type == ESIP_RCVR) {
+      if(prn < 65) return 0;
+      if(prn > 92) return 0;
+   }
+   else {
+      if(prn < 65) return 0;
+      if(prn > 96) return 0;
+   }
+   return (prn-64);
+}
+
+int glonass_sat(int prn) 
+{
+   // return RINEX GNSS system id character if sat is a Glonass satellite
+   if(glonass_prn(prn)) return 'R';
+   return 0;
+}
+
+
+int galileo_prn(int prn)
+{
+   if(rcvr_type == UBX_RCVR) {
+      if((prn >= 211) && (prn <= 246)) return prn-210;
+   }
+   else if(rcvr_type == VENUS_RCVR) {
+      if((prn >= 301) && (prn <= 350)) return prn-300;
+   }
+   else if(0 && (rcvr_type == TSIP_RCVR)) {
+      // 183, 192,193,200
+      if((prn >= 97) && (prn <= 133)) return prn-96;
+   }
+   return 0;  // not yet supported
+}
+
+int galileo_sat(int prn) 
+{
+   // return RINEX GNSS system id character if sat is a Galileo satellite
+   if(galileo_prn(prn)) return 'E'; 
+   return 0;
+}
+
+
+int beidou_prn(int prn)
+{
+   // not supported in RINEX before v3.0
+   if(1 && (rcvr_type == UBX_RCVR)) {
+      if((prn >= 159) && (prn <= 163)) return prn-158;
+      else if((prn >= 33) && (prn <= 64)) return 6+(prn-33);
+   }
+   else if(rcvr_type == VENUS_RCVR) {
+      if((prn >= 201) && (prn <= 237)) return prn-200;
+   }
+   else if(0 && (rcvr_type == TSIP_RCVR)) {
+      if((prn >= 201) && (prn <= 237)) return prn-200;
+   }
+   return 0;  // not yet supported
+}
+
+int beidou_sat(int prn)
+{
+   // return RINEX GNSS system id character if sat is a Beidou satellite
+   if(beidou_prn(prn)) return 'C'; 
+   return 0;
+}
+
+
+int qzss_prn(int prn)
+{
+   // returns the RINEX PRN id code if sat is a QZSS satellite
+   if(rcvr_type == ESIP_RCVR) {
+      if((prn >= 93) && (prn < 199)) return prn-92;
+   }
+   else if(rcvr_type == TSIP_RCVR) {
+      // 183, 192, 193, 200
+   }
+   else if(rcvr_type == UBX_RCVR){
+      if((prn >= 193) && (prn <= 197)) return prn-192;
+   }
+   else if(rcvr_type == VENUS_RCVR){
+      if((prn >= 193) && (prn <= 199)) return prn-192;
+   }
+
+   return 0;
+}
+
+int qzss_sat(int prn)
+{
+   // return RINEX GNSS system id character if sat is a QZSS satellite
+   if(qzss_prn(prn)) return 'J'; 
+   return 0;
+}
+
+
+int irnss_prn(int prn)
+{
+   // returns the RINEX PRN id code if sat is a IRNSS satellite
+   // VENUS IRNSS PRNs -> PRN+240 .. PRN+???
+   if(rcvr_type == VENUS_RCVR){
+      if((prn >= 240) && (prn <= 254)) return prn-240;
+   }
+
+   return 0;
+}
+
+int irnss_sat(int prn)
+{
+   // return RINEX GNSS system id character if sat is a IRNSS satellite
+   if(irnss_prn(prn)) return 'I'; 
+   return 0;
+}
+
+
+int rinex_prn(int prn) 
+{
+   // convert Heather's PRN to the RINEX standard PRN and set gnss_sat to
+   // Heather's GNSS id flag for the PRN
+   gnss_sat = 0;
+   if(gps_sat(prn)) {
+      gnss_sat = GPS;
+      return prn;
+   }
+   else if(sbas_sat(prn)) {     // sat is an SBAS satellite
+      prn = sbas_prn(prn); // convert GPS SBAS prn to RINEX SBAS prn value
+      gnss_sat = SBAS;
+      if(rcvr_type == ESIP_RCVR) return 0;  // does not do SBAS raw measurements
+      if(rcvr_type == NVS_RCVR) return 0;   // does not do SBAS raw measurements
+      if(rcvr_type == VENUS_RCVR) return 0; // does not do SBAS raw measurements
+      return prn;
+   }
+   else if(glonass_sat(prn)) {
+      prn = glonass_prn(prn);
+      gnss_sat = GLONASS;
+      if(rcvr_type == ESIP_RCVR) return 0;  // does not do GLONASS raw measurements 
+      if(rcvr_type == TSIP_RCVR) return 0;
+      return prn;
+   }
+   else if(galileo_sat(prn)) {
+      prn = galileo_prn(prn);
+      gnss_sat = GALILEO;
+      if(rcvr_type == TSIP_RCVR) return 0;
+      return prn;
+   }
+   else if(beidou_sat(prn)) {
+      prn = beidou_prn(prn);
+      gnss_sat = BEIDOU;
+      if(rcvr_type == TSIP_RCVR) return 0;
+      return prn;
+   }
+   else if(qzss_sat(prn)) {
+      prn = qzss_prn(prn);
+      gnss_sat = QZSS;
+      if(rcvr_type == TSIP_RCVR) return 0;
+      return 0; //  return prn;  // we don't do IRNSS raw data yet
+   }
+   else if(irnss_sat(prn)) {
+      prn = irnss_prn(prn);
+      gnss_sat = IRNSS;
+      if(rcvr_type == TSIP_RCVR) return 0;
+      return 0; //  return prn;  // we don't do IRNSS raw data yet
+   }
+
+   return 0;  // default for GPS
+}
+
+int rinex_gnss(int prn)
+{
+   // returns Heather's GNSS id flag for the PRN
+   rinex_prn(prn);
+   return gnss_sat;
+}
+
+char gnss_letter(int prn)
+{
+char c;
+
+   rinex_gnss(prn);
+   if(rcvr_type == GPSD_RCVR)  c = ' ';
+   else if(gnss_sat & GPS)     c = 'G';
+   else if(gnss_sat & BEIDOU)  c = 'C';
+   else if(gnss_sat & GALILEO) c = 'E';
+   else if(gnss_sat & IRNSS)   c = 'I';
+   else if(gnss_sat & QZSS)    c = 'J';
+   else if(gnss_sat & IMES)    c = 'M';
+   else if(gnss_sat & GLONASS) c = 'R';
+   else if(gnss_sat & SBAS)    c = 'S';
+   else                        c = ' ';
+
+   return c;
+}
+
+char *gnss_id(int prn)
+{
+char *s;
+
+   rinex_gnss(prn);
+   if(rcvr_type == GPSD_RCVR)  s = "PRN";
+   else if(gnss_sat & GPS)     s = "GPS";
+   else if(gnss_sat & BEIDOU)  s = "BEIDOU";
+   else if(gnss_sat & GALILEO) s = "GALILEO";
+   else if(gnss_sat & IRNSS)   s = "IRNSS";
+   else if(gnss_sat & QZSS)    s = "QZSS";
+   else if(gnss_sat & IMES)    s = "IMES";
+   else if(gnss_sat & GLONASS) s = "GLONASS";
+   else if(gnss_sat & SBAS)    s = "SBAS";
+   else                        s = "PRN";
+
+   return s;
+}
+
+
+int good_raw(int prn)
+{
+   // return the RINEX system id char if it's a satellite we support
+   if(sat[prn].level_msg == 0) return 0;  // sat is not tracked
+   if(sat[prn].tracking <= 0) return 0;
+
+   if(rinex_prn(prn)) {
+      if     (gps_sat(prn))     return gps_sat(prn);      // it's a GPS sat
+      else if(sbas_sat(prn))    return sbas_sat(prn);     // it's a SBAS sat
+      else if(glonass_sat(prn)) return glonass_sat(prn);  // 
+      else if(galileo_sat(prn)) return galileo_sat(prn);  // 
+      else if(beidou_sat(prn))  return beidou_sat(prn);   // 
+   }
+
+   return 0;  // it's not OK to output the sat's RAW measurements
+}
+
+
+#define S1_OBS 1  // SNR
+#define S2_OBS 2
+#define S5_OBS 3
+#define S6_OBS 4
+#define S7_OBS 5
+#define S8_OBS 6
+
+#define D1_OBS 7  // DOPPLER
+#define D2_OBS 8
+#define D5_OBS 9
+#define D6_OBS 10
+#define D7_OBS 11
+#define D8_OBS 12
+
+#define C1_OBS 13 // PSEUDORANGE
+#define P1_OBS 14
+#define P2_OBS 15
+#define P5_OBS 16
+#define P6_OBS 17
+#define P7_OBS 18
+#define P8_OBS 19
+
+#define L1_OBS 20 // CARRIER PHASE
+#define L2_OBS 21
+#define L5_OBS 22
+#define L6_OBS 23
+#define L7_OBS 24
+#define L8_OBS 25
+
+#define MAX_OBS 27
+int mixed_obs_type[MAX_OBS+1];   // RINEX v2.11 mixed GNSS observations
+int mixed_num_obs;
+
+int gps_obs_type[MAX_OBS+1];     // RINEX v3.01 sat system specific observations
+int gps_num_obs;
+
+int sbas_obs_type[MAX_OBS+1];
+int sbas_num_obs;
+
+int glonass_obs_type[MAX_OBS+1];
+int glonass_num_obs;
+
+int galileo_obs_type[MAX_OBS+1];
+int galileo_num_obs;
+
+int beidou_obs_type[MAX_OBS+1];
+int beidou_num_obs;
+
+
+void add_obs_val(FILE *file, char *meas, int *obs_count)
+{
+int max_obs;
+
+   // add the observation value to the output string
+
+   if(file == 0) return;
+   if(meas == 0) return;
+   if(obs_count == 0) return;
+
+   max_obs = 5;
+   if(rinex_fmt >= 3.0) max_obs = 100;
+
+   fprintf(file, "%s", meas);
+   *obs_count = (*obs_count)+1;
+   if(*obs_count >= max_obs) {
+      fprintf(file, "\n");
+      out[0] = 0;
+      *obs_count = 0;
+      obs_data_written = 1;
+   }
+}
+
+
+int add_obs_type(int *obs_type, int count, int obs)
+{
+int i;
+
+   // add an observation ID to the observation type list
+
+   if(obs_type == 0) return count;
+   if(count >= MAX_OBS) return count;
+
+   for(i=0; i<count; i++) {  // filter out duplicates
+      if(obs_type[i] == obs) return count;
+   }
+
+   obs_type[count++] = obs;
+   return obs;
+}
+
+
+int get_obs_types(FILE *file, char *s, int system, int *obs_type)
+{
+int i;
+int len;
+char obs[5+1];
+char *sys;
+unsigned ti;
+int num_obs;
+int max_obs; // max observation types per line
+
+   // parse list of observation types to output and build the RINEX file
+   // observation type list
+
+   // !!!!!!!!!! needs changes for RINEX v3 !!!!!!!!!!!!!!
+
+   num_obs = 0;
+   if(file == 0) return num_obs;
+
+   if(s == 0) s = "";
+
+   len = strlen(s);
+   if(len) ++len;
+
+   ti = 0;
+   obs[0] = 0;
+   for(i=0; i<len; i++) {  // build obs list from user specified measurments
+      if(obs[0] && (s[i] == 0)) goto got_obs;  // null observation type list
+
+      if(isalpha(s[i]) || isdigit(s[i])) {    // build the next obs type string
+         if(ti >= (sizeof(obs)-1)) continue;  // obs name is too long, clip it
+         obs[ti++] = s[i];
+         obs[ti] = 0;
+      }
+      else if(obs[0]) {  // got the obs type string, parse it
+         got_obs:
+         strupr(obs);
+
+         // RINEX v2.11
+         if     (strstr(obs, "S1")) num_obs = add_obs_type(obs_type, num_obs, S1_OBS);  // signal strength
+         else if(strstr(obs, "S2")) num_obs = add_obs_type(obs_type, num_obs, S2_OBS);
+         else if(strstr(obs, "S5")) num_obs = add_obs_type(obs_type, num_obs, S5_OBS);
+         else if(strstr(obs, "S6")) num_obs = add_obs_type(obs_type, num_obs, S6_OBS);
+         else if(strstr(obs, "S7")) num_obs = add_obs_type(obs_type, num_obs, S7_OBS);
+         else if(strstr(obs, "S8")) num_obs = add_obs_type(obs_type, num_obs, S8_OBS);
+                                                                                     
+         else if(strstr(obs, "D1")) num_obs = add_obs_type(obs_type, num_obs, D1_OBS);  // doppler
+         else if(strstr(obs, "D2")) num_obs = add_obs_type(obs_type, num_obs, D2_OBS);
+         else if(strstr(obs, "D5")) num_obs = add_obs_type(obs_type, num_obs, D5_OBS);
+         else if(strstr(obs, "D6")) num_obs = add_obs_type(obs_type, num_obs, D6_OBS);
+         else if(strstr(obs, "D7")) num_obs = add_obs_type(obs_type, num_obs, D7_OBS);
+         else if(strstr(obs, "D8")) num_obs = add_obs_type(obs_type, num_obs, D8_OBS);
+                                                                                     
+         else if(strstr(obs, "C1")) num_obs = add_obs_type(obs_type, num_obs, C1_OBS);  // pseudorange
+         else if(strstr(obs, "L1")) num_obs = add_obs_type(obs_type, num_obs, L1_OBS);
+         else if(strstr(obs, "L2")) num_obs = add_obs_type(obs_type, num_obs, L2_OBS);
+         else if(strstr(obs, "L5")) num_obs = add_obs_type(obs_type, num_obs, L5_OBS);
+         else if(strstr(obs, "L6")) num_obs = add_obs_type(obs_type, num_obs, L6_OBS);
+         else if(strstr(obs, "L7")) num_obs = add_obs_type(obs_type, num_obs, L7_OBS);
+         else if(strstr(obs, "L8")) num_obs = add_obs_type(obs_type, num_obs, L8_OBS);
+                                                                                     
+         else if(strstr(obs, "P1")) num_obs = add_obs_type(obs_type, num_obs, P1_OBS);  // carrier phase
+         else if(strstr(obs, "P2")) num_obs = add_obs_type(obs_type, num_obs, P2_OBS);
+         else if(strstr(obs, "P5")) num_obs = add_obs_type(obs_type, num_obs, P5_OBS);
+         else if(strstr(obs, "P6")) num_obs = add_obs_type(obs_type, num_obs, P6_OBS);
+         else if(strstr(obs, "P7")) num_obs = add_obs_type(obs_type, num_obs, P7_OBS);
+         else if(strstr(obs, "P8")) num_obs = add_obs_type(obs_type, num_obs, P8_OBS);
+
+         // RINEX v3.03  - !!!!! These need work !!!!!
+         else if(strstr(obs, "S1C")) num_obs = add_obs_type(obs_type, num_obs, S1_OBS);  // signal strength
+         else if(strstr(obs, "S2C")) num_obs = add_obs_type(obs_type, num_obs, S2_OBS);
+         else if(strstr(obs, "S5C")) num_obs = add_obs_type(obs_type, num_obs, S5_OBS);
+         else if(strstr(obs, "S6C")) num_obs = add_obs_type(obs_type, num_obs, S6_OBS);
+         else if(strstr(obs, "S7C")) num_obs = add_obs_type(obs_type, num_obs, S7_OBS);
+         else if(strstr(obs, "S8C")) num_obs = add_obs_type(obs_type, num_obs, S8_OBS);
+                                                                                       
+         else if(strstr(obs, "D1C")) num_obs = add_obs_type(obs_type, num_obs, D1_OBS);  // doppler
+         else if(strstr(obs, "D2C")) num_obs = add_obs_type(obs_type, num_obs, D2_OBS);
+         else if(strstr(obs, "D5C")) num_obs = add_obs_type(obs_type, num_obs, D5_OBS);
+         else if(strstr(obs, "D6C")) num_obs = add_obs_type(obs_type, num_obs, D6_OBS);
+         else if(strstr(obs, "D7C")) num_obs = add_obs_type(obs_type, num_obs, D7_OBS);
+         else if(strstr(obs, "D8C")) num_obs = add_obs_type(obs_type, num_obs, D8_OBS);
+                                                                                       
+         else if(strstr(obs, "C1C")) num_obs = add_obs_type(obs_type, num_obs, C1_OBS);  // pseudorange
+         else if(strstr(obs, "C1P")) num_obs = add_obs_type(obs_type, num_obs, L1_OBS);
+         else if(strstr(obs, "C2P")) num_obs = add_obs_type(obs_type, num_obs, L2_OBS);
+         else if(strstr(obs, "C5P")) num_obs = add_obs_type(obs_type, num_obs, L5_OBS);
+         else if(strstr(obs, "C6P")) num_obs = add_obs_type(obs_type, num_obs, L6_OBS);
+         else if(strstr(obs, "C7P")) num_obs = add_obs_type(obs_type, num_obs, L7_OBS);
+         else if(strstr(obs, "C8P")) num_obs = add_obs_type(obs_type, num_obs, L8_OBS);
+                                                                                       
+         else if(strstr(obs, "L1C")) num_obs = add_obs_type(obs_type, num_obs, P1_OBS);  // carrier phase
+         else if(strstr(obs, "L2C")) num_obs = add_obs_type(obs_type, num_obs, P2_OBS);
+         else if(strstr(obs, "L5C")) num_obs = add_obs_type(obs_type, num_obs, P5_OBS);
+         else if(strstr(obs, "L6C")) num_obs = add_obs_type(obs_type, num_obs, P6_OBS);
+         else if(strstr(obs, "L7C")) num_obs = add_obs_type(obs_type, num_obs, P7_OBS);
+         else if(strstr(obs, "L8C")) num_obs = add_obs_type(obs_type, num_obs, P8_OBS);
+
+         else continue;
+
+         ++num_obs;
+         ti = 0;
+         obs[0] = 0;
+         if(num_obs >= MAX_OBS) break;
+      }
+      else obs[0] = 0;  // skip whitespace
+
+      if(s[i] == 0) break;
+   }
+
+   if(num_obs == 0) {  // build obs list from data type seen
+      if(have_range & system)       obs_type[num_obs++] = C1_OBS;
+      else if((have_phase & system) && use_rinex_cppr) {
+         obs_type[num_obs++] = C1_OBS;
+      }
+      if(have_l1_range & system)    obs_type[num_obs++] = P1_OBS;
+      if(have_l2_range & system)    obs_type[num_obs++] = P2_OBS;
+      if(have_l5_range & system)    obs_type[num_obs++] = P5_OBS;
+      if(have_l6_range & system)    obs_type[num_obs++] = P6_OBS;
+      if(have_l7_range & system)    obs_type[num_obs++] = P7_OBS;
+      if(have_l8_range & system)    obs_type[num_obs++] = P8_OBS;
+
+      if((have_phase & system) || (have_l1_phase & system)) obs_type[num_obs++] = L1_OBS;
+      if(have_l2_phase & system)    obs_type[num_obs++] = L2_OBS;
+      if(have_l5_phase & system)    obs_type[num_obs++] = L5_OBS;
+      if(have_l6_phase & system)    obs_type[num_obs++] = L6_OBS;
+      if(have_l7_phase & system)    obs_type[num_obs++] = L7_OBS;
+      if(have_l8_phase & system)    obs_type[num_obs++] = L8_OBS;
+
+      if(rcvr_type == MOTO_RCVR) ;        // doppler value is unusable for RINEX 
+      else if(rcvr_type == VENUS_RCVR) ;  // doppler value is unusable for RINEX
+      else {
+         if((have_doppler & system) || (have_l1_doppler & system)) {
+            obs_type[num_obs++] = D1_OBS;
+         }
+         if(have_l2_doppler & system)  obs_type[num_obs++] = D2_OBS;
+         if(have_l5_doppler & system)  obs_type[num_obs++] = D5_OBS;
+         if(have_l6_doppler & system)  obs_type[num_obs++] = D6_OBS;
+         if(have_l7_doppler & system)  obs_type[num_obs++] = D7_OBS;
+         if(have_l8_doppler & system)  obs_type[num_obs++] = D8_OBS;
+      }
+
+      if(have_snr & system)         obs_type[num_obs++] = S1_OBS;
+      else if(have_l1_snr & system) obs_type[num_obs++] = S1_OBS;
+      if(have_l2_snr & system)      obs_type[num_obs++] = S2_OBS;
+      if(have_l5_snr & system)      obs_type[num_obs++] = S5_OBS;
+      if(have_l6_snr & system)      obs_type[num_obs++] = S6_OBS;
+      if(have_l7_snr & system)      obs_type[num_obs++] = S7_OBS;
+      if(have_l8_snr & system)      obs_type[num_obs++] = S8_OBS;
+   }
+
+   if(rinex_fmt >= 3.0) {
+      if     (system & GPS)     sys = "G";
+      else if(system & SBAS)    sys = "S";
+      else if(system & GLONASS) sys = "R";
+      else if(system & GALILEO) sys = "E";
+      else if(system & BEIDOU)  sys = "C";
+      else                      sys = "?";
+      sprintf(out, "%s%5d", sys, num_obs);
+
+      max_obs = 13;
+      sys = "SYS / # / OBS TYPES";
+
+      len = 0;
+      for(i=0; i<num_obs; i++) {  // build the RINEX file observation list
+         // !!!!!!!! THESE ARE TEMPORARY TEST VALUES... NEED TO BE UPDATED TO REAL ONES !!!!!!!!!
+         if     (obs_type[i] == S1_OBS) { strcat(out, " S1C"); ++len; }  // sig level
+         else if(obs_type[i] == S2_OBS) { strcat(out, " S2C"); ++len; } 
+         else if(obs_type[i] == S5_OBS) { strcat(out, " S5C"); ++len; } 
+         else if(obs_type[i] == S6_OBS) { strcat(out, " S6C"); ++len; } 
+         else if(obs_type[i] == S7_OBS) { strcat(out, " S7C"); ++len; } 
+         else if(obs_type[i] == S8_OBS) { strcat(out, " S8C"); ++len; } 
+
+         else if(obs_type[i] == D1_OBS) { strcat(out, " D1C"); ++len; }  // dopple
+         else if(obs_type[i] == D2_OBS) { strcat(out, " D2C"); ++len; } 
+         else if(obs_type[i] == D5_OBS) { strcat(out, " D5C"); ++len; } 
+         else if(obs_type[i] == D6_OBS) { strcat(out, " D6C"); ++len; } 
+         else if(obs_type[i] == D7_OBS) { strcat(out, " D7C"); ++len; } 
+         else if(obs_type[i] == D8_OBS) { strcat(out, " D8C"); ++len; } 
+
+         else if(obs_type[i] == C1_OBS) { strcat(out, " C1C"); ++len; }  // pseudorange
+         else if(obs_type[i] == P1_OBS) { strcat(out, " C1P"); ++len; } 
+         else if(obs_type[i] == P2_OBS) { strcat(out, " C2P"); ++len; } 
+         else if(obs_type[i] == P5_OBS) { strcat(out, " C5P"); ++len; } 
+         else if(obs_type[i] == P6_OBS) { strcat(out, " C6P"); ++len; } 
+         else if(obs_type[i] == P7_OBS) { strcat(out, " C7P"); ++len; } 
+         else if(obs_type[i] == P8_OBS) { strcat(out, " C8P"); ++len; } 
+
+         else if(obs_type[i] == L1_OBS) { strcat(out, " L1C"); ++len; }  // carrier phase
+         else if(obs_type[i] == L2_OBS) { strcat(out, " L2C"); ++len; } 
+         else if(obs_type[i] == L5_OBS) { strcat(out, " L5C"); ++len; } 
+         else if(obs_type[i] == L6_OBS) { strcat(out, " L6C"); ++len; } 
+         else if(obs_type[i] == L7_OBS) { strcat(out, " L7C"); ++len; } 
+         else if(obs_type[i] == L8_OBS) { strcat(out, " L8C"); ++len; } 
+
+
+         if(len >= max_obs) {  // time for continuation line
+            write_rinex_line(file, out, sys); 
+            strcpy(out,"      ");
+            len = 0;
+         }
+      }
+
+      if(len) {  // flush the last observation list line
+         write_rinex_line(file, out, sys); 
+      }
+   }
+   else {
+      sprintf(out, "%6d", num_obs);
+
+      max_obs = 9;
+      sys = "# / TYPES OF OBSERV";
+
+      len = 0;
+      for(i=0; i<num_obs; i++) {  // build the RINEX file observation list
+         if     (obs_type[i] == S1_OBS) { strcat(out, "    S1"); ++len; }
+         else if(obs_type[i] == S2_OBS) { strcat(out, "    S2"); ++len; } 
+         else if(obs_type[i] == S5_OBS) { strcat(out, "    S5"); ++len; } 
+         else if(obs_type[i] == S6_OBS) { strcat(out, "    S6"); ++len; } 
+         else if(obs_type[i] == S7_OBS) { strcat(out, "    S7"); ++len; } 
+         else if(obs_type[i] == S8_OBS) { strcat(out, "    S8"); ++len; } 
+
+         else if(obs_type[i] == D1_OBS) { strcat(out, "    D1"); ++len; } 
+         else if(obs_type[i] == D2_OBS) { strcat(out, "    D2"); ++len; } 
+         else if(obs_type[i] == D5_OBS) { strcat(out, "    D5"); ++len; } 
+         else if(obs_type[i] == D6_OBS) { strcat(out, "    D6"); ++len; } 
+         else if(obs_type[i] == D7_OBS) { strcat(out, "    D7"); ++len; } 
+         else if(obs_type[i] == D8_OBS) { strcat(out, "    D8"); ++len; } 
+
+         else if(obs_type[i] == C1_OBS) { strcat(out, "    C1"); ++len; } 
+         else if(obs_type[i] == P1_OBS) { strcat(out, "    P1"); ++len; } 
+         else if(obs_type[i] == P2_OBS) { strcat(out, "    P2"); ++len; } 
+         else if(obs_type[i] == P5_OBS) { strcat(out, "    P5"); ++len; } 
+         else if(obs_type[i] == P6_OBS) { strcat(out, "    P6"); ++len; } 
+         else if(obs_type[i] == P7_OBS) { strcat(out, "    P7"); ++len; } 
+         else if(obs_type[i] == P8_OBS) { strcat(out, "    P8"); ++len; } 
+
+
+         else if(obs_type[i] == L1_OBS) { strcat(out, "    L1"); ++len; } 
+         else if(obs_type[i] == L2_OBS) { strcat(out, "    L2"); ++len; } 
+         else if(obs_type[i] == L5_OBS) { strcat(out, "    L5"); ++len; } 
+         else if(obs_type[i] == L6_OBS) { strcat(out, "    L6"); ++len; } 
+         else if(obs_type[i] == L7_OBS) { strcat(out, "    L7"); ++len; } 
+         else if(obs_type[i] == L8_OBS) { strcat(out, "    L8"); ++len; } 
+
+
+         if(len >= max_obs) {  // time for continuation line
+            write_rinex_line(file, out, sys); 
+            strcpy(out,"      ");
+            len = 0;
+         }
+      }
+
+      if(len) {  // flush the last observation list line
+         write_rinex_line(file, out, sys); 
+      }
+   }
+
+   return num_obs;
+}
+
+
+
+void get_obs_time(double jd_obs, double obs_tow)
+{
+double o_frac;
+double delta;
+static double max_delta = 0.0;
+
+   // Convert jd_obs to gregorian time values.  Since the gregorian() function
+   // can have round-off errors the the range of 0.0001 seconds we do some
+   // tom-foolery to attempt to use obs_tow value to get the seconds exactly
+   // what the receiver sent (jd_obs is used to get the rest of the date/time)
+
+   gregorian(1, jd_obs);
+
+   o_frac = obs_tow - (double) (int) obs_tow;
+   delta = fabs(g_frac - o_frac);
+   if((delta > max_delta) && (delta < 0.5)) max_delta = delta;
+   if(delta > (1.0-JD_OBS_ROUND)) delta = (1.0-delta);
+
+if(show_debug_info) sprintf(debug_text4, "g_frac:%.7f  o_frac:%.7f  delta:%.7f", g_frac,o_frac, delta);
+   if(delta < (JD_OBS_ROUND*1.0)) { // gregorian fraction is close to observation fraction
+      // if the two fractions are on each side of the 1 second threshold we
+      // cant substute the observation fraction for the gregorian fraction since
+      // that could cause the seconds value to be wrong and cause a backwards
+      // time step.
+      if((o_frac < JD_OBS_ROUND) && (g_frac > (1.0-JD_OBS_ROUND))) {
+         //  bump the year/month/day hours/minutes/seconds and use o_frac
+         gregorian(1, jd_obs+jtime(0,0,0,0.1));  // bump time past any roundoff error
+         g_frac = o_frac;
+//if(rinex_file) write_rinex_line(rinex_file, "time bump!", "COMMENT");  //rnx
+      }
+      else if((g_frac < JD_OBS_ROUND) && (o_frac > (1.0-JD_OBS_ROUND))) {
+         gregorian(1, jd_obs-jtime(0,0,0,0.1)); // do a negative time bump
+         g_frac = o_frac;
+//if(rinex_file) write_rinex_line(rinex_file, "negative time bump!", "COMMENT");  //rnx
+      }
+      else {  // it's safe to replace gregorian() value with obs_tow value
+         g_frac = o_frac; 
+      }
+   }
+if(show_debug_info) sprintf(debug_text3, "g_frac:%.7f  o_frac:%.7f  delta:%.7f  maxd:%.7f", g_frac,o_frac, delta,max_delta);
+}
+
+void write_rinex_header(FILE *file)
+{
+char *type;
+char fmt[SLEN+1];
+char core[SLEN+1];
+int mask;
+int i;
+FILE *old_log;
+int old_fmt;
+
+   // write the RINEX .OBS file header info
+   if(rinex_header_written) return;
+   obs_data_written = 0;
+   if(time_flags & TFLAGS_BAD_TIME) return;
+   if(jd_obs == 0.0) return;
+   if(first_obs) {
+      first_obs = 0;
+      return;
+   }
+
+   mask = gnss_mask;
+   if(rcvr_type == ESIP_RCVR) mask = GPS;  // only does GPS raw measurements
+
+   if     (mask == GPS)     type = "G (GPS)";
+   else if(mask == GLONASS) type = "R (GLONASS)";
+   else if(mask == SBAS)    type = "S (SBAS)";
+   else if(mask == GALILEO) type = "E (GALILEO)";
+   else if(mask == BEIDOU)  type = "C (BEIDOU)";
+   else if(have_gnss_mask)  type = "M (MIXED)";
+   else                     type = "M (MIXED)";  // "G (GPS)";
+   sprintf(out,"     %4.2f           OBSERVATION DATA    %-20.20s", rinex_fmt, type);
+   write_rinex_line(file, out, "RINEX VERSION / TYPE");
+
+   gregorian(1, jd_utc);
+   if(rinex_fmt >= 3.00) {
+      sprintf(out,          "HEATHER %-9.9s                       %04d%02d%02d %02d%02d%02d UTC", VERSION, g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+   }
+   else {
+      sprintf(out,          "HEATHER %-9.9s                       %04d%02d%02d %02d:%02d:%02dUTC", VERSION, g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+   }
+   write_rinex_line(file, out, "PGM / RUN BY / DATE"); 
+
+   if((marker_name[0] == 0) || strstr(marker_name, DEFAULT_NAME)) {  // create a marker name
+      sprintf(fmt, "%s ", unit_file_name);
+      if(mask & GPS)     strcat(fmt, "G+");
+      if(mask & SBAS)    strcat(fmt, "S+");
+      if(mask & GLONASS) strcat(fmt, "R+");
+      if(mask & GALILEO) strcat(fmt, "E+");
+      if(mask & BEIDOU)  strcat(fmt, "C+");
+//    if(mask & QZSS)    strcat(fmt, "J+");
+//    if(mask & IRNSS)   strcat(fmt, "I+");
+      i = strlen(fmt);
+      if(i) {
+         if(fmt[i-1] == '+') fmt[i-1] = ' ';
+      }
+      strupr(fmt);
+   }
+   else strcpy(fmt, marker_name);
+
+   sprintf(out, "%-20.20s", fmt);
+   write_rinex_line(file, out, "MARKER NAME");      
+
+   sprintf(out, "%-20.20s", marker_number);
+   write_rinex_line(file, out,  "MARKER NUMBER");      
+
+   sprintf(out, "%-20.20s", marker_type);
+   if(rinex_fmt >= 3.00) {
+      write_rinex_line(file, out, "MARKER TYPE");      
+   }
+
+   write_rinex_line(file, "", "OBSERVER / AGENCY");      
+
+   strcpy(fmt, unit_file_name);
+   strupr(fmt);
+   if(rcvr_type == ESIP_RCVR) {
+      sprintf(out, "ID:%-17.17s%-20.20sVER:%-4.4s", esip_model, fmt, esip_version);
+   }
+   else if(rcvr_type == NVS_RCVR) {
+      sprintf(out, "ID:%-17.17s%-20.20sFW:%-17.17s", nvs_id2, fmt, nvs_id);
+   }
+   else if(rcvr_type == TSIP_RCVR) {
+      sprintf(core, "FW:%2d.%-2d %02d %s %02d", 
+         core_major, core_minor,  core_day, months[core_month], core_year);  //!!! docs say 1900
+         core[20] = 0;
+      if(unit_name[0]) {
+         sprintf(out, "%-20.20s%-20.20s%-20.20s", core, fmt, unit_name);
+      }
+      else {
+         sprintf(out, "%-20.20s%-20.20s%-20.20s", core, fmt, "TRIMBLE TSIP");
+      }
+   }
+   else if(rcvr_type == UBX_RCVR) {
+      sprintf(out, "HW:%-17.17s%-20.20sFW:%-17.17s", ubx_hw, fmt, ubx_sw);
+   }
+   else if(rcvr_type == VENUS_RCVR) {
+      sprintf(out, "%-20.20s%-20.20s%-20.20s", venus_odm, fmt, venus_rev);
+   }
+   else if(rcvr_type == Z12_RCVR) {
+      sprintf(out, "TYPE:%-15.15s%-20.20sVER:%-4.4s %-4.4s-%-4.4s", z12_type, fmt, z12_chan_opt, z12_nav_ver,z12_chan_ver);
+   }
+   else {
+      sprintf(out, "%-20.20s%-20.20s%-20.20s", "", fmt, "");
+   }
+   write_rinex_line(file, out, "REC # / TYPE / VERS"); 
+
+   sprintf(out, "%-20.20s%-20.20s", antenna_number, antenna_type);
+   write_rinex_line(file, out, "ANT # / TYPE");        
+   sprintf(out, "  LAT:%14.9f  LON:%14.9f  ALT:%10.4f", lat*180.0/PI,lon*180.0/PI,alt), 
+   write_rinex_line(file, out,  "COMMENT"); 
+   lla_to_ecef(lat, lon, alt);
+   sprintf(out, "%14.4f%14.4f%14.4f", ecef_x,ecef_y,ecef_z), 
+   write_rinex_line(file, out,  "APPROX POSITION XYZ"); 
+
+   sprintf(out, "%14.4f%14.4f%14.4f", antenna_height, antenna_ew, antenna_ns);
+   if(rinex_fmt >= 3.0) {
+      write_rinex_line(file, out, "ANTENNA:DELTA H/E/N");
+   }
+   else {
+      write_rinex_line(file, out, "ANTENNA: DELTA H/E/N");
+   }
+   write_rinex_line(file, "     1     1", "WAVELENGTH FACT L1/2");
+
+   if(0 && mixed_obs_list[0]) {  // user specifed observations
+      mixed_num_obs = get_obs_types(file, mixed_obs_list, MIXED, &mixed_obs_type[0]);
+   }
+   else if(1) { // build observation list from data type seen
+      if(rinex_fmt >= 3.0) {
+         gps_num_obs     = get_obs_types(file, gps_obs_list,     GPS,     &gps_obs_type[0]);
+         sbas_num_obs    = get_obs_types(file, sbas_obs_list,    SBAS,    &sbas_obs_type[0]);
+         glonass_num_obs = get_obs_types(file, glonass_obs_list, GLONASS, &glonass_obs_type[0]);
+         galileo_num_obs = get_obs_types(file, galileo_obs_list, GALILEO, &galileo_obs_type[0]);
+         beidou_num_obs  = get_obs_types(file, beidou_obs_list,  BEIDOU,  &beidou_obs_type[0]);
+      }
+      else {
+         mixed_num_obs = get_obs_types(file, mixed_obs_list, MIXED, &mixed_obs_type[0]);
+      }
+   }
+   else if(USE_L2 && (rcvr_type == Z12_RCVR)) {
+///   mixed_num_obs = get_obs_types(file, "C1    L1    D1    S1    P1    P2    L2    D2    S2", MIXED, mixed_obs_type);
+      mixed_num_obs = get_obs_types(file, "L1    L2    C1    P1    P2    S1    S2", MIXED, &mixed_obs_type[0]);
+   }
+   else if(have_phase == 0) {  // (rcvr_type == ESIP_RCVR) 
+     mixed_num_obs = get_obs_types(file, "C1    D1    S1", MIXED, &mixed_obs_type[0]); // pseudorange, doppler, snr
+   }
+   else {
+      mixed_num_obs = get_obs_types(file, "C1    L1    D1    S1", MIXED, &mixed_obs_type[0]);
+   }
+
+   get_obs_time(jd_obs, obs_tow);
+   sprintf(out, "%6d%6d%6d%6d%6d%13.7f%s", g_year,g_month,g_day, g_hours,g_minutes,(double)g_seconds+g_frac, "     GPS");
+   write_rinex_line(file, out, "TIME OF FIRST OBS");
+
+   if((rinex_fmt >= 3.02) && glonass_num_obs) {  // !!!!! do this properly
+      fmt[0] = 0;
+      if(1) sprintf(fmt, " C1C %8.3f", 0.0);
+      else  sprintf(fmt, "             ");
+      strcat(out, fmt);
+
+      if(1) sprintf(fmt, " C1P %8.3f", 0.0);
+      else  sprintf(fmt, "             ");
+      strcat(out, fmt);
+
+      if(1) sprintf(fmt, " C2C %8.3f", 0.0);
+      else  sprintf(fmt, "             ");
+      strcat(out, fmt);
+
+      if(1) sprintf(fmt, " C2P %8.3f", 0.0);
+      else  sprintf(fmt, "             ");
+      strcat(out, fmt);
+      write_rinex_line(file, out, "GLONASS COD/PHS/BIS");
+   }
+
+
+   write_rinex_line(file, " ",  "COMMENT"); 
+
+   if(el_mask || amu_mask) {
+      sprintf(out, "  Elevation mask: %4.1f    Signal mask: %.1f", el_mask, amu_mask);
+      write_rinex_line(file, out,  "COMMENT"); 
+   }
+
+   if(have_tc) {
+      sprintf(out, "  Time constant: %.3f seconds", time_constant);
+      write_rinex_line(file, out,  "COMMENT"); 
+   }
+   if(have_damp) {
+      sprintf(out, "  Damping: %.3f", damping_factor);
+      write_rinex_line(file, out,  "COMMENT"); 
+   }
+   if(have_gain) {
+      sprintf(out, "  Osc EFC gain: %.3f Hz/V", osc_gain);
+      write_rinex_line(file, out,  "COMMENT"); 
+   }
+   if(have_initv) {
+      sprintf(out, "  Initial EFC voltage : %.3f V", initial_voltage);
+      write_rinex_line(file, out,  "COMMENT"); 
+   }
+   if(use_rinex_cppr) {
+      sprintf(out, "  GPS/SBAS/GALILEO L1 pseudorange derived from carrier phase data");
+      write_rinex_line(file, out,  "COMMENT"); 
+   }
+
+   rinex_header_written = 1;
+   obs_data_written = 0;
+   if(rinex_file) {
+      old_log = log_file;
+      old_fmt = log_fmt;
+
+      log_file = rinex_file;
+      log_fmt = RINEX;
+      write_log_id();
+
+      log_file = old_log;
+      log_fmt = old_fmt;
+   }
+
+   write_rinex_line(file, "", "END OF HEADER");
+
+   if(rinex_file && (file == rinex_file) && rinex_flush_mode) {
+     fflush(file);
+   }
+}
+
+static double last_jd_obs = 0.0;
+
+int write_rinex_obs_header(FILE *file, int no_obs_output)
+{
+int i;
+int no_obs;
+int prn;
+int p;
+char gnss;
+int frac;
+int col_count;
+int out_count;
+static int last_hr = (-1);
+static int last_min = (-1);
+static int last_sec = (-1);
+static double last_frac;
+static int last_year = 0, last_month = 0,last_day = (-1);
+static int last_hours = 0, last_minutes = 0 ,last_seconds = 0;
+
+   // write observation data header for tracked sats
+//NEW_RCVR
+
+   if(file == 0) return 0;
+   if(rinex_header_written == 0) return 0;
+
+   i = 0;
+   for(prn=1; prn<MAX_PRN; prn++) {  // count number of tracked sats
+      if(good_raw(prn) == 0) continue;
+      ++i;
+   }
+// if(i == 0) return 0;
+
+   get_obs_time(jd_obs, obs_tow);
+
+   if(g_frac >= 1.0) {
+      goto jd_fault;
+   }
+   frac = (int) (g_frac * 1.0E7);
+
+   if(last_hr != g_hours) ;
+   else if(last_min != g_minutes) ;
+   else if(last_sec != g_seconds) ;
+   else if(last_frac != g_frac) ;
+   else if(rinex_fix) {
+      sprintf(out, "#! skipped duplicate RINEX observation timestamp!");
+      write_rinex_line(file, out, "COMMENT");
+
+      jd_fault:
+      gregorian(1, last_jd_obs);
+      if(debug_file) fprintf(debug_file, "#! skipped duplicate RINEX observation:  last: %02d:%02d:%02d g_frac:%f\n", g_hours,g_minutes,g_seconds, g_frac);
+      gregorian(1, jd_obs);
+      if(debug_file) fprintf(debug_file, "                                         this: %02d:%02d:%02d g_frac:%f\n", g_hours,g_minutes,g_seconds, g_frac);
+      return 0;
+   }
+
+   last_hr = g_hours;     // another duplicate data block prevention check
+   last_min = g_minutes;
+   last_sec = g_seconds;
+   last_frac = g_frac;
+
+
+#define GOOD_LLI ' '  // '4'
+#define BAD_LLI  '1'  // '5'
+#define P_MODE   '4'  // tracking P code
+
+   if(have_l1_phase || have_l2_phase || have_l5_phase || have_l6_phase || have_l7_phase || have_l8_phase || 
+      have_l1_doppler || have_l2_doppler || have_l5_doppler || have_l6_doppler || have_l7_doppler || have_l8_doppler ||
+      have_l1_range || have_l2_range || have_l5_range || have_l6_range || have_l7_range || have_l8_range) {  // dual freq observations
+      rinex_obs_written = 1;  // OPUS does not like comments within observation records
+   }
+
+   if(rinex_fmt >= 3.0) { // observation header
+      fprintf(file, "> %04d %02d %02d %02d %02d%11.7f%3d%3d\n", g_year,g_month,g_day, g_hours,g_minutes,(double)g_seconds+g_frac, 0, i);
+      if(no_obs_output) return 2;
+      no_obs = 0;
+   }
+   else {
+      if(no_obs_output) i = 0;
+      fprintf(file,  " %02d %02d %02d %02d %02d%11.7f%3d%3d", g_year%100,g_month,g_day, g_hours,g_minutes,(double)g_seconds+g_frac, 0, i);
+      if(no_obs_output) {
+         fprintf(file, "\n");
+         return 2;
+      }
+
+      no_obs = 1;
+      col_count = 0;
+      out_count = 0;
+      for(prn=1; prn<MAX_PRN; prn++) {  // output list of sats in the observation
+         gnss = good_raw(prn);
+         if(gnss == 0) continue;
+         no_obs = 0;
+
+         p = rinex_prn(prn);  // convert receiver PRN number to RINEX prn value
+
+         fprintf(file, "%c%02d", gnss, p);
+         ++col_count;
+         ++out_count;
+         if(out_count == i) break;
+         if((i > 12) && (col_count == 12)) {  // we need a continuation line
+            fprintf(file, "\n                                ");
+            col_count = 0;
+         }
+      }
+      if(col_count || no_obs) fprintf(file, "\n");
+   }
+
+   return 1;
+}
+
+
+double rinex_cppr(int prn, double range, double carrier)
+{
+double cp_range;
+int gnss;
+
+  // convert carrier phase to pseudorange
+  // (testing shows this actually makes things worse)
+  if(use_rinex_cppr == 0) return range;
+  if(have_phase == 0) return range;
+
+  gnss = rinex_gnss(prn);
+  if(gnss & GPS) ;           // sats in 1575.426 Mhz L1
+  else if(gnss & SBAS) ;
+  else if(gnss & GALILEO) ;
+  else return range;
+
+  cp_range = carrier * ((LIGHTSPEED*1000.0)/1575.42E6);
+if(0 &&debug_file) fprintf(debug_file, "cppr(%d,%f): %f -> %f\n", prn,carrier, range,cp_range);
+  return cp_range;
+}
+
+
+void write_rinex_obs_data(FILE *file)
+{
+double phase, phase1, phase2, phase5, phase6, phase7, phase8;
+double range, range1, range2, range5, range6, range7, range8;
+double doppler, doppler1, doppler2, doppler5, doppler6, doppler7, doppler8;
+double snr, snr1, snr2, snr5, snr6, snr7, snr8;
+int lli, lli1, lli2, lli5, lli6, lli7, lli8;  // loss-of-lock indicator
+int first_obs;
+int prn;
+int i, j;
+char buf[SLEN+1];
+int *obs_type;
+int obs_count;
+int count;
+
+   // write the RAW data observations
+   if(rinex_header_written == 0) return;
+
+   j = 0;
+   for(prn=1; prn<MAX_PRN; prn++) {  // output observation data for tracked sats
+      if(good_raw(prn) == 0) continue;
+
+      // validate values
+      lli = lli1 = lli2 = lli5 = lli6 = lli7 = lli8 = GOOD_LLI;
+      phase = phase1 = phase2 = phase5 = phase6 = phase7 = phase8 = 0.0;
+      range = range1 = range2 = range5 = range6 = range7 = range8 = 0.0;
+      doppler = doppler1 = doppler2 = doppler5 = doppler6 = doppler7 = doppler8 = 0.0;
+      snr = snr1 = snr2 = snr5 = snr6 = snr7 = snr8 = 0.0;
+
+      if(have_phase) {  // make sure pseudo range is valid
+         count = 0;
+         phase = sat[prn].code_phase;
+         if(RAW_CHANGES && (phase == sat[prn].last_code_phase)) phase = 0.0;
+         sat[prn].last_code_phase = sat[prn].code_phase;
+         while(phase >= 1.0E10) {
+            phase -= 1.0E10;
+            lli = BAD_LLI;
+            if(++count > 10) {
+               phase = 0.0;
+               break;
+            }
+         }
+         count = 0;
+         while(phase <= (-1.0E10)) {
+            phase += 1.0E10;
+            lli = BAD_LLI;
+            if(++count > 10) {
+               phase = 0.0;
+               break;
+            }
+         }
+         if(phase >= 1.0E10) phase = 0.0;
+         else if(phase <= -1.0E10) phase = 0.0;
+if(sat[prn].ca_lli & (LOCK_LOST | CYCLE_SLIP)) lli = BAD_LLI;
+      }
+
+
+      if(have_range || (use_rinex_cppr && have_phase)) {
+         range = sat[prn].range;
+         if(RAW_CHANGES && (range == sat[prn].last_range)) range = 0.0;
+         sat[prn].last_range = sat[prn].range;
+         if(range < 0.0) range = 0.0;
+         else if(range >= 1.0E9) range = 0.0;
+         if(use_rinex_cppr && have_phase) {  // derive pseudorange from carrier phase data
+            range = rinex_cppr(prn, range, phase);
+         }
+      }
+
+      if(have_doppler) {
+         doppler = sat[prn].doppler;
+         if(RAW_CHANGES && (doppler == sat[prn].last_doppler)) doppler = 0.0;
+         if(rcvr_type == MOTO_RCVR) doppler = 0.0;  // does not output usable doppler
+         sat[prn].last_doppler = sat[prn].doppler;
+         if(doppler <= -100000.0) doppler = 0.0;
+         else if(doppler >= 100000.0) doppler = 0.0;
+      }
+
+      snr = sat[prn].sig_level;
+      if((snr < 0.0) || (snr >= 100.0)) snr = 0;
+
+
+
+      if(have_l1_phase) {  // make sure pseudo range is valid
+         count = 0;
+         phase1 = sat[prn].l1_code_phase;
+         if(RAW_CHANGES && (phase1 == sat[prn].last_l1_code_phase)) phase1 = 0.0;
+         sat[prn].last_l1_code_phase = sat[prn].l1_code_phase;
+         while(phase1 >= 1.0E10) {
+            phase1 -= 1.0E10;
+            lli1 = BAD_LLI;
+            if(++count > 10) {
+               phase1 = 0.0;
+               break;
+            }
+         }
+         count = 0;
+         while(phase1 <= (-1.0E10)) {
+            phase1 += 1.0E10;
+            lli1 = BAD_LLI;
+            if(++count > 10) {
+               phase1 = 0.0;
+               break;
+            }
+         }
+         if(phase1 >= 1.0E10) phase1 = 0.0;
+         else if(phase1 <= -1.0E10) phase1 = 0.0;
+if(sat[prn].l1_lli & (LOCK_LOST | CYCLE_SLIP | Z_LOSS)) lli1 = BAD_LLI;
+      }
+
+      if(have_l1_range) {
+         range1 = sat[prn].l1_range;
+         if(RAW_CHANGES && (range1 == sat[prn].last_l1_range)) range1 = 0.0;
+         sat[prn].last_l1_range = sat[prn].l1_range;
+         if(range1 < 0.0) range1 = 0.0;
+         else if(range1 >= 1.0E9) range1 = 0.0;
+      }
+
+      if(have_l1_doppler) {
+         doppler1 = sat[prn].l1_doppler;
+         if(RAW_CHANGES && (doppler1 == sat[prn].last_l1_doppler)) doppler1 = 0.0;
+         sat[prn].last_l1_doppler = sat[prn].l1_doppler;
+         if(doppler1 <= -100000.0) doppler1 = 0.0;
+         else if(doppler1 >= 100000.0) doppler1 = 0.0;
+      }
+
+      snr1 = sat[prn].l1_sig_level;
+      if((snr1 < 0.0) || (snr1 >= 100.0)) snr2 = 0;
+
+
+      if(have_l2_phase) {  // make sure pseudo range is valid
+         count = 0;
+         phase2 = sat[prn].l2_code_phase;
+         if(RAW_CHANGES && (phase2 == sat[prn].last_l2_code_phase)) phase2 = 0.0;
+         sat[prn].last_l2_code_phase = sat[prn].l2_code_phase;
+         while(phase2 >= 1.0E10) {
+            phase2 -= 1.0E10;
+            lli2 = BAD_LLI;
+            if(++count > 10) {
+               phase2 = 0.0;
+               break;
+            }
+         }
+         count = 0;
+         while(phase2 <= (-1.0E10)) {
+            phase2 += 1.0E10;
+            lli2 = BAD_LLI;
+            if(++count > 10) {
+               phase2 = 0.0;
+               break;
+            }
+         }
+         if(phase2 >= 1.0E10) phase2 = 0.0;
+         else if(phase2 <= -1.0E10) phase2 = 0.0;
+if(sat[prn].l2_lli & (LOCK_LOST | CYCLE_SLIP | Z_LOSS)) lli2 = BAD_LLI;
+if(sat[prn].l2_lli & P_TRACK) {
+   if(lli2 == GOOD_LLI) lli2 = P_MODE;
+   else if(lli2 == BAD_LLI) lli2 = '5';  // toots
+}
+      }
+
+      if(have_l2_range) {
+         range2 = sat[prn].l2_range;
+         if(RAW_CHANGES && (range2 == sat[prn].last_l2_range)) range2 = 0.0;
+         sat[prn].last_l2_range = sat[prn].l2_range;
+         if(range2 < 0.0) range2 = 0.0;
+         else if(range2 >= 1.0E9) range2 = 0.0;
+      }
+
+      if(have_l2_doppler) {
+         doppler2 = sat[prn].l2_doppler;
+         if(RAW_CHANGES && (doppler2 == sat[prn].last_l2_doppler)) doppler2 = 0.0;
+         sat[prn].last_l2_doppler = sat[prn].l2_doppler;
+         if(doppler2 <= -100000.0) doppler2 = 0.0;
+         else if(doppler2 >= 100000.0) doppler2 = 0.0;
+      }
+
+      snr2 = sat[prn].l2_sig_level;
+      if((snr2 < 0.0) || (snr2 >= 100.0)) snr2 = 0;
+
+      if(rcvr_type == Z12_RCVR) { // undo SNR scaling
+         snr  *= Z12_SNR_SCALE;
+         snr1 *= Z12_SNR_SCALE;
+         snr2 *= Z12_SNR_SCALE;
+      }
+
+
+
+      if(have_l5_phase) {  // make sure pseudo range is valid
+         count = 0;
+         phase5 = sat[prn].l5_code_phase;
+         if(RAW_CHANGES && (phase5 == sat[prn].last_l5_code_phase)) phase5 = 0.0;
+         sat[prn].last_l5_code_phase = sat[prn].l5_code_phase;
+         while(phase5 >= 1.0E10) {
+            phase5 -= 1.0E10;
+            lli5 = BAD_LLI;
+            if(++count > 10) {
+               phase5 = 0.0;
+               break;
+            }
+         }
+         count = 0;
+         while(phase5 <= (-1.0E10)) {
+            phase5 += 1.0E10;
+            lli5 = BAD_LLI;
+            if(++count > 10) {
+               phase5 = 0.0;
+               break;
+            }
+         }
+         if(phase5 >= 1.0E10) phase5 = 0.0;
+         else if(phase5 <= -1.0E10) phase5 = 0.0;
+if(sat[prn].l5_lli & (LOCK_LOST | CYCLE_SLIP | Z_LOSS)) lli5 = BAD_LLI;
+      }
+
+      if(have_l5_range) {
+         range5 = sat[prn].l5_range;
+         if(RAW_CHANGES && (range5 == sat[prn].last_l5_range)) range5 = 0.0;
+         sat[prn].last_l5_range = sat[prn].l5_range;
+         if(range5 < 0.0) range5 = 0.0;
+         else if(range5 >= 1.0E9) range5 = 0.0;
+      }
+
+      if(have_l5_doppler) {
+         doppler5 = sat[prn].l5_doppler;
+         if(RAW_CHANGES && (doppler5 == sat[prn].last_l5_doppler)) doppler5 = 0.0;
+         sat[prn].last_l5_doppler = sat[prn].l5_doppler;
+         if(doppler5 <= -100000.0) doppler5 = 0.0;
+         else if(doppler5 >= 100000.0) doppler5 = 0.0;
+      }
+
+      snr5 = sat[prn].l5_sig_level;
+      if((snr5 < 0.0) || (snr5 >= 100.0)) snr5 = 0;
+
+
+
+      if(have_l6_phase) {  // make sure pseudo range is valid
+         count = 0;
+         phase6 = sat[prn].l6_code_phase;
+         if(RAW_CHANGES && (phase6 == sat[prn].last_l6_code_phase)) phase6 = 0.0;
+         sat[prn].last_l6_code_phase = sat[prn].l6_code_phase;
+         while(phase6 >= 1.0E10) {
+            phase6 -= 1.0E10;
+            lli6 = BAD_LLI;
+            if(++count > 10) {
+               phase6 = 0.0;
+               break;
+            }
+         }
+         count = 0;
+         while(phase6 <= (-1.0E10)) {
+            phase6 += 1.0E10;
+            lli6 = BAD_LLI;
+            if(++count > 10) {
+               phase6 = 0.0;
+               break;
+            }
+         }
+         if(phase6 >= 1.0E10) phase6 = 0.0;
+         else if(phase6 <= -1.0E10) phase6 = 0.0;
+if(sat[prn].l6_lli & (LOCK_LOST | CYCLE_SLIP | Z_LOSS)) lli6 = BAD_LLI;
+      }
+
+      if(have_l6_range) {
+         range6 = sat[prn].l6_range;
+         if(RAW_CHANGES && (range6 == sat[prn].last_l6_range)) range6 = 0.0;
+         sat[prn].last_l6_range = sat[prn].l6_range;
+         if(range6 < 0.0) range6 = 0.0;
+         else if(range6 >= 1.0E9) range6 = 0.0;
+      }
+
+      if(have_l6_doppler) {
+         doppler6 = sat[prn].l6_doppler;
+         if(RAW_CHANGES && (doppler6 == sat[prn].last_l6_doppler)) doppler6 = 0.0;
+         sat[prn].last_l6_doppler = sat[prn].l6_doppler;
+         if(doppler6 <= -100000.0) doppler6 = 0.0;
+         else if(doppler6 >= 100000.0) doppler6 = 0.0;
+      }
+
+      snr6 = sat[prn].l6_sig_level;
+      if((snr6 < 0.0) || (snr6 >= 100.0)) snr6 = 0;
+
+
+
+      if(have_l7_phase) {  // make sure pseudo range is valid
+         count = 0;
+         phase7 = sat[prn].l7_code_phase;
+         if(RAW_CHANGES && (phase7 == sat[prn].last_l7_code_phase)) phase7 = 0.0;
+         sat[prn].last_l7_code_phase = sat[prn].l7_code_phase;
+         while(phase7 >= 1.0E10) {
+            phase7 -= 1.0E10;
+            lli7 = BAD_LLI;
+            if(++count > 10) {
+               phase7 = 0.0;
+               break;
+            }
+         }
+         count = 0;
+         while(phase7 <= (-1.0E10)) {
+            phase7 += 1.0E10;
+            lli7 = BAD_LLI;
+            if(++count > 10) {
+               phase7 = 0.0;
+               break;
+            }
+         }
+         if(phase7 >= 1.0E10) phase7 = 0.0;
+         else if(phase7 <= -1.0E10) phase7 = 0.0;
+if(sat[prn].l7_lli & (LOCK_LOST | CYCLE_SLIP | Z_LOSS)) lli7 = BAD_LLI;
+      }
+
+      if(have_l7_range) {
+         range7 = sat[prn].l7_range;
+         if(RAW_CHANGES && (range7 == sat[prn].last_l7_range)) range7 = 0.0;
+         sat[prn].last_l7_range = sat[prn].l7_range;
+         if(range7 < 0.0) range7 = 0.0;
+         else if(range7 >= 1.0E9) range7 = 0.0;
+      }
+
+      if(have_l7_doppler) {
+         doppler7 = sat[prn].l7_doppler;
+         if(RAW_CHANGES && (doppler7 == sat[prn].last_l7_doppler)) doppler7 = 0.0;
+         sat[prn].last_l7_doppler = sat[prn].l7_doppler;
+         if(doppler7 <= -100000.0) doppler7 = 0.0;
+         else if(doppler7 >= 100000.0) doppler7 = 0.0;
+      }
+
+      snr7 = sat[prn].l7_sig_level;
+      if((snr7 < 0.0) || (snr7 >= 100.0)) snr7 = 0;
+
+
+
+      if(have_l8_phase) {  // make sure pseudo range is valid
+         count = 0;
+         phase8 = sat[prn].l8_code_phase;
+         if(RAW_CHANGES && (phase8 == sat[prn].last_l8_code_phase)) phase8 = 0.0;
+         sat[prn].last_l8_code_phase = sat[prn].l8_code_phase;
+         while(phase8 >= 1.0E10) {
+            phase8 -= 1.0E10;
+            lli8 = BAD_LLI;
+            if(++count > 10) {
+               phase8 = 0.0;
+               break;
+            }
+         }
+         count = 0;
+         while(phase8 <= (-1.0E10)) {
+            phase8 += 1.0E10;
+            lli8 = BAD_LLI;
+            if(++count > 10) {
+               phase8 = 0.0;
+               break;
+            }
+         }
+         if(phase8 >= 1.0E10) phase8 = 0.0;
+         else if(phase8 <= -1.0E10) phase8 = 0.0;
+if(sat[prn].l8_lli & (LOCK_LOST | CYCLE_SLIP | Z_LOSS)) lli8 = BAD_LLI;
+      }
+
+      if(have_l8_range) {
+         range8 = sat[prn].l8_range;
+         if(RAW_CHANGES && (range8 == sat[prn].last_l8_range)) range8 = 0.0;
+         sat[prn].last_l8_range = sat[prn].l8_range;
+         if(range8 < 0.0) range8 = 0.0;
+         else if(range8 >= 1.0E9) range8 = 0.0;
+      }
+
+      if(have_l8_doppler) {
+         doppler8 = sat[prn].l8_doppler;
+         if(RAW_CHANGES && (doppler8 == sat[prn].last_l8_doppler)) doppler8 = 0.0;
+         sat[prn].last_l8_doppler = sat[prn].l8_doppler;
+         if(doppler8 <= -100000.0) doppler8 = 0.0;
+         else if(doppler8 >= 100000.0) doppler8 = 0.0;
+      }
+
+      snr8 = sat[prn].l8_sig_level;
+      if((snr8 < 0.0) || (snr8 >= 100.0)) snr8 = 0;
+
+
+      // output the observation record  
+
+      out[0] = 0;
+      if(rinex_fmt >= 3.0) {
+         if(gps_sat(prn)) {
+            obs_type = &gps_obs_type[0];
+            count = gps_num_obs;
+         }
+         else if(sbas_sat(prn)) {
+            obs_type = &sbas_obs_type[0];
+            count = sbas_num_obs;
+         }
+         else if(glonass_sat(prn)) {
+            obs_type = &glonass_obs_type[0];
+            count = glonass_num_obs;
+         }
+         else if(galileo_sat(prn)) {
+            obs_type = &galileo_obs_type[0];
+            count = galileo_num_obs;
+         }
+         else if(beidou_sat(prn)) {
+            obs_type = &beidou_obs_type[0];
+            count = beidou_num_obs;
+         }
+      }
+      else {
+         obs_type = &mixed_obs_type[0];
+         count = mixed_num_obs;
+      }
+
+      obs_count = 0;
+      first_obs = 1;
+      for(i=0; i<count; i++) {  // ouput the observation values
+         // signal level
+         if((rinex_fmt >= 3.0) && (obs_count == 0)) { // RINEX v3 doesn't have continuation lines
+            if(first_obs) fprintf(file, "%c%02d",  good_raw(prn), rinex_prn(prn));
+            else          fprintf(file, "   ");
+            first_obs = 0;
+         }
+
+         // output the obervation values
+         if(obs_type[i] == S1_OBS) {
+            strcpy(buf, "                ");
+            if(snr1 > 0.0)     sprintf(buf, "%14.3f  ", snr1);
+            else if(snr > 0.0) sprintf(buf, "%14.3f  ", snr);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == S2_OBS) {
+            strcpy(buf, "                ");
+            if(snr2 > 0.0)     sprintf(buf, "%14.3f  ", snr2);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == S5_OBS) {
+            strcpy(buf, "                ");
+            if(snr5 > 0.0)     sprintf(buf, "%14.3f  ", snr5);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == S6_OBS) {
+            strcpy(buf, "                ");
+            if(snr6 > 0.0)     sprintf(buf, "%14.3f  ", snr6);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == S7_OBS) {
+            strcpy(buf, "                ");
+            if(snr7 > 0.0)     sprintf(buf, "%14.3f  ", snr7);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == S8_OBS) {
+            strcpy(buf, "                ");
+            if(snr8 > 0.0)     sprintf(buf, "%14.3f  ", snr8);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+
+         // doppler
+         if(obs_type[i] == D1_OBS) {
+            strcpy(buf, "                ");
+            if(doppler1)      sprintf(buf, "%14.3f  ", doppler1);
+            else if(doppler)  sprintf(buf, "%14.3f  ", doppler);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == D2_OBS) {
+            strcpy(buf, "                ");
+            if(doppler2) sprintf(buf, "%14.3f  ", doppler2);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == D5_OBS) {
+            strcpy(buf, "                ");
+            if(doppler5) sprintf(buf, "%14.3f  ", doppler5);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == D6_OBS) {
+            strcpy(buf, "                ");
+            if(doppler6) sprintf(buf, "%14.3f  ", doppler6);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == D7_OBS) {
+            strcpy(buf, "                ");
+            if(doppler7) sprintf(buf, "%14.3f  ", doppler7);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == D8_OBS) {
+            strcpy(buf, "                ");
+            if(doppler8) sprintf(buf, "%14.3f  ", doppler8);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+
+
+         // pseudorange
+         if(obs_type[i] == C1_OBS) {
+            strcpy(buf, "                ");
+            if(range) sprintf(buf, "%14.3f  ", range);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == P1_OBS) {
+            strcpy(buf, "                ");
+            if(range1 && USE_L2) sprintf(buf, "%14.3f  ", range1);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == P2_OBS) {
+            strcpy(buf, "                ");
+            if(range2 && USE_L2) sprintf(buf, "%14.3f  ", range2);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == P5_OBS) {
+            strcpy(buf, "                ");
+            if(range5 && USE_L5) sprintf(buf, "%14.3f  ", range5);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == P6_OBS) {
+            strcpy(buf, "                ");
+            if(range6 && USE_L6) sprintf(buf, "%14.3f  ", range6);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == P7_OBS) {
+            strcpy(buf, "                ");
+            if(range7 && USE_L7) sprintf(buf, "%14.3f  ", range7);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == P8_OBS) {
+            strcpy(buf, "                ");
+            if(range8 && USE_L8) sprintf(buf, "%14.3f  ", range8);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+
+         // carrier phase
+         if(obs_type[i] == L1_OBS) {
+            strcpy(buf, "                ");
+            if(phase1 && USE_L2) sprintf(buf, "%14.3f%c ", phase1,lli1);
+            else if(phase)       sprintf(buf, "%14.3f%c ", phase,lli);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == L2_OBS) {
+            strcpy(buf, "                ");
+            if(phase2 && USE_L2) sprintf(buf, "%14.3f%c ", phase2,lli2);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == L5_OBS) {
+            strcpy(buf, "                ");
+            if(phase5 && USE_L5) sprintf(buf, "%14.3f%c ", phase5,lli5);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == L6_OBS) {
+            strcpy(buf, "                ");
+            if(phase6 && USE_L6) sprintf(buf, "%14.3f%c ", phase6,lli6);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == L7_OBS) {
+            strcpy(buf, "                ");
+            if(phase7 && USE_L7) sprintf(buf, "%14.3f%c ", phase7,lli7);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+         if(obs_type[i] == L8_OBS) {
+            strcpy(buf, "                ");
+            if(phase8 && USE_L8) sprintf(buf, "%14.3f%c ", phase8,lli8);
+            buf[16] = 0;
+            add_obs_val(file, buf, &obs_count);
+         }
+      }
+
+      if(obs_count) fprintf(file, "\n");
+   }
+
+   if(log_flush_mode && file && (file == log_file)) fflush(file);
+   if(rinex_flush_mode && file && (file == rinex_file)) fflush(file);
+}
+
+void write_rinex_obs(FILE *file)
+{
+double delta;
+double skipped_jd;
+double old_obs;
+int count;
+
+   if(jd_obs == last_jd_obs) return;  // raw data has not updated
+   if(rinex_header_written == 0) return;
+   skipped_jd = last_jd_obs;
+
+   delta = jd_obs - last_jd_obs;
+   delta = delta - (double) (int) delta;
+   delta *= 24.0*60.0*60.0;
+   if(1 && have_raw_rate && rinex_fix && obs_data_written && last_jd_obs && (delta > (((double) raw_msg_rate) * 1.10))) {  // rnx3
+      // time stamp skipped, output null observation headers for missing data
+      old_obs = jd_obs;
+      count = 0;
+      while(skipped_jd < (old_obs-jtime(0,0,raw_msg_rate,JD_OBS_ROUND))) {  // output dummy obs headers
+         skipped_jd += jtime(0,0,0, (double) raw_msg_rate);
+         jd_obs = skipped_jd;
+write_rinex_line(file, "#! missing observation", "COMMENT");  //rnx3
+         write_rinex_obs_header(file, 1);
+         if(++count > (raw_msg_rate*100)) break;  // prevent runaway loop
+      }
+      jd_obs = old_obs;
+   }
+
+   if(write_rinex_obs_header(file, 0)) {
+      write_rinex_obs_data(file);
+   }
+
+   last_jd_obs = jd_obs;
+}
+
 
 
 //
@@ -3000,28 +9129,6 @@ char *dst_list[] = {  // start: day_count,day_of_week number,start_month,
    custom_dst           // dst zone 5 = custom zone definition goes here
 };
 
-int dim[] = {   // days in the month
-   0,
-   31,   //jan
-   28,   //feb
-   31,   //mar
-   30,   //apr
-   31,   //may
-   30,   //jun
-   31,   //jul
-   31,   //aug
-   30,   //sep
-   31,   //oct
-   30,   //nov
-   31    //dec
-};
-
-char *months[] = {   /* convert month to its ASCII abbreviation */
-   "???",
-   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-};
-
 int leap_year(int year)
 {
    if(year % 4) return 0;        // not a leap year
@@ -3031,11 +9138,11 @@ int leap_year(int year)
    return 1;
 }
 
-void init_dsm()
+void init_dsm(int year)
 {
 int month;
 
-   // days to start of month
+   // days to start of month (and days in month)
    dsm[0]  = 0;
    dsm[1]  = 0;         // Jan
    dsm[2]  = 0+31;      // Feb
@@ -3052,11 +9159,12 @@ int month;
 
    dim[2] = 28;
 
-   if(leap_year(this_year)) {
+   if(leap_year(year)) {
       for(month=2; month<=12; month++) dsm[month] += 1;
       dim[2] += 1;
    }
 }
+
 
 u08 day_of_week(int d, int m, int y)      /* 0=Sunday  1=Monday ... */
 {
@@ -3072,6 +9180,7 @@ int sundays;
 int d;
 
    sundays = 0;
+   month = fix_month(month);
    if(nth < 0) {  // nth day of week from end of month
       nth = 0 - nth;
       for(d=dim[month]; d>=1; d--) {
@@ -3096,6 +9205,7 @@ int d;
 void bump_time(void)
 {
   // add one second to current time value
+  month = fix_month(month);
   if(++seconds >= 60) {
      seconds = 0;
      if(++minutes >= 60) {
@@ -3115,7 +9225,7 @@ void bump_time(void)
 }
 
 
-void gregorian(double jd)
+void gregorian(int no_tweak, double jd)
 {
 long z;
 long w;
@@ -3131,7 +9241,7 @@ int i;
 
    tweak = 0.0;  // used to compensate for subtle round-off errors;
    for(i=0; i<2; i++) {
-      if(tweak) jd += jtime(0,0,0, tweak);  // tweak prevent round-down errors
+      if(tweak) jd += jtime(0,0,0, tweak);  // tweak time to prevent round-down errors
 
       z = (long) (jd + 0.50);
       w = (long) (((double) z - 1867216.25) / 36524.25);
@@ -3150,10 +9260,10 @@ int i;
       if(g_month < 3) g_year = (int) (c - 4715);
       else            g_year = (int) (c - 4716);
 
-      t = jd - jdate(g_year,g_month,g_day);
-      t *= 24.0;
+      t = jd - jdate(g_year,g_month,g_day); 
 
-      g_hours = (int) t;         // convert decimal hours to hh:mm:ss
+      t *= 24.0;          // convert fractional day to hours
+      g_hours = (int) t;  // convert decimal hours to hh:mm:ss
 
       t = (t - g_hours);
       g_minutes = (int) (t * 60.0);
@@ -3162,7 +9272,9 @@ int i;
       g_seconds = (int) (t * 60.0);
 
       g_frac = (t * 60.0) - g_seconds;
-      if(g_frac >= 0.999) tweak += 0.001;
+
+      if(no_tweak) return;
+      else if(g_frac >= 0.999) tweak += 0.001;
       else break;
    }
 
@@ -3204,7 +9316,7 @@ double h;
 
    // return time in Julian days
 
-   h = ((double) hh) + (((double) mm)/60.0) + ((((double) ss)+frac)/3600.0);
+   h = ((double) hh) + (((double) mm)/60.0) + ((((double) ss)+frac)/(60.0*60.0));
    return (h / 24.0);
 }
 
@@ -3363,11 +9475,10 @@ double t, p, w, EpsMeanDeg;
 
 int dst_disabled();
 
-void calc_dst_times(char *s)
+void calc_dst_times(int yy, char *s)
 {
 int start_n, end_n;
 int start_dow, end_dow;
-int yy;
 int no_dst;
 
    // calculate when daylight savings time starts and ends
@@ -3409,27 +9520,27 @@ int no_dst;
    }
 
 // yy = pri_year;
-   yy = this_year;
+// yy = this_year;
    dst_start_day = nth_dow_in(start_n, start_dow, dst_start_month, yy);
    dst_end_day   = nth_dow_in(end_n,   end_dow,   dst_end_month,   yy);
 
    dst_start_jd = jdate(yy,dst_start_month,dst_start_day) + jtime(dst_hour,0,0,0.0) - tz_adjust;
-   dst_end_jd = jdate(yy,dst_end_month,dst_end_day) + jtime(dst_hour,0,0,0.0) - tz_adjust;
+// dst_end_jd = jdate(yy,dst_end_month,dst_end_day) + jtime(dst_hour,0,0,0.0) - tz_adjust;
+   dst_end_jd = jdate(yy,dst_end_month,dst_end_day) + jtime(dst_hour+1,0,0,0.0) - tz_adjust;
    dst_ofs = dst_offset();
    jd_local = jd_utc + time_zone() + jtime(0,0,0,TSX_TWEAK);
-//gregorian(dst_start_jd);
-//sprintf(debug_text2, "dst start: %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
-//gregorian(dst_end_jd);
-//sprintf(debug_text3, "dst end:   %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
-//sprintf(debug_text, "dst ofs:%d", dst_ofs);
-//BEEP(555);
+///gregorian(0, dst_start_jd);
+///sprintf(debug_text2, "dst start: %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+///gregorian(0, dst_end_jd);
+///sprintf(debug_text3, "dst end:   %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+///sprintf(debug_text, "dst ofs:%d", dst_ofs);
 
    #ifdef GREET_STUFF
       setup_calendars(2);   // recalc calendars for the new time zone
    #endif
 
-//sprintf(plot_title, "DST(%s): %02d/%02d .. (%s) %02d/%02d  invert=%d -> %d.  area=%d: %s", 
-//  dst_string, dst_start_month, dst_start_day, std_string, dst_end_month, dst_end_day, down_under, dst_offset(), dst_area, dst_list[dst_area]);
+///sprintf(debug_text6, "DST(%s): %02d/%02d .. (%s) %02d/%02d  invert=%d -> %d.  area=%d: %s", 
+///  dst_string, dst_start_month, dst_start_day, std_string, dst_end_month, dst_end_day, down_under, dst_offset(), dst_area, dst_list[dst_area]);
 }
 
 int dst_disabled()
@@ -3469,7 +9580,7 @@ int after_switch_hour;
    }
 
    // see if it is before dst start time
-   gregorian(jd_local);
+   gregorian(0, jd_local);
 //sprintf(debug_text,  "local:%04d/%02d/%02d %02d:", g_year,g_month,g_day, g_hours);
 //sprintf(debug_text2, "start:%04d/%02d/%02d %02d:", g_year,dst_start_month,dst_start_day,before_switch_hour);
 //sprintf(debug_text3, "end:  %04d/%02d/%02d %02d:", g_year,dst_end_month,dst_end_day,after_switch_hour);
@@ -3498,20 +9609,22 @@ int after_switch_hour;
          return down_under; 
       }
       else if(g_day == dst_end_day) {
-         if(g_hours >= after_switch_hour) {
-///sprintf(debug_text2, "x6  gh:%d  ash:%d", g_hours,after_switch_hour);
+         if(g_hours > after_switch_hour) {
+//sprintf(debug_text4, "x6  gh:%d  ash:%d", g_hours,after_switch_hour);
             return down_under; 
          }
       }
    }
-///sprintf(debug_text3, "down under:%d", down_under);
+//sprintf(debug_text5, "down under:%d", down_under);
 
    if(down_under) { // daylight savings time is not in effect
       if(std_string[0]) strcpy(tz_string, std_string);
+//sprintf(debug_text6, "dst off");
       return 0;
    }
    else {           // daylight savings time is in effect
       if(dst_string[0]) strcpy(tz_string, dst_string);
+//sprintf(debug_text6, "dst on");
       return 1;
    }
 }
@@ -3615,7 +9728,7 @@ double time_since_perihelion(double jd)
 
    // return days (fractional) since perihelion (based upon local time)
    // returns estimated value if year not between 2016 and 2100
-   gregorian(jd);
+   gregorian(0, jd);
    if(g_year < 2016) return jd - jdate(g_year, 1, 1) - JD_DELTA_EOT;
    else if(g_year > 2100) return jd - jdate(g_year, 1, 1) - JD_DELTA_EOT;
 
@@ -3667,6 +9780,7 @@ double lon_ofs;
 double m;
 double e;
 
+   // calculate the equation of time
    // adapted from code by Mike Chirico and NOAA
 
    t = jd;
@@ -4031,7 +10145,7 @@ static int last_why;
          jd_astro = 1900.0 + st;    // true bessel date
 
          st = st - (int) st;
-         gregorian(jd_utc);
+         gregorian(0, jd_utc);
          st = jdate(g_year, 1, 1) + (st * 365.242198781);
 
          st = st - (int) st;
@@ -4111,12 +10225,12 @@ static int last_why;
       else if(use_gps) {
          jd = jd_gps;
          strcpy(tz_string, std_string);
-         have_local_time = 1;
+         have_local_time = 2;
       }
       else if(use_utc) {
          jd = jd_utc;
          strcpy(tz_string, std_string);
-         have_local_time = 1;
+         have_local_time = 3;
       }
       else if(solar_time) {
          jd = jd_utc + jtime(0,0,0,TSX_TWEAK);  // adjust time for receiver message delays
@@ -4124,17 +10238,25 @@ static int last_why;
          round_time = 1;
       }
       else {
-         if(time_flags & 0x0001) jd = jd_utc;  // we want UTC based times
-         else                    jd = jd_gps;  // displaying GPS based times
+         if(time_flags & TFLAGS_UTC) jd = jd_utc;  // we want UTC based times
+         else                        jd = jd_gps;  // displaying GPS based times
 
-         jd += jtime(0,0,0,TSX_TWEAK);  // adjust time for receiver message delays
-         if(!solar_time) jd += time_zone();
+         if((leap_time || leap_sixty) && (TSX_TWEAK < 0.0)) ;  // negative TSX_TWEAK would mess up leap second display
+         else jd += jtime(0,0,0,TSX_TWEAK);    // adjust time for receiver message delays
 
-         have_local_time = 1;
+         if(!solar_time) jd += time_zone();    // adjust time for the time zone
+
+         have_local_time = 4;
       }
 
-      gregorian(jd);   // convert adjusted Julian back to Gregorian
-      if(leap_sixty && (g_seconds == 0)) g_seconds = 60;  // restore leapsecond count to xx:xx:60
+
+      if(leap_sixty) {  // receiver sent a time of xx:59:60
+         gregorian(0, jd - jtime(0,0,1,0.0));   // convert adjusted Julian back to Gregorian
+         g_seconds = 60;  // display leapsecond time to xx:59:60
+      }
+      else {
+         gregorian(0, jd);
+      }
 
 round_time = 0;  // we no longer do time rounding
       if(round_time) {       // round time up to nearest second;
@@ -4148,7 +10270,7 @@ round_time = 0;  // we no longer do time rounding
       pri_hours = g_hours;        
       pri_minutes = g_minutes;
       pri_seconds = g_seconds;
-      pri_frac = g_frac;       // note: usually 1msec fast due to rounding compensation in gregorian()
+      pri_frac = g_frac;       // note: usually 1msec fast due to rounding compensation in gregorian(0, )
       if(round_time) {
          pri_frac = g_frac = 0;
       }
@@ -4158,18 +10280,22 @@ round_time = 0;  // we no longer do time rounding
    return 1;
 }
 
-void get_alarm_time()
+
+double get_alarm_time()
 {
-   // Get the time to trigger an alarm into the g_ variables
+
+   // Get the time to trigger an alarm into the g_ variables and also return
+   // it as a jdate double.
    //
    // This time can either be the local time or the displayed time (if it is
-   // one of the astronmoical times scale) depending upon the setting of the
+   // one of the astronomical time scales) depending upon the setting of the
    // alarm_type option.
 
    if(alarm_type == 0) {  // alarm/dump/exit on local time
-      gregorian(jd_local);
+      gregorian(0, jd_local);
+      return jd_local;
    }
-   else {  // alarm/dump/exit on displayed (possibly atronomical time)
+   else {  // alarm/dump/exit on displayed (possibly astronomical time)
       g_year    = pri_year;   
       g_month   = pri_month;
       g_day     = pri_day;
@@ -4177,24 +10303,83 @@ void get_alarm_time()
       g_minutes = pri_minutes;
       g_seconds = pri_seconds;
       g_frac    = pri_frac;
+
+      return jdate(g_year,g_month,g_day) + jtime(g_hours,g_minutes,g_seconds,0.0);
    }
 }
 
+void reset_alarm()
+{
+   // reset the alarm, turn off modem control signals if enabled
+   if(modem_alarms) {  // turn off modem control signal that indicates alarm
+      Sleep(250);  // allow minimum modem control signal width
+      // !!!!!! manipulate modem control signals here
+      if(com[ALARM_PORT].com_port > 0) { // COM port in use
+         SetDtrLine(ALARM_PORT, 1);  // drive +12V
+         SetRtsLine(ALARM_PORT, 0);  // drive -12V
+      }
+   }
+}
+
+void enable_alarm()
+{
+   if(modem_alarms) {
+      // !!!!!! manipulate modem control signals here
+      if(com[ALARM_PORT].com_port > 0) { // COM port in use
+         SetDtrLine(ALARM_PORT, 0);  // drive -12V
+         SetRtsLine(ALARM_PORT, 1);  // drive +12V
+      }
+   }
+}
+
+
 void check_end_times()
 {
+double this_jd;
+static double last_jd = 1E100;
+
+   // check to see if it is time to do a scheduled screen or log dump or to exit
+   if(time_flags & TFLAGS_BAD_TIME) return;
+
+   this_jd = get_alarm_time();
+
+   // if time only specified, add in the current date...
+   // plus 1 day if less than the current date/time
+   if(alarm_jd < 1.0) {
+      alarm_jd += jdate(pri_year,pri_month,pri_day);
+      if(alarm_jd < this_jd) alarm_jd += 1.0;
+   }
+   if(dump_jd < 1.0) {
+      dump_jd += jdate(pri_year,pri_month,pri_day);
+      if(dump_jd < this_jd) dump_jd += 1.0;
+   }
+   if(exec_jd < 1.0) {
+      exec_jd += jdate(pri_year,pri_month,pri_day);
+      if(exec_jd < this_jd) exec_jd += 1.0;
+   }
+   if(exit_jd < 1.0) {
+      exit_jd += jdate(pri_year,pri_month,pri_day);
+      if(exit_jd < this_jd) exit_jd += 1.0;
+   }
+   if(log_jd < 1.0) {
+      log_jd += jdate(pri_year,pri_month,pri_day);
+      if(log_jd < this_jd) log_jd += 1.0;
+   }
+   if(script_jd < 1.0) {
+      script_jd += jdate(pri_year,pri_month,pri_day);
+      if(script_jd < this_jd) script_jd += 1.0;
+   }
+
+
    if(exit_timer) {  // countdown timer set
       if(--exit_timer == 0) goto time_exit;
    }
 
    // see if user wants us to exit at this time every day
-   get_alarm_time();
-
    if(end_time || end_date) {    
-      if((g_hours == end_hh) && (g_minutes == end_mm) && (g_seconds == end_ss)) {
+      if((last_jd < exit_jd) && (this_jd >= exit_jd)) {
          if(end_date) {
-            if((g_month == end_month) && (g_day == end_day) && (g_year == end_year)) {
-               goto time_exit;
-            }
+            goto time_exit;
          }
          else {
             time_exit:
@@ -4204,60 +10389,82 @@ void check_end_times()
       }
    }
 
+
    if(alarm_time || alarm_date) {  // alarm clock has been set
-      if((g_hours == alarm_hh) && (g_minutes == alarm_mm) && (g_seconds == alarm_ss)) {
-         if(alarm_date) {
-            if((g_month == alarm_month) && (g_day == alarm_day) && (g_year == alarm_year)) {
-               sound_alarm = 1;
-               alarm_wait = 0;
-            }
+      if((last_jd < alarm_jd) && (this_jd >= alarm_jd)) {
+         if(alarm_date) {  // sound alarm at a given date and time
+            sound_alarm |= ALARM_DATE;
+            enable_alarm();
+            alarm_wait = 0;
          }
-         else {
-            sound_alarm = 1;
+         else {  // sound alarm at a given time
+            sound_alarm |= (ALARM_TIME | ALARM_SET);
+            enable_alarm();
             alarm_wait = 0;
          }
       }
    }
 
    if(dump_time || dump_date) {  // screen dump clock has been set
-      if((g_hours == dump_hh) && (g_minutes == dump_mm) && (g_seconds == dump_ss)) {
-         if(dump_date) {
-            if((g_month == dump_month) && (g_day == dump_day) && (g_year == dump_year)) {
-               do_dump = 1;
-            }
+      if((last_jd < dump_jd) && (this_jd >= dump_jd)) {
+         if(dump_date) {  // do screen dump at a given date and time
+            do_screen_dump |= ALARM_DATE;
          }
-         else {
-            do_dump = 1;
+         else {  // dump screen at a given time
+            do_screen_dump |= ALARM_TIME;
          }
       }
    }
 
    if(log_time || log_date) {  // log dump clock has been set
-      if((g_hours == log_hh) && (g_minutes == log_mm) && (g_seconds == log_ss)) {
+      if((last_jd < log_jd) && (this_jd >= log_jd)) {
          if(log_date) {
-            if((g_month == log_month) && (g_day == log_day) && (g_year == log_year)) {
-               do_log = 1;
-            }
+            do_log_dump |= ALARM_DATE;
          }
          else {
-            do_log = 1;
+            do_log_dump |= ALARM_TIME;
          }
       }
    }
+
+   if(script_time || script_date) {  // script run clock has been set
+      if((last_jd < script_jd) && (this_jd >= script_jd)) {
+         if(script_date) {
+            do_script_run |= ALARM_DATE;
+         }
+         else {
+            do_script_run |= ALARM_TIME;
+         }
+      }
+   }
+
+   if(exec_time || exec_date) {  // program run clock has been set
+      if((last_jd < exec_jd) && (this_jd >= exec_jd)) {
+         if(exec_date) {
+            do_exec_run |= ALARM_DATE;
+         }
+         else {
+            do_exec_run |= ALARM_TIME;
+         }
+      }
+   }
+
+   last_jd = this_jd;
 }
 
 void get_delta_t()
 {
 FILE *file;
+
    // periodically try to get delta_t from a file
-   gregorian(jd_utc);
+   gregorian(0, jd_utc);
    if((g_hours == DELTAT_HOUR) && (g_minutes == DELTAT_MINUTE) && (g_seconds == DELTAT_SECOND)) {
       need_delta_t = 1;
    }
 
    if(need_delta_t && (user_set_delta_t != 1)) { // time to get delta_t from a file
       if(0) {
-         file = topen(LOCK_FILE, "r");     // check for lock file
+         file = topen(lock_name, "r");     // check for lock file
          if(file) {        // deltat.dat is being updated
             fclose(file);
             return;
@@ -4267,7 +10474,7 @@ FILE *file;
       file = topen(DELTAT_FILE, "r");
       if(file) {
          if(fgets(out, sizeof(out)-1, file) != NULL) {
-            user_delta_t = (float) atof(out);
+            user_delta_t = atof(out);
             user_delta_t /= (24.0*60.0*60.0);  // convert seconds to days
             user_set_delta_t = 2;
          }
@@ -4383,6 +10590,19 @@ int j;
       else if(*s == 0x0A) { s=0; break; }
    }
 
+   if(1 && (user_set_dst == 0)) {  // user has not set the DST area
+      strcpy(out, dst_string);
+      strupr(out);
+      if(strcmp(out, "BST") == 0) {  // UK/euro time
+         dst_area = 2;  // set the DST area to Euro-land
+      }
+      else {  // assume USA
+         dst_area = 1;
+      }
+      calc_dst_times(this_year, dst_list[dst_area]);
+      dst_ofs = dst_offset();
+   }
+
    return s;
 }
 
@@ -4407,7 +10627,7 @@ char c;
    if(s[0] == ':') return;  // Linux :... time zone string
 
    // set time zone
-   strncpy(std_string, "LOCAL", TZ_NAME_LEN);
+   strcpy(std_string, "LOCAL");
    dst_string[0] = 0;
    strcpy(tz_string, dst_string);
 
@@ -4487,6 +10707,7 @@ char c;
    else if(!strcmp(std_string, "LORAN")) use_loran = 1;
 
    else if(!strcmp(std_string, "MAR"))   use_msd = 1;    // various names of Mars time
+   else if(!strcmp(std_string, "MARS"))  use_msd = 1;  
    else if(!strcmp(std_string, "MARSD")) use_msd = 1;  
    else if(!strcmp(std_string, "MSD"))   use_msd = 1;  
    else if(!strcmp(std_string, "MTC"))   use_msd = 1;  
@@ -4524,9 +10745,10 @@ void silly_clocks()
 char s[32];
 FILE *lock_file;
 static int last_silly_sec = (-99);
+static int last_year = (-9999);
 char *ext;
 
-   gregorian(jd_local);   // for the following functions that always trigger on local time
+   gregorian(0, jd_local);   // for the following functions that always trigger on local time
    if(nav_rate != 1) {
       if(g_seconds == last_silly_sec) return;
       last_silly_sec = g_seconds;
@@ -4536,21 +10758,11 @@ char *ext;
       if(greet_ok || ((g_hours == GREET_HOUR) && (g_minutes == GREET_MINUTE) && (g_seconds == GREET_SECOND))) {
          show_greetings();
          greet_ok = 0;
-         gregorian(jd_local);
+         gregorian(0, jd_local);
       }
    #endif
 
 
-   // This routine plays a jaunty tune shortly after a leap second
-   if(leap_file && leap_pending && ((minor_alarms & 0x0080) == 0)) { 
-      leaped = 1;   // the leap second flag just cleared
-   }
-
-   leap_pending = (minor_alarms & 0x0080);
-   if(leaped && (g_seconds == LEAP_SECOND)) {
-      leaped = 0;
-      if(!no_easter_eggs) play_tune(LEAP_FILE, 1);
-   }
 
    if(sun_file && play_sun_song && !no_easter_eggs) {  // sunrise/sunset file
       if((have_sun_times & 0x01) && (g_hours == rise_hh) && (g_minutes == rise_mm) && (g_seconds == rise_ss)) {
@@ -4567,16 +10779,70 @@ char *ext;
       }
    }
 
-   // gratuitously silly cuckcoo clock mode (this triggers on displayed time)
-   get_alarm_time();  // functions that can trigger on local or displayed (pri_xxxx times)
+   if(tick_clock) {  // ticking clock in use
+      if(fine_tick_clock) {  // try to tick more closely to actual time, not message arival time
+         // the fine tick clock extends the tick to the true next second,
+         // so we need to trigger the minute sound when the message time is
+         // at :59.xxx seconds (!!!!!!! is this true for receivers with negative /tsx values?)
+if(fine_tick_msec >= 0.0) { // a pending tick was not played by fine_tick_check()
+  sound_tick_clock(); 
+}
+         fine_tick_msec = GetMsecs() + (1000.0 - (pri_frac*1000.0) - TICK_SOUND_DELAY);  // used for millisecond accurate tick clock
+         if(fine_tick_msec < 0.0) fine_tick_msec = GetMsecs();  
 
-   if(ships_clock && (g_seconds == CUCKOO_SECOND)) {
+         minute_tick = 0;
+         if(time_sync_offset >= 0.0) {  // time message arrives after actual time
+            if(pri_seconds == 59) minute_tick = 1;
+         }
+         else {  // time message arrives before actual time
+            if(pri_seconds == 59) minute_tick = (-1);
+         }
+      }
+      else {  // tick when message comes in
+         if(pri_seconds || (tick_clock == 1)) {  // sound the seconds tick sound
+            if(tick_clock != 2) {
+               if(seconds_file) play_tune(SECONDS_FILE, 1);
+               else if(click_file) play_tune(CLICK_FILE, 1);
+               else BEEP(200);
+            }
+         }
+         else if(minute_file) play_tune(MINUTE_FILE, 1); // minute tick sound        
+         else BEEP(201);
+      }
+   }
+
+   // This routine plays a jaunty tune shortly after a leap second
+
+   if(0 && leap_file && leap_pending && ((minor_alarms & MINOR_LEAP_PEND) == 0)) { 
+      leaped = 1;   // the leap second flag just cleared
+   }
+
+   leap_pending = (minor_alarms & MINOR_LEAP_PEND);
+   if(leaped && (g_seconds == LEAP_SECOND)) {
+      leaped = 0;
+      if(!no_easter_eggs) play_tune(LEAP_FILE, 1);
+   }
+   else if(1 && ((pri_year - last_year) == 1)) {
+      if((pri_month == 1) && (pri_day == 1) && (pri_seconds > 0)) {
+         play_tune(NEW_YEAR_NAME, 1);
+         last_year = pri_year;
+      }
+   }
+   else last_year = pri_year;
+
+
+   // gratuitously silly cuckcoo clock mode (this triggers on displayed time)
+   get_alarm_time();  // for functions that can trigger on local or displayed (pri_xxxx times)
+
+   if(tick_clock) ;
+   else if(ships_clock && (g_seconds == CUCKOO_SECOND)) {
       if((g_minutes == 0) || (g_minutes == 30)) {
          ring_bell = ships_bells();
          if(ring_bell >= 0) bell_number = 0;
       }
    }
-   else if(cuckoo && (g_seconds == CUCKOO_SECOND)) {  
+   else if(cuckoo && (g_seconds == CUCKOO_SECOND)) { 
+      // note that the singing_clock is handled as a special case of the cuckoo clock
       if(cuckoo_hours && (g_minutes == 0)) {  // cuckoo the hour on the hour
          cuckoo_beeps = (g_hours % 12);
          if(cuckoo_beeps == 0) cuckoo_beeps = 12;
@@ -4591,7 +10857,8 @@ char *ext;
 
    if(egg_timer) {
       if(--egg_timer == 0) {
-         sound_alarm = 1;
+         sound_alarm |= ALARM_TIMER;
+         enable_alarm();
          alarm_wait = 0;
          if(repeat_egg) egg_timer = egg_val;
       }
@@ -4599,24 +10866,55 @@ char *ext;
 
    if(dump_timer) {
       if(--dump_timer == 0) {
-         do_dump = 1;
+         do_screen_dump |= ALARM_TIMER;
          if(repeat_dump) dump_timer = dump_val;
       }
    }
 
    if(log_timer) {
       if(--log_timer == 0) {
-         do_log = 1;
+         do_log_dump |= ALARM_TIMER;
          if(repeat_log) log_timer = log_val;
       }
    }
 
+   if(script_timer) {
+      if(--script_timer == 0) {
+         do_script_run |= ALARM_TIMER;
+         if(repeat_script) script_timer = script_val;
+      }
+   }
+
+   if(exec_timer) {
+      if(--exec_timer == 0) {
+         do_exec_run |= ALARM_TIMER;
+         if(repeat_exec) exec_timer = exec_val;
+      }
+   }
+
    if(sound_alarm) {  // sounding the alarm clock
+      if(sound_alarm & ALARM_TIME) {
+         alarm_jd += 1.0;  // trigger again tomorrow
+         if(sound_alarm == ALARM_TIME) {
+            reset_alarm();
+         }
+         sound_alarm &= (~ALARM_TIME);
+      }
+
       alarm_wait = 0;
       alarm_clock();  
       if(single_alarm) {  // sound alarm once,  useful if playing long sound file
+         if(sound_alarm & ALARM_DATE) {
+            alarm_time = alarm_date = 0;
+            alarm_jd = 0.0;
+            egg_timer = egg_val = 0;
+            repeat_egg = 0;
+         }
+
+         reset_alarm();
          sound_alarm = 0;
       }
+
       if(luxor) {  // turn off battery when alarm sounds
          cc_mode = 0;
          sweep_stop = 0.0F;
@@ -4624,51 +10922,66 @@ char *ext;
       }
    }
 
+
+   if(do_script_run) {  // running a sceduled script
+      if(do_script_run & ALARM_TIME) script_jd += 1.0;  // trigger again tomorrow
+      open_script("timer.scr");  
+      do_script_run = 0;
+   }
+
+
+   if(do_exec_run) {  // running a scheduled program
+      if(do_exec_run & ALARM_TIME) exec_jd += 1.0;  // trigger again tomorrow
+      exec_program();
+      do_exec_run = 0;
+   }
    
-   if(do_dump) {
+   if(do_screen_dump) {  // perform a scheduled screen dump
+      if(do_screen_dump & ALARM_TIME) dump_jd += 1.0;  // trigger again tomorrow
       ++dump_number;
       get_alarm_time();
-      if(single_dump) sprintf(s, "tbdump");
+      if(single_dump) {
+         sprintf(s, "%sdump", dump_prefix);
+      }
       else {
-        sprintf(s, "tb%04d-%02d-%02d-%ld", g_year,g_month,g_day,dump_number);
+        sprintf(s, "%s%04d-%02d-%02d-%ld", dump_prefix, g_year,g_month,g_day,dump_number);
       }
 
-      lock_file = topen(LOCK_FILE, "w");  // create file tblock to signify dump file is being written
+      lock_file = topen(lock_name, "w");  // create file tblock to signify dump file is being written
       if(lock_file) {
          fprintf(lock_file, "1");
          fclose(lock_file);
       }
       dump_screen(invert_dump, top_line, s);
-      path_unlink(LOCK_FILE);
+      path_unlink(lock_name);
 
-      do_dump = 0;
+      do_screen_dump = 0;
    }
    
-   if(do_log) {
+   if(do_log_dump && (doing_log_dump == 0)) {   // scheduled write log data to a file
+      if(do_log_dump & ALARM_TIME) log_jd += 1.0;  // trigger again tomorrow
       ++log_number;
       get_alarm_time();
 
       if(dump_xml) ext = ".xml";
       else if(dump_gpx) ext = ".gpx";
-      else ext = ".log";
+      else ext = ".log";   // RINEX can't be written from queue data
 
-      if(single_log) sprintf(s, "%s%s", unit_file_name, ext);
+      if(single_log) {
+         if(!strcmp(dump_prefix, "tb")) sprintf(s, "%s%s", unit_file_name, ext);
+         else sprintf(s, "%s%s%s", dump_prefix, unit_file_name, ext);
+      }
       else {
-         sprintf(s, "tb%04d-%02d-%02d-%ld%s", g_year,g_month,g_day,log_number, ext);
+         sprintf(s, "%s%04d-%02d-%02d-%ld%s", dump_prefix, g_year,g_month,g_day,log_number, ext);
       }
-
-      lock_file = topen(LOCK_FILE, "w");  // create file tblock to signify dump file is being written
-      if(lock_file) {
-         fprintf(lock_file, "2");
-         fclose(lock_file);
-      }
-      path_unlink(LOCK_FILE);
 
       dump_log(s, 'q');
-      do_log = 0;
+
+      do_log_dump = 0;
    }
 
-   if(fake_time_stamp) ;  // kludge to get ships bells and cuckoo clock sort-of working with UCCM receiver faked odd seconds
+   if(tick_clock) {  // ticking clock
+   }
    else if(ships_clock && (ring_bell >= 0) && (bell_number >= 0) && (bell_number < 12)) {
       cuckoo_clock();
    }
@@ -4682,73 +10995,6 @@ void need_time_set()
 {
    set_system_time = 2;
    time_set_char = '*';
-}
-
-
-int get_clock_time()
-{
-   // get the system clock into the clk_ variables
-
-   #ifdef WINDOWS
-      SYSTEMTIME t;
-      GetSystemTime(&t);
-      clk_year = t.wYear;
-      clk_month = t.wMonth;
-      clk_day = t.wDay;
-      clk_hours = t.wHour;
-      clk_minutes = t.wMinute;
-      clk_seconds = t.wSecond;
-      clk_frac = ((double) t.wMilliseconds) / 1000.0;
-
-      clk_jd = jdate(clk_year,clk_month,clk_day);
-      clk_jd += jtime(clk_hours,clk_minutes,clk_seconds,clk_frac);
-
-      return 1;
-   #endif
-
-   #ifdef __linux__  // __linux__  __MACH__
-      double t0;
-      GetNsecs();   // get wall_time as seconds since epoch (with high-res fractional seconds)
-
-      t0 = wall_time / (24.0*60.0*60.0); // convert seconds to days
-      t0 += LINUX_EPOCH;  // add in Linux epoch
-
-      gregorian(t0);          // convert to gregorian
-      clk_year = g_year;
-      clk_month = g_month;
-      clk_day = g_day;
-      clk_hours = g_hours;
-      clk_minutes = g_minutes;
-      clk_seconds = g_seconds;
-      clk_frac = g_frac;
-
-      clk_jd = jdate(clk_year,clk_month,clk_day);
-      clk_jd += jtime(clk_hours,clk_minutes,clk_seconds,clk_frac);
-      return 1;
-   #endif
-
-   #ifdef __MACH__  // __linux__  __MACH__
-      double t0;
-      GetNsecs();   // get wall_time as seconds since epoch (with high-res fractional seconds)
-
-      t0 = wall_time / (24.0*60.0*60.0); // convert seconds to days
-      t0 += LINUX_EPOCH;  // add in Linux epoch
-
-      gregorian(t0);          // convert to gregorian
-      clk_year = g_year;
-      clk_month = g_month;
-      clk_day = g_day;
-      clk_hours = g_hours;
-      clk_minutes = g_minutes;
-      clk_seconds = g_seconds;
-      clk_frac = g_frac;
-
-      clk_jd = jdate(clk_year,clk_month,clk_day);
-      clk_jd += jtime(clk_hours,clk_minutes,clk_seconds,clk_frac);
-      return 1;
-   #endif
-
-   return 0;
 }
 
 #define CLK_SORT 11
@@ -4812,176 +11058,6 @@ int k, m;
 // }
 
    return 0.0;
-}
-
-
-void set_cpu_clock()
-{
-int hhh, mmm, sss;
-double milli;
-double rcvr_jd;
-double delta_jd;
-int time_set;
-
-   // This routine sets the system clock to the GPS receiver time
-   // It can do this when requested, on a regular interval or whenever
-   // the two clocks diverge by a specified amount.
-   //
-   // On Linux and OSX Heather must have root privledges to set the system clock.
-
-   if(have_time == 0) return;         // we have no GPS receiver time
-   if(have_timing_mode == 0) return;  // we don't know if the receiver time is UTC or GPS
-   if(saw_icm) {
-      if(time_flags & 0x000C) return;   // GPS receiver time is not valid
-   }
-   else if(time_flags & 0x001C) return; // GPS receiver time is not valid  // !!!! saw_icm?
-
-   if(fake_time_stamp) return;          // dont sync on faked UCCM time stamps
-
-   if(set_system_time) ;        // a time set is scheduled
-   else if(set_time_anytime) ;  // set time if clock has drifted
-   else return;                 // nothing to do here, move along
-
-   rcvr_jd = jd_utc;
-
-   if(set_system_time > 1) {    // waiting for system to stabilze before setting time
-      --set_system_time;
-      if(set_system_time == 0) goto set_clock;
-      return;
-   }
-   else if(set_system_time < 0) {  // dont resync time if we just did it
-      ++set_system_time;
-      return;
-   }
-
-   if(time_flags & 0x0001) {  // receiver time is in UTC
-      if(force_utc_time == 0) {  // we want to set system clock to GPS time
-         rcvr_jd += ((double) utc_offset) / (24.0*60.0*60.0);
-      }
-   }
-   else {  // receiver time is in GPS time
-      if(force_utc_time) {  // we want to set system clock to UTC time
-         rcvr_jd -= ((double) utc_offset) / (24.0*60.0*60.0);
-      }
-   }
-
-   // adjust the receiver message time for the offset between when it arrived
-   // and the true time
-   rcvr_jd += ((time_sync_offset / 1000.0) / (24.0*60.0*60.0));
-
-   // now we set the system time from the GPS receiver
-   milli = 0.0;
-   if(set_time_anytime) {  // set system clock anytime x milliseconds of drift is seen
-      get_clock_time();    // get the system clock in UTC
-
-      delta_jd = (rcvr_jd - clk_jd) * 24.0*60.0*60.0 * 1000.0;
-      milli = fabs(time_sync_median(delta_jd));
-//    milli = fabs(delta_jd);  // milliseconds of divergence between the system and receiver
-
-//sprintf(debug_text2, "tset %.1f: delta:%f  tflags:%02X  futc:%d  tso:%g  jdo:%g",
-//set_time_anytime, milli, time_flags,force_utc_time, time_sync_offset, delta_jd);  // rrrrrrr
-
-      if(milli >= set_time_anytime) {  // we need a time set
-         need_time_set();
-         return;
-      }
-   }
-
-   if(set_system_time == 0) return;   // we are not setting the time
-
-   set_clock:
-   time_set = 0;
-
-   gregorian(rcvr_jd);   // convert needed to to broken down format
-
-   #ifdef WINDOWS
-      hhh = g_hours;
-      mmm = g_minutes;
-      sss = g_seconds;
-   #endif
-   #ifdef __linux__  // !!!!! __linux__  __MACH__
-      hhh = g_hours;
-      mmm = g_minutes;
-      sss = g_seconds;
-   #endif
-   #ifdef __MACH__  // !!!!! __linux__  __MACH__
-      hhh = g_hours;
-      mmm = g_minutes;
-      sss = g_seconds;
-   #endif
-
-   // adjust receiver time for message offset delay to get true time
-   #ifdef WINDOWS
-      SYSTEMTIME t;
-      milli = (long) (g_frac * 1000.0);
-
-      t.wYear = g_year;
-      t.wMonth = g_month;
-      t.wDay = g_day;
-      t.wHour = hhh;
-      t.wMinute = mmm;
-      t.wSecond = sss;
-      t.wMilliseconds = (int) (milli + 0.50);
-      time_set = (int) SetSystemTime(&t);
-   #endif
-
-   #ifdef __linux__
-      struct timeval tv;
-      time_t rawtime;
-      double gmt;
-      struct tm *tt;
-
-      rcvr_jd -= LINUX_EPOCH;       // convert receiver time to Linux epoch
-      rcvr_jd *= (24.0*60.0*60.0);  // convert days to seconds
-
-if(0) {  // rrrrrr
-   gettimeofday(&tv, 0);
-   gmt = ((double) tv.tv_sec) + (((double) tv.tv_usec) / 1.0E6);
-   sprintf(debug_text, "rcvr:%f  sys:%f  diff:%f us", rcvr_jd, gmt, (gmt-rcvr_jd)*1.0E6);
-}
-
-      tv.tv_sec = (time_t) rcvr_jd;
-      rcvr_jd -= floor(rcvr_jd);
-      tv.tv_usec = (suseconds_t) (rcvr_jd * 1.0E6);
-// sprintf(debug_text2, "tv:%f . %g   jd:%f", (double)tv.tv_sec,(double)tv.tv_usec, rcvr_jd);  // rrrrrr
-
-      time_set = settimeofday(&tv, 0); 
-      if(time_set == 0) time_set = 1;
-      else time_set = 0;
-   #endif
-
-   #ifdef __MACH__
-      struct timeval tv;
-      time_t rawtime;
-      double gmt;
-      struct tm *tt;
-
-      rcvr_jd -= LINUX_EPOCH;       // convert receiver time to Linux epoch
-      rcvr_jd *= (24.0*60.0*60.0);  // convert days to seconds
-
-if(0) {  // rrrrrr
-   gettimeofday(&tv, 0);
-   gmt = ((double) tv.tv_sec) + (((double) tv.tv_usec) / 1.0E6);
-   sprintf(debug_text, "rcvr:%f  sys:%f  diff:%f us", rcvr_jd, gmt, (gmt-rcvr_jd)*1.0E6);
-}
-
-      tv.tv_sec = (time_t) rcvr_jd;
-      rcvr_jd -= floor(rcvr_jd);
-      tv.tv_usec = (suseconds_t) (rcvr_jd * 1.0E6);
-// sprintf(debug_text2, "tv:%f . %g   jd:%f", (double)tv.tv_sec,(double)tv.tv_usec, rcvr_jd);  // rrrrrr
-
-      time_set = settimeofday(&tv, 0); 
-      if(time_set == 0) time_set = 1;
-      else time_set = 0;
-   #endif
-
-   if(time_set) {  // clock has been set
-      if(!set_time_anytime) { // don't annoy if doing periodic time sets
-         BEEP(100);
-      }
-   }
-
-   set_system_time = (-3);  // time has been set, don't set it again for at least three seconds
 }
 
 
@@ -5196,9 +11272,9 @@ double first_new;
          x = chinese_ny();
          y = china_data[i-2009].jd;
          fprintf(o, "%d %f %f %f:  ", i, x, y, x-y);
-         gregorian(x);
+         gregorian(0, x);
          fprintf(o, "ms:%d/%d  ", g_day,g_month);
-         gregorian(y);
+         gregorian(0, y);
          fprintf(o, "pp:%d/%d\n", g_day,g_month);
       }
 
@@ -5243,7 +11319,7 @@ double first_new;
 
             if(strstr(out, "1ST LUNAR")) {
                jd = jdate(yy,mm,dd);
-               fprintf(o, "   { 0x%04X, %2d, %.1lf },  // %d %d\n", months, leap, last_jd, yy-1+4706-2009, yy-1);
+               fprintf(o, "   { 0x%04X, %2d, %.1f },  // %d %d\n", months, leap, last_jd, yy-1+4706-2009, yy-1);
                mask = 0x0001;
                months = 0x0000;
                last_jd = jd;
@@ -5325,7 +11401,7 @@ struct HOLIDAY {
     { PALM_SUNDAY,  0,  3,  "It's Palm Sunday..." },
     { GOOD_FRIDAY,  0,  3,  "It's Good Friday..." },
     { EASTER,       0,  3,  "Happy Easter!" },
-    { GRANNY,       0,  9,  "It's Grandparent's day..." },
+    { GRANNY,       0,  9,  "It's Grandparent's Day..." },
     { ROSH,         0,  9,  "Rosh Hashanha starts tonight..." },
     { YOM,          0,  9,  "Yom Kippur starts tonight..." },
     { PASSOVER,     0,  3,  "Passover starts tonight..." },
@@ -5341,7 +11417,7 @@ struct HOLIDAY {
     { AZTEC_NY,     0,  1,  "Happy Aztec New Year!  Sacrifice your enemies!  Eat their hearts!" },
     { DOOMSDAY,     0,  1,  "The world ends tomorrow...  wear clean underwear" },
     { SUKKOT,       0,  1,  "Sukkot starts tonight..." },
-    { SHAVUOT,      0,  1,  "Shavout starts tonight..." },
+    { SHAVUOT,      0,  1,  "Shavuot starts tonight..." },
     { UNIX_CLOCK,   0,  1,  "Tomorrow is UNIX time doomstime...  wear a clean pocket protector" },
 
     { 0,  1,  1,  "Happy New Year!" },
@@ -5355,13 +11431,19 @@ struct HOLIDAY {
     { 0, 15,  3,  "Beware the Ides of March!" },
     { 0, 17,  3,  "Happy Saint Patrick's Day!" },
     { 0,  1,  4,  "April Fools!" },
+    { 1,  0,  4,  "May your Kanamara Matsuri day have a happy ending!" },
     {-1,  5,  4,  "It's Arbor Day... go hug a tree!" },
     { 0, 22,  4,  "Happy Earth Day..." },
+    { 0, 25,  4,  "+++ Divide by Cucumber Error. Please Reinstall Universe and Reboot +++" },
+    { 0,  4,  5,  "May the fourth be with you!" },
     { 0,  5,  5,  "Happy Cinco de Mayo!" },
+    { 0, 25,  5,  "Happy Towel Day!  All you hoopy froods remember to wear your towel!" },
     { 2,  0,  5,  "Happy Mother's Day, Mom!" },
     { 3,  6,  5,  "It's Armed Forces Day!" },
     {-1,  1,  5,  "Happy Memorial Day!" },
     { 1,  1,  6,  "Happy Birthday, Queenie!" },
+    { 1,  5,  6,  "It's National Donut Day!  Mmmmmm... forbidden donut!" },
+    { 0,  8,  6,  "It's World Oceans Day!" },
     { 0, 14,  6,  "Happy Flag Day!" },
     { 3,  0,  6,  "Happy Father's Day, Dad!" },
     { 0,  1,  7,  "Canada, Oh Canada..." },
@@ -5373,6 +11455,7 @@ struct HOLIDAY {
     { 0, 11,  9,  "Another day that will live in infamy..." },
     { 0, 17,  9,  "We the People of the United Sates of America..." },
     { 0, 19,  9,  "Yarrr matey... it be talk like a pirate day!" },
+    { 0, 26,  9,  "It's Stanislav Petrov Day!  He saved your sorry ass." },
     { 0, 28,  9,  "It's National Drink Beer Day!" },
     { 0,  2, 10,  "Happy Birthday, Mr. Ghandi..." },
     { 0,  9, 10,  "Way to go, Leif!" },
@@ -5390,6 +11473,7 @@ struct HOLIDAY {
     { 0, 24, 12,  "Hey kids,  he's checking his list!" },
     { 0, 25, 12,  "Merry Christmas!" },
     { 0, 26, 12,  "Happy Boxing Day!" },
+    { 0, 28, 12,  "Farewell Lars Walineus, you are mourned by all." },
     { 0, 31, 12,  "Stay home tonight,  there are too many crazy people out there..." },
     { 0,-13,  5,  "Today is Friday the 13th...  stay home!" },
     { 0,  0,  0,  "" }
@@ -5667,7 +11751,7 @@ void get_mayan_date()
 {
 long mayan;
 
-   gregorian(jd_local);
+   gregorian(0, jd_local);
    mayan = (long) (jdate(g_year,g_month,g_day)-jdate(1618,9,18));
    mayan = adjust_mayan(mayan);
 
@@ -5700,12 +11784,12 @@ double temp_jd_gps;
    temp_jd_utc  = jd_utc;
    temp_jd_gps  = jd_gps;
 
-   gregorian(season);           // convert Julian season value to Gregorian
+   gregorian(0, season);           // convert Julian season value to Gregorian
 
    jd_utc = jdate(g_year,g_month,g_day) + jtime(g_hours,g_minutes,g_seconds,g_frac);
    jd_gps = jd_utc + jtime(0,0,utc_offset,0.0);
    adjust_tz(20);               // convert UTC season values to local time zone
-   strcpy(out, time_zone_set?tz_string:(time_flags & 0x0001)?"UTC":"GPS");
+   strcpy(out, time_zone_set?tz_string:(time_flags & TFLAGS_UTC)?"UTC":"GPS");
 
    g_year    = pri_year;        // save season time values in the Gregorian variables
    g_month   = pri_month;
@@ -6006,7 +12090,7 @@ double eccent;
 
     lunation = (long) floor(((new_moon_jd + 7.0) - lunatbase) / synmonth) + 1;
 
-//gregorian(new_moon_jd);
+//gregorian(0, new_moon_jd);
 //sprintf(plot_title, "new moon: %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
 
 // sprintf(debug_text2, "phasex:%f  sdiam:%f  sdist:%f  synod:%f  luna:%ld", moon_phase(jd), sun_diam(jd), earth_sun_dist(jd), synmonth, lunation);
@@ -6079,6 +12163,17 @@ double a;
     return a;
 }
 
+
+// Declaration of some constants 
+#define dEarthMeanRadius   6371.008       // In km
+#define dAstronomicalUnit  149597870.691  // In km
+
+#define POLE_RADIUS 6356.752     // km
+#define EQU_RADIUS  6378.137     // km
+#define SUN_DIAM    1391400.0372 // km
+#define MOON_DIAM   1737.1       // km
+
+double moon_lat,moon_lon,moon_dist;
 
 void moon_posn(double jd_tt)
 {
@@ -6239,11 +12334,19 @@ double jd;
    rm = rm - .58 * cos(Mm - 2.0 * dm);
    rm = rm - .46 * cos(2.0 * dm);
 
+   moon_lat = fmod(mlat*180.0/PI, 360.0);
+   if(moon_lat < 0.0) moon_lat += 360.0;
+   moon_lon = fmod(mlon*180.0/PI, 360.0);
+   if(moon_lon < 0.0) moon_lon += 360.0;
+   moon_dist = rm * earth_radius(lat, alt)*1000.0;
+//sprintf(debug_text, "moon lla: %.9f %.9f %.9f", moon_lat, moon_lon, moon_dist);
+
 //   next find the cartesian coordinates
 //   of the geocentric lunar position
    xg = rm * cos(mlon) * cos(mlat);
    yg = rm * sin(mlon) * cos(mlat);
    zg = rm * sin(mlat);
+//sprintf(debug_text2, "xyzg: %.9f %.9f %.9f", xg*EQU_RADIUS,yg*EQU_RADIUS,zg*EQU_RADIUS);
 
 //   rotate to equatorial coords
 //   obliquity of ecliptic of date
@@ -6252,6 +12355,7 @@ double jd;
    xe = xg;
    ye = yg * cos(ecl) - zg * sin(ecl);
    ze = yg * sin(ecl) + zg * cos(ecl);
+//sprintf(plot_title, "xyze: %.9f %.9f %.9f", xe*EQU_RADIUS,ye*EQU_RADIUS,ze*EQU_RADIUS);
 
 //   geocentric RA and Dec
    geora = FNatn2(ye,xe) * RAD_TO_DEG / 15.0;
@@ -6265,7 +12369,7 @@ double jd;
    lst = 100.46 + (.985647352 * (d-1.50)) + (h * 15.0) + lon*RAD_TO_DEG;
    lst = FNrange(lst*DEG_TO_RAD)*RAD_TO_DEG;
 //lst =  lmst(jd_tt, 0)*15.0;
-//// while(lst < 0.0) lst += 360.0;;
+//// while(lst < 0.0) lst += 360.0;
 //// while(lst > 360.0) lst -= 360.0;
 
    
@@ -6273,6 +12377,7 @@ double jd;
    xtop = xe - cos(lat) * cos(lst*DEG_TO_RAD);
    ytop = ye - cos(lat) * sin(lst*DEG_TO_RAD);
    ztop = ze - sin(lat);
+//sprintf(debug_text, "xyztop: %.9f %.9f %.9f", xtop,ytop,ztop);
    rtop = sqrt(xtop * xtop + ytop * ytop + ztop * ztop);
    ra = FNatn2(ytop, xtop) * RAD_TO_DEG;
    if(xtop || ytop) dec = atan(ztop / sqrt(xtop * xtop + ytop * ytop));
@@ -6292,6 +12397,8 @@ double jd;
 
    moon_el = asin(sinl*sind + cosl*cosd*cosha);
    moon_el *= RAD_TO_DEG;
+
+   set_sat_azel(MOON_PRN, (float) moon_az, (float) moon_el);
 }
 
 
@@ -6349,7 +12456,7 @@ if(0 && debug_file) {
    mid_el = sun_peak(mid, do_moon);
    fprintf(debug_file, "\ninterp noon: start:%f mid:%f end:%f\n", start,mid,end);
    fprintf(debug_file, "start_el:%f mid_el:%f end_el:%f  pct:%f\n", start_el,mid_el,end_el, pct);
-   gregorian(mid+time_zone());
+   gregorian(0, mid+time_zone());
    fprintf(debug_file, "noon (utc): %02d:%02d:%02d %f  %04d/%02d/%02d  tz:%f\n\n", g_hours,g_minutes,g_seconds,g_frac, g_year,g_month,g_day, time_zone());
 }
    return mid;
@@ -6415,7 +12522,7 @@ if(0 && debug_file) fprintf(debug_file, "\nnoon %d: %.9f", sp_count, solar_noon)
 if(0 && debug_file) fprintf(debug_file, "\nnoon %d: %.9f", sp_count, solar_noon);
 
 if(0 && debug_file) {
-   gregorian(solar_noon+time_zone());   
+   gregorian(0, solar_noon+time_zone());   
    sun_el = sun_posn(solar_noon, do_moon);
    if(do_moon) fprintf(debug_file, "\ntransit az:%f el:%f  (utc): %02d:%02d:%02d %g   tz:%f\n", sun_el,sun_az, g_hours,g_minutes,g_seconds,g_frac, time_zone());
    else fprintf(debug_file, "\nnoon az:%f el:%f  (utc): %02d:%02d:%02d %g  tz:%f\n", sun_el,sun_az, g_hours,g_minutes,g_seconds,g_frac, time_zone());
@@ -6443,7 +12550,7 @@ if(0 && debug_file) {
    mid_el = sun_posn(mid, do_moon);
    fprintf(debug_file, "interp: start:%f mid:%f end:%f\n", start,mid,end);
    fprintf(debug_file, "start_el:%f mid_el:%f end_el:%f  pct:%f\n", start_el,mid_el,end_el, pct);
-   gregorian(mid+time_zone());
+   gregorian(0, mid+time_zone());
    fprintf(debug_file, "time (utc): %02d:%02d:%02d %f  %04d/%02d/%02d  tz:%f\n\n", g_hours,g_minutes,g_seconds,g_frac, g_year,g_month,g_day, time_zone());
 }
    return mid;
@@ -6452,24 +12559,24 @@ if(0 && debug_file) {
 
 void log_sun_times()
 {
-   if(debug_file) {
+   if(0 && debug_file) {
       if(do_moonrise) fprintf(debug_file, "\n\nMoon info for %04d/%02d/%02d\n", pri_year,pri_month,pri_day);
       else            fprintf(debug_file, "\n\nSun info for %04d/%02d/%02d\n", pri_year,pri_month,pri_day);
 //    fprintf(debug_file, "day-1: jd:%.9f  r:%.9f t:%.9f s:%.9f\n", jd0, r0,n0,s0);   
 //    fprintf(debug_file, "day+0: jd:%.9f  r:%.9f t:%.9f s:%.9f\n", jd1, r1,n1,s1);   
 //    fprintf(debug_file, "day+1: jd:%.9f  r:%.9f t:%.9f s:%.9f\n", jd2, r2,n2,s2);   
 
-      gregorian(sunrise_time+time_zone());
+      gregorian(0, sunrise_time+time_zone());
       fprintf(debug_file, "rise:    %02d:%02d:%02d %.3f", g_hours,g_minutes,g_seconds,g_frac);
       if(have_sun_times & 0x01) fprintf(debug_file, "\n");
       else                      fprintf(debug_file, " - bad\n");
 
-      gregorian(solar_noon+time_zone());
+      gregorian(0, solar_noon+time_zone());
       fprintf(debug_file, "transit: %02d:%02d:%02d %.3f", g_hours,g_minutes,g_seconds,g_frac);
       if(have_sun_times & 0x02) fprintf(debug_file, "\n");
       else                      fprintf(debug_file, " - bad\n");
 
-      gregorian(sunset_time+time_zone());
+      gregorian(0, sunset_time+time_zone());
       fprintf(debug_file, "set:     %02d:%02d:%02d %.3f", g_hours,g_minutes,g_seconds,g_frac);
       if(have_sun_times & 0x04) fprintf(debug_file, "\n");
       else                      fprintf(debug_file, " - bad\n");
@@ -6497,7 +12604,7 @@ double old_az, old_el;
    old_set_horizon = sunset_horizon;
    sunrise_horizon = sunset_horizon = (-50.0/60.0);
 
-   gregorian(jd_local);
+   gregorian(0, jd_local);
    jd1 = jdate(g_year,g_month,g_day) - time_zone();   // jd1 is start (midnight) of the local day
 // jd1 = jdate(pri_year,pri_month,pri_day) - time_zone();
    jd0 = jd1 - 1.0;
@@ -6521,49 +12628,49 @@ double old_az, old_el;
    have_sun_times = 0x07;       // assume all is well
 
    if(r1 < jd1)  {  // usually an ok condition
-if(debug_file) fprintf(debug_file, "rise prev day!\n");
+if(debug_file) fprintf(debug_file, "# rise prev day!\n");
       sunrise_time = r2;
    }
    if(r1 >= jd2) {
-if(debug_file)      fprintf(debug_file, "rise next day!\n");
+if(debug_file)      fprintf(debug_file, "#rise next day!\n");
       sunrise_time = r0;
       have_sun_times &= (~0x01);
    }
 
    if(n1 < jd1) {
-if(debug_file)      fprintf(debug_file, "noon prev day!\n");
+if(debug_file)      fprintf(debug_file, "#noon prev day!\n");
       solar_noon = n2;
       have_sun_times &= (~0x02);
    }
    if(n1 >= jd2) {
-if(debug_file)      fprintf(debug_file, "noon next day!\n");
+if(debug_file)      fprintf(debug_file, "#noon next day!\n");
       solar_noon = n0;
       have_sun_times &= (~0x02);
    }
 
    if(s1 < jd1)  {
-if(debug_file)      fprintf(debug_file, "set prev day!\n");
+if(debug_file)      fprintf(debug_file, "#set prev day!\n");
       sunset_time = s2;
       have_sun_times &= (~0x04);
    }
    if(s1 >= jd2) {    // usually an ok condition
-if(debug_file)      fprintf(debug_file, "set next day!\n");
+if(debug_file)      fprintf(debug_file, "#set next day!\n");
       sunset_time = s0;
    }
 
-   gregorian(sunrise_time+time_zone()+jtime(0,0,0,0.5));
+   gregorian(0, sunrise_time+time_zone()+jtime(0,0,0,0.5));
    rise_hh = g_hours;
    rise_mm = g_minutes;
    rise_ss = g_seconds;
    rise_frac = g_frac;
 
-   gregorian(solar_noon+time_zone()+jtime(0,0,0,0.5)); 
+   gregorian(0, solar_noon+time_zone()+jtime(0,0,0,0.5)); 
    noon_hh = g_hours;
    noon_mm = g_minutes;
    noon_ss = g_seconds;
    noon_frac = g_frac;
 
-   gregorian(sunset_time+time_zone()+jtime(0,0,0,0.5)); 
+   gregorian(0, sunset_time+time_zone()+jtime(0,0,0,0.5)); 
    set_hh = g_hours;
    set_mm = g_minutes;
    set_ss = g_seconds;
@@ -6605,7 +12712,7 @@ double old_maz, old_mel;
    // between sunrise and sunset is used.
 
 sp_count = 0;
-if(debug_file) fprintf(debug_file, "calc_sunrise(%d)\n", why);
+if(debug_file) fprintf(debug_file, "#calc_sunrise(%d)\n", why);
 
    old_az = sun_az;
    old_el = sun_el;
@@ -6626,7 +12733,7 @@ if(debug_file) fprintf(debug_file, "calc_sunrise(%d)\n", why);
 
    zenith = sunrise_horizon;
 
-   gregorian(jd_local);
+   gregorian(0, jd_local);
    jd0 = start = jdate(g_year,g_month,g_day) + delta;
 
    jd = jd0; // + jtime(5,0,0,0.0);  // start sunrise search at 5:00 in the morning local time
@@ -6658,7 +12765,7 @@ if(0 && debug_file) fprintf(debug_file, "refine rise %d:  spc:%d  rise_el:%f  di
    sunrise_el = sun_posn(sunrise_time, do_moonrise);
    sunrise_az = sun_az;
 
-   gregorian(sunrise_time + time_zone() + jtime(0,0,0,0.50));
+   gregorian(0, sunrise_time + time_zone() + jtime(0,0,0,0.50));
    rise_hh = g_hours;
    rise_mm = g_minutes;
    rise_ss = g_seconds;
@@ -6699,7 +12806,7 @@ if(0 && debug_file) fprintf(debug_file, "refine set %d:  spc:%d  set_el:%f  diff
    sunset_el = sun_posn(sunset_time, do_moonrise);
    sunset_az = sun_az;
 
-   gregorian(sunset_time + time_zone() + jtime(0,0,0,0.50));
+   gregorian(0, sunset_time + time_zone() + jtime(0,0,0,0.50));
    set_hh = g_hours;
    set_mm = g_minutes;
    set_ss = g_seconds;
@@ -6707,7 +12814,6 @@ if(0 && debug_file) fprintf(debug_file, "refine set %d:  spc:%d  set_el:%f  diff
    have_sun_times |= 0x04;
 
    solar_noon = (sunrise_time + sunset_time) / 2.0;
-if(0 && do_moonrise) ; else
    if(sunset_time < sunrise_time) {
       solar_noon += 0.50;
    }
@@ -6716,7 +12822,7 @@ if(0 && do_moonrise) ; else
    noon_el = sun_posn(solar_noon, do_moonrise);
    noon_az = sun_az;
 
-   gregorian(solar_noon + time_zone() + jtime(0,0,0,0.50));
+   gregorian(0, solar_noon + time_zone() + jtime(0,0,0,0.50));
    noon_hh = g_hours;
    noon_mm = g_minutes;
    noon_ss = g_seconds;
@@ -6725,7 +12831,7 @@ if(0 && do_moonrise) ; else
       have_sun_times |= 0x02;
    }
 
-   if(rcvr_type == SCPI_RCVR) { // make sure we can trigger alarm
+   if(STATUS_RCVR) { // make sure we can trigger alarms during status message
       if((rise_ss >= SCPI_STATUS_SECOND) && (rise_ss <= SCPI_STATUS_SECOND+5)) {
          rise_ss = SCPI_STATUS_SECOND-1;
       }
@@ -6746,15 +12852,6 @@ if(0 && do_moonrise) ; else
 }
 
 
-
-// Declaration of some constants 
-#define dEarthMeanRadius   6371.008       // In km
-#define dAstronomicalUnit  149597870.691  // In km
-
-#define POLE_RADIUS 6356.752     // km
-#define EQU_RADIUS  6378.137     // km
-#define SUN_DIAM    1391400.0372 // km
-#define MOON_DIAM   1737.1       // km
 
 double earth_radius(double lat, double alt)
 {
@@ -6785,12 +12882,15 @@ double d;
 double e;
 double theta;
 
+   // in km
+
    e = orbit_eccentricity(jd);
    theta = ((PI*2.0)/365.2563630) * time_since_perihelion(jd);
 
    d = (1.0-e*e) / (1.0 + (e*cos(theta)));
 
-   return d*dAstronomicalUnit;
+   d = d*dAstronomicalUnit;
+   return d;
 }
 
 
@@ -6843,9 +12943,10 @@ double sun_diam(double jd)
 {
 double diam;
 
-   // return apparent topocentric sun disk diameter in degrees
+   // return apparent topocentric sun disk diameter in degrees.
+   // earth radius correction only valid for daylight hours
 
-   diam = 2.0 * asin(SUN_DIAM / ((earth_sun_dist(jd)-earth_radius(lat,lon)) * 2.0)) * 180.0 / PI;
+   diam = 2.0 * asin(SUN_DIAM / ((earth_sun_dist(jd)-earth_radius(lat,alt)) * 2.0)) * 180.0 / PI;
    return diam;
 }
 
@@ -6861,6 +12962,7 @@ double diam;
 
    return diam;
 }
+
 
 
 double sun_posn(double jd, int moon_flag)
@@ -6879,6 +12981,7 @@ double tt;
 
    // Calculate sun position using Grena's Algorithm 5
    // Very accurate results (<0.0027 degrees) for years 2010 to 2110.
+   // jd is jd_utc.
 
 ++sp_count;
 
@@ -6913,9 +13016,10 @@ double tt;
      + 3.49e-5*sin(1.575e-2*te - 2.358) + 2.67e-5*sin(2.152e-2*te + 0.074)
      + 1.28e-5*sin(3.152e-2*te + 1.547) + 3.14e-5*sin(2.1277e-1*te - 0.488);
 
-sun_hlon = (L*180.0/PI);
-sun_hlon = fmod(sun_hlon, 360.0) + 180.0;
-sun_hlon = fmod(sun_hlon, 360.0);
+   sun_hlon = (L*180.0/PI);                     // used as possible alternate input to gravity tide sun position code
+   sun_hlon = fmod(sun_hlon, 360.0) + 180.0;
+   sun_hlon = fmod(sun_hlon, 360.0);
+//sprintf(debug_text2, "hlon: %.9f  r:%.9f", sun_hlon, (earth_sun_dist(jd)+EQU_RADIUS*0.0)*1000.0);
 
    nu = 9.282e-4*te - 0.8;  // nutation
    Dlam = 8.34e-5*sin(nu);
@@ -7357,7 +13461,7 @@ int lookup_new_moon(double jd)
 int i, j;
 int i0;
 
-   gregorian(jd);
+   gregorian(0, jd);
    if((g_year >= 2016) && (g_year < 2100)) {  // look up accurate new moon info in table
       i0 = (g_year-2016) * 12;  // approx place to start looking in the table
       j = sizeof(new_moon_table) / sizeof(new_moon_table[0]);
@@ -7417,7 +13521,7 @@ double start_step, end_step;
 
    sp_count = 0;
    if(0 && debug_file) {
-      gregorian(jd);
+      gregorian(0, jd);
       fprintf(debug_file, "New moon pinfo for %04d/%02d/%02d\n", pri_year,pri_month,pri_day);
       fprintf(debug_file, "New moon ginfo for %04d/%02d/%02d\n", g_year,g_month,g_day);
    }
@@ -7494,10 +13598,16 @@ if(0 && debug_file) fprintf(debug_file, "\nnoon %d: %.9f\n", sp_count, mid);
 }
 
 
-void calc_moons(int why)
+int day_of_year(int month, int day)
+{
+   month = fix_month(month);
+   return dsm[month] + day;
+}
+
+void calc_moons(double jd, int why)
 {
 double p, last_p;
-double jd, last_jd, jd_end;
+double last_jd, jd_end;
 int rising;
 int blue_moon;
 int black_moon;
@@ -7509,24 +13619,17 @@ int i;
 
    for(i=0; i<32; i++) moons[i] = "";  // initalize moon phase names
 
-//pri_month = month = 10; // oct 2016 - black
-//pri_year = year = 2018; // jan 2018 - blue
-   jd = jd_local; // jdate(pri_year,pri_month,pri_day) + jtime(pri_hours,pri_minutes,pri_seconds,0.0);
-//jd = jdate(year,month,day) + jtime(hours,minutes,seconds,0.0);
-
-   new_moon_jd = new_moon(jd);  // get this month's new moon
-   gregorian(new_moon_jd);
-   moons[g_day] = "New Moon";
-
+   new_moon_jd = 0.0;
    full_moon_jd = 0.0;
    blue_moon_jd = 0.0;
    black_moon_jd = 0.0;
    blue_moon  = 0;       // counts full moons
    black_moon = 0;       // counts new moons
 
-   gregorian(jd_local);
+   gregorian(0, jd);
    last_jd = jdate(g_year,g_month,1) - jtime(1,0,0,1.0);
 //last_jd = jdate(year,month,1) - jtime(1,0,0,0.0); 
+   g_month = fix_month(g_month);
    jd_end = last_jd + (double) (dim[g_month]);
 
    last_p  = MOON_PHASE(last_jd);
@@ -7535,7 +13638,8 @@ int i;
    while(last_jd < jd_end) {  // search the month for interesting lunar events
       jd = last_jd + jtime(1,0,0,0.0);
       p = MOON_PHASE(jd);
-      gregorian(jd);
+////  gregorian(0, jd + time_zone() + jtime(0,0,0,TSX_TWEAK));  // calculate moon time in local time zone
+      gregorian(0, jd);  // calculate moon time in utc
       if((g_day < 0) || (g_day > 31)) g_day = 0;
 
       new_event = 0;
@@ -7570,7 +13674,9 @@ int i;
                moons[g_day] = "Black Moon";
                black_moon_jd = jd;
             }
-            else {  // new moon was handled (more accurately) above
+            else {  // new moon 
+               moons[g_day] = "New Moon";
+               new_moon_jd = jd;
             }
             ++black_moon;
             new_event = 4;
@@ -7585,17 +13691,1730 @@ int i;
       else          last_jd = jd;         // keep seaching hour-by-hour
    }
 
-if(0) {
-   gregorian(new_moon_jd);
-   sprintf(plot_title, "new moon:  %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
-   gregorian(full_moon_jd);
-   sprintf(debug_text, "full moon: %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
-   gregorian(blue_moon_jd);
-   sprintf(debug_text2, "blue moon: %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
-   gregorian(black_moon_jd);
-   sprintf(debug_text3, "blak moon: %04d/%02d/%02d  %02d:%02d:%02d", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+   if(0 && debug_file) { 
+      if(new_moon_jd) {
+         gregorian(0, new_moon_jd + time_zone());
+         fprintf(debug_file, "new moon:  %04d/%02d/%02d  %02d:%02d:%02d\n", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+      }
+      if(full_moon_jd) {
+         gregorian(0, full_moon_jd + time_zone());
+         fprintf(debug_file, "full moon: %04d/%02d/%02d  %02d:%02d:%02d\n", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+      }
+      if(blue_moon_jd) {
+         gregorian(0, blue_moon_jd + time_zone());
+         fprintf(debug_file, "blue moon: %04d/%02d/%02d  %02d:%02d:%02d\n", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+      }
+      if(black_moon_jd) {
+         gregorian(0, black_moon_jd + time_zone());
+         fprintf(debug_file, "black moon: %04d/%02d/%02d  %02d:%02d:%02d\n", g_year,g_month,g_day, g_hours,g_minutes,g_seconds);
+      }
+   }
 }
+
+//
+//
+//  Propogation delay calculations
+//
+//
+
+#define RADPERDEG       (PI/180.0)      /* radians per degree */
+#define KM_PER_MILE     (5280.0/(FEET_PER_METER*1000.0))      /* km in a mile */
+
+/*
+ * greatcircle - compute the great circle distance in kilometers
+ */
+double greatcircle(double lat1,double long1, double lat2,double long2)
+{
+double dg;
+double l1r, l2r;
+
+   l1r = lat1;
+   l2r = lat2;
+   dg = earth_radius(lat,alt) * acos(
+           (cos(l1r) * cos(l2r) * cos(long2-long1))
+           + (sin(l1r) * sin(l2r)));
+   if(debug_file && show_debug_info) {
+       fprintf(debug_file,
+               "greatcircle lat1 %.9f long1 %.9f lat2 %.9f long2 %.9f dist %.9f\n",
+               lat1, long1, lat2, long2, dg);
+       fflush(debug_file);
+   }
+
+   dg = check_double(dg);  // NAN check
+   return dg;
 }
+
+
+double az_angle(double lat1,double lon1, double lat2,double lon2)
+{
+double x,y;
+double az;
+
+   y = sin(lon2-lon1) * cos(lat2);
+   x = cos(lat1)*sin(lat) - sin(lat1)*cos(lat2)*cos(lon2-lon1);
+   az = atan2(y, x) * 180.0/PI;
+   az = fmod(az + 360.0, 360.0);
+   return az;
+}
+
+/*
+ * waveangle - compute the wave angle for the given distance, virtual
+ *             height and number of hops.
+ */
+double waveangle(double dg, double h, int n)
+{
+double theta;
+double delta;
+
+   theta = dg / (earth_radius(lat,alt) * (double)(2 * n));
+   delta = atan((h / (earth_radius(lat,alt) * sin(theta))) + tan(theta/2)) - theta;
+   if(0 && debug_file) {
+       fprintf(debug_file, "waveangle dist %g height %g hops %d angle %g\n",
+              dg, h, n, delta / RADPERDEG);
+       fflush(debug_file);
+   }
+   return delta;
+}
+
+
+/*
+ * propdelay - compute the propagation delay
+ */
+static double propdelay(double dg, double h, int n)
+{
+double phi;
+double theta;
+double td;
+
+     theta = dg / (earth_radius(lat,alt) * (double)(2 * n));
+     phi = (PI/2.0) - atan((h / (earth_radius(lat,alt) * sin(theta))) + tan(theta/2));
+     td = dg / (LIGHTSPEED * sin(phi));
+     if(debug_file) {
+         fprintf(debug_file, "propdelay dist %.9f height %.9f hops %d time %.9f\n",
+                dg, h, n, td);
+         fflush(debug_file);
+     }
+     return td;
+}
+
+
+/*
+ * finddelay - find the propagation delay
+ */
+int find_delay(double lat1,double long1,double lat2,double long2,double h,  double u_dist, double *dist,double *delay)
+{
+double dg;      /* great circle distance */
+double delta;   /* wave angle */
+int n;          /* number of hops */
+
+   if(u_dist) dg = u_dist;
+   else       dg = greatcircle(lat1, long1, lat2, long2);
+   if(dg == 0.0) dg = 0.000001;
+   if(debug_file) {
+       fprintf(debug_file, "great circle distance %.9f km %.9f miles\n", dg, dg/KM_PER_MILE);
+       fflush(debug_file);
+   }
+   
+   n = 1;
+   while((delta = waveangle(dg, h, n)) < 0.0) {
+      if(0 && debug_file) {
+          fprintf(debug_file, "tried %d hop%s, no good\n", n, n>1?"s":"");
+          fflush(debug_file);
+      }
+
+      n++;
+      if(n > 1000) break;  // should never happen
+   }
+   if(debug_file) {
+       fprintf(debug_file, "%d hop%s okay, wave angle is %g\n", n, n>1?"s":"",
+              delta / RADPERDEG);
+       fflush(debug_file);
+   }
+
+   *dist = dg;
+   *delay = propdelay(dg, h, n);
+   return n;
+}
+
+
+//
+//
+//   Gravity and solid earth tide calculations
+//
+//
+
+
+#define EARTH_MASS 5.973600e24 // kg
+#define MOON_MASS  7.347673e22 // kg
+#define SUN_MASS   1.989100e30 // kg
+#define GRAVITY    6.67408e-11 // m^3 kg^-1 s^-2
+#define GRAV_FORCE(m1,m2,d) ((2.0*GRAVITY*m1*m2*earth_radius(lat,alt)*1000.0)/(d*d*d))
+
+// Days since 1900 Jan 0.5 // 1900-01-00 12h = 1899-12-31 12h = MJD 15019.5
+#define fMJD_TO_J1900(n) ( (n) - 15019.5 )
+
+// Seconds from 1970-01-01
+#define MJD_TO_UNIX(n) ( ((n) - 40587) * 86400 )
+
+#define SQ2(x) ( (x) * (x) )
+#define SQ3(x) ( (x) * (x) * (x) )
+#define SQ4(x) ( (x) * (x) * (x) * (x) )
+#define POLY(t,a,b,c,d) ( (a) + (b) * (t) + (c) * SQ2(t) + d * SQ3(t) )
+#define RAD(x) ( (x) / 180.0 * PI )
+
+// Constants.
+
+double mu = 6.67e-08;
+double m = 7.3537e+25;
+double s = 1.993e+33;
+double il = 0.08979719;
+double omega = 0.4093146162;
+double ml = 0.074804;
+double el = 0.0549;
+double cl1 = 1.495e+13;
+double cl = 3.84402e+10;
+double al = 6.37827e+08;
+
+// Love Numbers.
+
+double love_h2 = 0.612;
+double love_k2 = 0.303;
+
+//   Calculate lunar/solar tidal gravitational correction in uGal units
+//   given fractional MJD and position (latitude/longitude/altitude).
+//   Returns units of micro-gals. Typical corrections are +/- 100 uGals.
+//   g is about 980 Gals.
+//
+//   Value calculated is the UPWARD pull due to the sun and moon. To use
+//   as correction to measured gravity data, you would need to ADD these
+//   numbers, not subtract them.  When the moon is overhead, for example
+//   this program predicts a relatively large positive number, indicating
+//   a large upward pull due to the moon. This would result in a DECREASE
+//   in a gravity meter reading. Thus the tide value would be ADDED to
+//   correct for this effect.
+
+double calc_gals(double jd, double lat, double lon, double alt)
+{
+double tl0, j1900, t, n, el1, sl, pl, hl, pl1, i, nu, tl;
+double chi, chi1, ll1, cosalf, sinalf, alf, xi, sigma, ll, lm;
+double costht, cosphi, c, rl, ap, ap1, dl, D, gm, gs, g0, love;
+double fmjd;
+
+    fmjd = jd - JD_MJD;
+
+    tl0 = fmod(fmjd, 1.0) * 24.0;
+    j1900 = fMJD_TO_J1900(fmjd);
+    t = j1900 / 36525.0;
+    n = POLY(t, 4.523601612, -33.75715303, 0.0000367488, 0.0000000387);
+    el1 = POLY(t, 0.01675104, -0.0000418, 0.000000126, 0);
+    sl = POLY(t, 4.720023438, 8399.7093, 0.0000440695, 0.0000000329);
+    pl = POLY(t, 5.835124721, 71.01800936, -0.0001805446, -0.0000002181);
+    hl = POLY(t, 4.881627934,628.3319508, 0.0000052796, 0);
+    pl1 = POLY(t, 4.908229467, 0.0300052641, 7.9024e-06, 0.0000000581);
+    i = acos(0.9136975738 - 0.0356895353 * cos(n));
+    if(i) nu = asin(0.0896765581 * sin(n) / sin(i));
+else  nu = 0.0;
+    tl = RAD(15.0 * tl0 + lon);
+    chi = tl + hl - nu;
+    chi1 = tl + hl;
+    ll1 = hl + 2.0 * el1 * sin(hl - pl1);
+    cosalf = cos(n) * cos(nu) + sin(n) * sin(nu) * 0.9173938078;
+    sinalf = 0.3979806546 * sin(n) / sin(i);
+    alf = 2.0 * atan(sinalf / (1 + cosalf));
+    xi = n - alf;
+    sigma = sl - xi;
+    ll = sigma + 0.1098 * sin(sl - pl)
+        + 0.0037675125 * sin(2 * (sl - pl))
+        + 0.0154002735 * sin(sl - 2 * hl + pl)
+        + 0.0076940028 * sin(2 * (sl - hl));
+    lm = RAD(lat);   // lamda
+    costht = sin(lm) * sin(i) * sin(ll) + cos(lm) *
+        ( SQ2(cos(0.5 * i)) * cos(ll - chi) + SQ2(sin(0.5 * i)) * cos(ll + chi) );
+    cosphi = sin(lm) * 0.3979806546 * sin(ll1) + cos(lm) *
+        ( 0.9586969039 * cos(ll1 - chi1) + 0.0413030961 * cos(ll1 + chi1) );
+    c = 1 / sqrt(1 + 0.006738 * SQ2(sin(lm)));
+    rl = 6.37827e+08 * c + alt * 100.0; // meters to cm
+    ap = 2.60930776e-11;
+    ap1 = 1.0 / (1.495e+13 * (1.0 - el1 * el1));
+    dl = 1.0 / (1.0 / cl
+        + ap * el * cos(sl - pl)
+        + ap * el * el * cos(2.0 * (sl - pl))
+        + 1.875 * ap * ml * el * cos(sl - 2.0 * hl + pl)
+        + ap * ml * ml * cos(2.0 * (sl - hl)) );
+    D = 1.0 / (1.0 / cl1
+        + ap1 * el1 * cos(hl - pl1));
+    gm = mu * m * rl * (3.0 * SQ2(costht) - 1.0) / SQ3(dl)
+        + 1.5 * mu * m * rl * rl * (5 * SQ3(costht) - 3 * costht) / SQ4(dl);
+    gs = mu * s * rl * (3.0 * SQ2(cosphi) - 1.0) / SQ3(D);
+    love = (1.0 + love_h2 - 1.5 * love_k2);
+    g0 = (gm + gs) * love;
+
+#if 0
+    sprintf(plot_title, "%.6f  %.9e  %.3e  %.2f  %.2f  %.2f",
+           fmjd,
+           (980 - g0) / 100.0,  // g in m/s2 units
+           -g0 / 980.0,         // pendulum clock rate
+           g0 * 1e6,            // delta g in ugal units
+           gm * love * 1e6, gs * love * 1e6);
+#endif
+
+    last_ugals = ugals;
+    ugals = g0 * 1.0E6;
+    have_ugals = 1;
+    tide_cm = (ugals * 0.17785) - 0.9766;  // emprical conversion from uGal to cm of displacement
+
+    return ugals;
+}
+
+
+//
+//  Note: the solid earth tide code was originally written in Fortran and
+//        was converted to C using F2C... hence the slightly ugly code
+//        and function parameter passing by address.
+//
+//
+//  If (tide_options & 0x01) use solid.f routines,  else, use Heather's
+//  more accurate routines calculate sun and moon positions.  These 
+//  accurate positions are calculated based upon jd_utc and jd_tt and
+//  NOT the times passed to moonxyz_() and sunxyz_()
+//  The way Heather works, these times should be the same.
+//  Heather's routines are more accurate than solid.f
+//  and have already been called, so there is no need
+//  to duplicate the work.
+//
+//  If (tide_options & 0x02) restore the deformation due to permanent
+//  earth tides to the results.
+//
+
+#define d_mod(a,b) fmod(*a,*b)
+
+double datdi[] = { // 9x31 Fortran array
+   -3., 0., 2., 0., 0.,-0.01,-0.01, 0.0 , 0.0,
+   -3., 2., 0., 0., 0.,-0.01,-0.01, 0.0 , 0.0,
+   -2., 0., 1.,-1., 0.,-0.02,-0.01, 0.0 , 0.0,
+   -2., 0., 1., 0., 0.,-0.08, 0.00, 0.01, 0.01,      
+   -2., 2.,-1., 0., 0.,-0.02,-0.01, 0.0 , 0.0,
+   -1., 0., 0.,-1., 0.,-0.10, 0.00, 0.00, 0.00,      
+   -1., 0., 0., 0., 0.,-0.51, 0.00,-0.02, 0.03,      
+   -1., 2., 0., 0., 0., 0.01, 0.0 , 0.0 , 0.0,
+    0.,-2., 1., 0., 0., 0.01, 0.0 , 0.0 , 0.0,
+    0., 0.,-1., 0., 0., 0.02, 0.01, 0.0 , 0.0,
+    0., 0., 1., 0., 0., 0.06, 0.00, 0.00, 0.00,      
+    0., 0., 1., 1., 0., 0.01, 0.0 , 0.0 , 0.0,
+    0., 2.,-1., 0., 0., 0.01, 0.0 , 0.0 , 0.0,
+    1.,-3., 0., 0., 1.,-0.06, 0.00, 0.00, 0.00,      
+    1.,-2., 0., 1., 0., 0.01, 0.0 , 0.0 , 0.0,
+    1.,-2., 0., 0., 0.,-1.23,-0.07, 0.06, 0.01,      
+    1.,-1., 0., 0.,-1., 0.02, 0.0 , 0.0 , 0.0,
+    1.,-1., 0., 0., 1., 0.04, 0.0 , 0.0 , 0.0,
+    1., 0., 0.,-1., 0.,-0.22, 0.01, 0.01, 0.00,      
+    1., 0., 0., 0., 0.,12.00,-0.78,-0.67,-0.03,      
+    1., 0., 0., 1., 0., 1.73,-0.12,-0.10, 0.00,      
+    1., 0., 0., 2., 0.,-0.04, 0.0 , 0.0 , 0.0,
+    1., 1., 0., 0.,-1.,-0.50,-0.01, 0.03, 0.00,      
+    1., 1., 0., 0., 1., 0.01, 0.0 , 0.0 , 0.0,
+    1., 1., 0., 1.,-1.,-0.01, 0.0 , 0.0 , 0.0,       
+    1., 2.,-2., 0., 0.,-0.01, 0.0 , 0.0 , 0.0,
+    1., 2., 0., 0., 0.,-0.11, 0.01, 0.01, 0.00,      
+    2.,-2., 1., 0., 0.,-0.01, 0.0 , 0.0 , 0.0,
+    2., 0.,-1., 0., 0.,-0.02, 0.02, 0.0 , 0.01,
+    3., 0., 0., 0., 0., 0.0 , 0.01, 0.0 , 0.01,
+    3., 0., 0., 1., 0., 0.0 , 0.01, 0.0 , 0.0
+};
+
+/* Common Block Declarations */
+
+struct STUFF_ {
+   double rad, pi, pi2;
+} stuff_;
+
+#define stuff_1 stuff_
+
+int mjd0;
+
+/* Table of constant values */
+
+static double c_b56 = 360.;
+static double c_b88 = 86400.;
+
+/* subroutine prototypes */
+int zero_vec8__(double *);
+double enorm8_(double *);
+int moonxyz_(int *, double *, double *);
+int detide_(double *, int *, double *, double *, double *, double *);
+int geoxyz_(double *, double *, double *, double *, double *, double *);
+int sunxyz_(int *, double *, double *);
+int rge_(double *, double *, double *, double *, double *, double *, double *, double *);
+int step2diu_(double *, double *, double *, double *);
+int step2lon_(double *, double *,double *, double *);
+int st1l1_(double *, double *, double *, double *, double *, double *);
+int sprod_(double *, double *, double *, double *, double *);
+int getghar_(int *, double *, double *);
+int st1idiu_(double *, double *, double *, double *, double *, double *);
+int st1isem_(double *, double *, double *, double *, double *, double *);
+int rot1_(double *, double *, double *, double *, double *, double *, double *);
+int rot3_(double *, double *, double *, double *, double *, double *, double *);
+double gps2tt_(double *);
+double gps2utc_(double *);
+double gpsleap_(double *);
+
+
+void calc_earth_tide(double jd_gps)
+{
+    static double glad, fmjd, glod, tsec, xsta[3];
+    static int lout;
+    static double rsun[3], tdel2, etide[3];
+    static int iloop;
+    static double rmoon[3], x0, y0, z0;
+    static double ut, vt, wt;
+    static double xt, yt, zt;
+    static double sec;
+    static int mjd;
+    static int ihr, imn, imo, idy, iyr;
+    static double gla0, eht0, glo0;
+
+    if((lat == 0.0) && (lon == 0)) return;
+
+    stuff_1.pi = PI;
+    stuff_1.pi2 = (PI+PI);
+    stuff_1.rad = (180. / PI);
+
+    fmjd = jd_gps - JD_MJD;
+    mjd0 = (int) (jd_gps - JD_MJD);
+    fmjd = fmjd - (double) mjd0;
+    mjd = mjd0;
+
+    gla0 = lat;
+    glo0 = lon;
+    eht0 = alt; // 0.0;
+
+    geoxyz_(&gla0, &glo0, &eht0, &x0, &y0, &z0);
+//sprintf(plot_title, "geo:%f %f %f  mjd0:%d  fmjd:%f", x0,y0,z0, mjd0,fmjd);
+    xsta[0] = x0;
+    xsta[1] = y0;
+    xsta[2] = z0;
+
+    sunxyz_(&mjd, &fmjd, rsun);
+//sprintf(debug_text, "rsun:%f %f %f", rsun[0],rsun[1],rsun[2]);
+    moonxyz_(&mjd, &fmjd, rmoon);
+//sprintf(debug_text2, "rmoon:%f %f %f", rmoon[0],rmoon[1],rmoon[2]);
+    detide_(xsta, &mjd, &fmjd, rsun, rmoon, etide);
+//sprintf(debug_text3, "etide:%f %f %f", etide[0],etide[1],etide[2]);
+    xt = etide[0];
+    yt = etide[1];
+    zt = etide[2];
+    /* determine local geodetic horizon components (topocentric) */
+    rge_(&gla0, &glo0, &ut, &vt, &wt, &xt, &yt, &zt);
+
+    last_lat_tide = lat_tide;
+    last_lon_tide = lon_tide;
+    last_alt_tide = alt_tide;
+
+    lat_tide = ut * 1000.0;  // millimeters
+    lon_tide = vt * 1000.0;
+    alt_tide = wt * 1000.0;
+    have_tides = 1;
+}
+
+
+int detide_(double *xsta, int *mjd, double *fmjd,
+         double *xsun, double *xmon, double *dxtide)
+{
+    /* Initialized data */
+
+    static double h20 = .6078;
+    static double l20 = .0847;
+    static double h3 = .292;
+    static double l3 = .015;
+
+    /* F2C generated locals */
+    double d__1, d__2;
+
+    /* Local variables */
+    static double mass_ratio_moon__;
+    static double rsta, rmon, rsun, p2mon, p3mon, x2mon, x3mon, p2sun, p3sun;
+    static int i;
+    static double x2sun, x3sun;
+    static double t, scmon;
+    static double h2, scsun, l2;
+    static double re, cosphi, dmjdtt, fmjdtt, tsectt;
+    static double fac2mon, fac3mon, fac2sun, fac3sun;
+    static double mass_ratio_sun__;
+    static double fhr, scm, scs, tsecgps, xcorsta[3];
+
+    static double sinphi;
+    static double cosla, sinla;
+    static double dr, dn;
+
+    if(xsta == 0) return (-1);
+    if(mjd == 0) return (-1); 
+    if(fmjd == 0) return (-1); 
+    if(xsun == 0) return (-1); 
+    if(xmon == 0) return (-1); 
+    if(dxtide == 0) return (-1); 
+
+/* computation of tidal corrections of station displacements caused */
+/*    by lunar and solar gravitational attraction */
+/* step 1 (here general degree 2 and 3 corrections + */
+/*         call st1idiu + call st1isem + call st1l1) */
+/*   + step 2 (call step2diu + call step2lon + call step2idiu) */
+/* it has been decided that the step 3 un-correction for permanent tide */
+/* would *not* be applied in order to avoid jump in the reference frame */
+/*** (this step 3 must added in order to get the mean tide station position*/
+/* and to be conformed with the iag resolution.) */
+/* inputs */
+/***   xsta(i),i=1,2,3   -- geocentric position of the station (ITRF/ECEF)
+*/
+/*   xsun(i),i=1,2,3   -- geoc. position of the sun (ECEF) */
+/*   xmon(i),i=1,2,3   -- geoc. position of the moon (ECEF) */
+/***   mjd,fmjd          -- modified julian day (and fraction) (in GPS time)*/
+/****old calling sequence****************************************************/
+/***   dmjd               -- time in mean julian date (including day fract
+ion)*/
+/*   fhr=hr+zmin/60.+sec/3600.   -- hr in the day */
+/* outputs */
+/*   dxtide(i),i=1,2,3           -- displacement vector (ITRF) */
+/* author iers 1996 :  v. dehant, s. mathews and j. gipson */
+/*    (test between two subroutines) */
+/* author iers 2000 :  v. dehant, c. bruyninx and s. mathews */
+/*    (test in the bernese program by c. bruyninx) */
+/* created:  96/03/23 (see above) */
+/* modified from dehanttideinelMJD.f by Dennis Milbert 2006sep10 */
+/* bug fix regarding fhr (changed calling sequence, too) */
+/* modified to reflect table 7.5a and b IERS Conventions 2003 */
+/* modified to use TT time system to call step 2 functions */
+/* sign correction by V.Dehant to match eq.16b, p.81, Conventions */
+/* applied by Dennis Milbert 2007may05 */
+/*** nominal second degree and third degree love numbers and shida numbers
+*/
+    /* Function Body */
+/* internal support for new calling sequence */
+/* also convert GPS time into TT time */
+    tsecgps = *fmjd * 86400.;
+/* *** GPS time (sec of */
+    tsectt = gps2tt_(&tsecgps);
+/* *** TT  time (sec of */
+    fmjdtt = tsectt / 86400.;
+/* *** TT  time (fract. */
+    dmjdtt = *mjd + fmjdtt;
+/* commented line was live code in dehanttideinelMJD.f */
+/* changed on the suggestion of Dr. Don Kim, UNB -- 09mar21 */
+/* Julian date for 2000 January 1 00:00:00.0 UT is  JD 2451544.5 */
+/* MJD         for 2000 January 1 00:00:00.0 UT is MJD   51544.0 */
+/***** t=(dmjdtt-51545.d0)/36525.d0                !*** days to centuries,
+ TT*/
+/* *** float MJD in TT */
+    t = (dmjdtt - 51544.) / 36525.;
+/* *** days to centuries */
+    fhr = (dmjdtt - (int) dmjdtt) * 24.;
+/* scalar product of station vector with sun/moon vector */
+/* *** hours in the day, */
+    sprod_(&xsta[0], &xsun[0], &scs, &rsta, &rsun);
+    sprod_(&xsta[0], &xmon[0], &scm, &rsta, &rmon);
+    scsun = scs / rsta / rsun;
+    scmon = scm / rsta / rmon;
+/* computation of new h2 and l2 */
+    cosphi = sqrt(xsta[0] * xsta[0] + xsta[1] * xsta[1]) / rsta;
+    h2 = h20 - (1. - cosphi * 1.5 * cosphi) * 6e-4;
+    l2 = l20 + (1. - cosphi * 1.5 * cosphi) * 2e-4;
+/* p2-term */
+    p2sun = (h2 / 2. - l2) * 3. * scsun * scsun - h2 / 2.;
+    p2mon = (h2 / 2. - l2) * 3. * scmon * scmon - h2 / 2.;
+/* p3-term */
+/* Computing 3rd power */
+    d__1 = scsun, d__2 = d__1;
+    p3sun = (h3 - l3 * 3.) * 2.5 * (d__2 * (d__1 * d__1)) + (l3 - h3) * 1.5 * 
+            scsun;
+/* Computing 3rd power */
+    d__1 = scmon, d__2 = d__1;
+    p3mon = (h3 - l3 * 3.) * 2.5 * (d__2 * (d__1 * d__1)) + (l3 - h3) * 1.5 * 
+            scmon;
+/* term in direction of sun/moon vector */
+    x2sun = l2 * 3. * scsun;
+    x2mon = l2 * 3. * scmon;
+    x3sun = l3 * 3. / 2. * (scsun * 5. * scsun - 1.);
+    x3mon = l3 * 3. / 2. * (scmon * 5. * scmon - 1.);
+/* factors for sun/moon */
+    mass_ratio_sun__ = 332945.943062;
+    mass_ratio_moon__ = .012300034;
+    re = 6378136.55;
+/* Computing 3rd power */
+    d__1 = re / rsun, d__2 = d__1;
+    fac2sun = mass_ratio_sun__ * re * (d__2 * (d__1 * d__1));
+/* Computing 3rd power */
+    d__1 = re / rmon, d__2 = d__1;
+    fac2mon = mass_ratio_moon__ * re * (d__2 * (d__1 * d__1));
+    fac3sun = fac2sun * (re / rsun);
+    fac3mon = fac2mon * (re / rmon);
+/* total displacement */
+    for(i=0; i<=2; ++i) {
+        dxtide[i] = fac2sun * (x2sun * xsun[i] / rsun + p2sun * xsta[i] / 
+                rsta) + fac2mon * (x2mon * xmon[i] / rmon + p2mon * xsta[i] / 
+                rsta) + fac3sun * (x3sun * xsun[i] / rsun + p3sun * xsta[i] / 
+                rsta) + fac3mon * (x3mon * xmon[i] / rmon + p3mon * xsta[i] / 
+                rsta);
+    }
+    zero_vec8__(xcorsta);
+
+/* corrections for the out-of-phase part of love numbers */
+/*     (part h_2^(0)i and l_2^(0)i ) */
+/* first, for the diurnal band */
+    st1idiu_(&xsta[0], &xsun[0], &xmon[0], &fac2sun, &fac2mon, xcorsta);
+    dxtide[0] += xcorsta[0];
+    dxtide[1] += xcorsta[1];
+    dxtide[2] += xcorsta[2];
+/* second, for the semi-diurnal band */
+    st1isem_(&xsta[0], &xsun[0], &xmon[0], &fac2sun, &fac2mon, xcorsta);
+    dxtide[0] += xcorsta[0];
+    dxtide[1] += xcorsta[1];
+    dxtide[2] += xcorsta[2];
+/*** corrections for the latitude dependence of love numbers (part l^(1) ) */
+    st1l1_(&xsta[0], &xsun[0], &xmon[0], &fac2sun, &fac2mon, xcorsta);
+    dxtide[0] += xcorsta[0];
+    dxtide[1] += xcorsta[1];
+    dxtide[2] += xcorsta[2];
+
+/* consider corrections for step 2 */
+/* corrections for the diurnal band: */
+/*  first, we need to know the date converted in julian centuries */
+/***  this is now handled at top of code   (also convert to TT time system) */
+/* **** t=(dmjd-51545.)/36525. */
+/***** fhr=dmjd-int(dmjd)             !*** this is/was a buggy line (day vs. hr) */
+/*  second, the diurnal band corrections, */
+/*   (in-phase and out-of-phase frequency dependence): */
+    step2diu_(&xsta[0], &fhr, &t, xcorsta);
+    dxtide[0] += xcorsta[0];
+    dxtide[1] += xcorsta[1];
+    dxtide[2] += xcorsta[2];
+/*  corrections for the long-period band, */
+/*   (in-phase and out-of-phase frequency dependence): */
+    step2lon_(&xsta[0], &fhr, &t, xcorsta);
+    dxtide[0] += xcorsta[0];
+    dxtide[1] += xcorsta[1];
+    dxtide[2] += xcorsta[2];
+
+/* consider corrections for step 3 */
+/* ----------------------------------------------------------------------- */
+/* The code below is commented to prevent restoring deformation */
+/* due to permanent tide.  All the code above removes */
+/* total tidal deformation with conventional Love numbers. */
+/* The code above realizes a conventional tide free crust (i.e. ITRF). */
+/* This does NOT conform to Resolution 16 of the 18th General Assembly */
+/* of the IAG (1983).  This resolution has not been implemented by */
+/* the space geodesy community in general (c.f. IERS Conventions 2003). */
+
+/* ----------------------------------------------------------------------- */
+/*** uncorrect for the permanent tide  (only if you want mean tide system)
+*/
+   if(tide_options & CALC_MEAN_TIDES) {
+       sinphi = xsta[2] / rsta;
+       cosphi = sqrt((xsta[0]*xsta[0])  + (xsta[1]*xsta[1])) / rsta;
+       cosla = xsta[0] / cosphi / rsta;
+       sinla = xsta[0] / cosphi / rsta;
+       dr = -sqrt(5./4./PI) * h2 * 0.31460 * (3./2. * (sinphi*sinphi) - 0.5);
+       dn = -sqrt(5./4./PI) * l2 * 0.31460 * 3. * cosphi*sinphi;
+       dxtide[0] = dxtide[0]-dr*cosla*cosphi+dn*cosla*sinphi;
+       dxtide[1] = dxtide[1]-dr*sinla*cosphi+dn*sinla*sinphi;
+       dxtide[2] = dxtide[2]-dr*sinphi-dn*cosphi;
+    }
+
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+int st1l1_(double *xsta, double *xsun, double *xmon,
+           double *fac2sun, double *fac2mon, double *xcorsta)
+{
+    /* Initialized data */
+
+    static double l1d = .0012;
+    static double l1sd = .0024;
+
+    /* F2C generated locals */
+    double d__1, d__2, d__3, d__4;
+
+    /* Local variables */
+    static double rsta, rmon, rsun, costwola, sintwola, cosla, demon, 
+                  sinla, dnmon, desun, dnsun, l1;
+    static double de, dn, cosphi, sinphi;
+
+/*** this subroutine gives the corrections induced by the latitude depende
+nce*/
+/* given by l^(1) in mahtews et al (1991) */
+/*  input: xsta,xsun,xmon,fac3sun,fac3mon */
+/* output: xcorsta */
+
+    if(xsta == 0) return (-1);
+    if(xsun == 0) return (-1); 
+    if(xmon == 0) return (-1); 
+    if(fac2sun == 0) return (-1); 
+    if(fac2mon == 0) return (-1); 
+    if(xcorsta == 0) return (-1); 
+
+    /* Function Body */
+    rsta = enorm8_(&xsta[0]);
+    sinphi = xsta[2] / rsta;
+/* Computing 2nd power */
+    d__1 = xsta[0];
+/* Computing 2nd power */
+    d__2 = xsta[1];
+    cosphi = sqrt(d__1 * d__1 + d__2 * d__2) / rsta;
+    sinla = xsta[1] / cosphi / rsta;
+    cosla = xsta[0] / cosphi / rsta;
+    rmon = enorm8_(&xmon[0]);
+    rsun = enorm8_(&xsun[0]);
+/* for the diurnal band */
+    l1 = l1d;
+/* Computing 2nd power */
+    d__1 = sinphi;
+/* Computing 2nd power */
+    d__2 = rsun;
+    dnsun = -l1 * (d__1 * d__1) * *fac2sun * xsun[2] * (xsun[0] * cosla + 
+            xsun[1] * sinla) / (d__2 * d__2);
+/* Computing 2nd power */
+    d__1 = sinphi;
+/* Computing 2nd power */
+    d__2 = rmon;
+    dnmon = -l1 * (d__1 * d__1) * *fac2mon * xmon[2] * (xmon[0] * cosla + 
+            xmon[1] * sinla) / (d__2 * d__2);
+/* Computing 2nd power */
+    d__1 = cosphi;
+/* Computing 2nd power */
+    d__2 = sinphi;
+/* Computing 2nd power */
+    d__3 = rsun;
+    desun = l1 * sinphi * (d__1 * d__1 - d__2 * d__2) * *fac2sun * xsun[2] * (
+            xsun[0] * sinla - xsun[1] * cosla) / (d__3 * d__3);
+/* Computing 2nd power */
+    d__1 = cosphi;
+/* Computing 2nd power */
+    d__2 = sinphi;
+/* Computing 2nd power */
+    d__3 = rmon;
+    demon = l1 * sinphi * (d__1 * d__1 - d__2 * d__2) * *fac2mon * xmon[2] * (
+            xmon[0] * sinla - xmon[1] * cosla) / (d__3 * d__3);
+    de = (desun + demon) * 3.;
+    dn = (dnsun + dnmon) * 3.;
+    xcorsta[0] = -de * sinla - dn * sinphi * cosla;
+    xcorsta[1] = de * cosla - dn * sinphi * sinla;
+    xcorsta[2] = dn * cosphi;
+/* for the semi-diurnal band */
+    l1 = l1sd;
+/* Computing 2nd power */
+    d__1 = cosla;
+/* Computing 2nd power */
+    d__2 = sinla;
+    costwola = d__1 * d__1 - d__2 * d__2;
+    sintwola = cosla * 2. * sinla;
+/* Computing 2nd power */
+    d__1 = xsun[0];
+/* Computing 2nd power */
+    d__2 = xsun[1];
+/* Computing 2nd power */
+    d__3 = rsun;
+    dnsun = -l1 / 2. * sinphi * cosphi * *fac2sun * ((d__1 * d__1 - d__2 * 
+            d__2) * costwola + xsun[0] * 2. * xsun[1] * sintwola) / (d__3 * 
+            d__3);
+/* Computing 2nd power */
+    d__1 = xmon[0];
+/* Computing 2nd power */
+    d__2 = xmon[1];
+/* Computing 2nd power */
+    d__3 = rmon;
+    dnmon = -l1 / 2. * sinphi * cosphi * *fac2mon * ((d__1 * d__1 - d__2 * 
+            d__2) * costwola + xmon[0] * 2. * xmon[1] * sintwola) / (d__3 * 
+            d__3);
+/* Computing 2nd power */
+    d__1 = sinphi;
+/* Computing 2nd power */
+    d__2 = xsun[0];
+/* Computing 2nd power */
+    d__3 = xsun[1];
+/* Computing 2nd power */
+    d__4 = rsun;
+    desun = -l1 / 2. * (d__1 * d__1) * cosphi * *fac2sun * ((d__2 * d__2 - 
+            d__3 * d__3) * sintwola - xsun[0] * 2. * xsun[1] * costwola) / (
+            d__4 * d__4);
+/* Computing 2nd power */
+    d__1 = sinphi;
+/* Computing 2nd power */
+    d__2 = xmon[0];
+/* Computing 2nd power */
+    d__3 = xmon[1];
+/* Computing 2nd power */
+    d__4 = rmon;
+    demon = -l1 / 2. * (d__1 * d__1) * cosphi * *fac2mon * ((d__2 * d__2 - 
+            d__3 * d__3) * sintwola - xmon[0] * 2. * xmon[1] * costwola) / (
+            d__4 * d__4);
+    de = (desun + demon) * 3.;
+    dn = (dnsun + dnmon) * 3.;
+    xcorsta[0] = xcorsta[0] - de * sinla - dn * sinphi * cosla;
+    xcorsta[1] = xcorsta[1] + de * cosla - dn * sinphi * sinla;
+    xcorsta[2] += dn * cosphi;
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+int step2diu_(double *xsta, double *fhr, double *t, double *xcorsta)
+{
+    /* Initialized data */
+
+    static double deg2rad = .017453292519943295769;
+
+    /* F2C generated locals */
+    double d__1, d__2, d__3, d__4;
+
+    /* Local variables */
+    static double rsta, h;
+    static int i, j;
+    static double p, s, cosla, sinla, de, 
+            dn, dr, pr, ps, thetaf, cosphi, sinphi, zla, tau, zns;
+
+   if(xsta == 0) return (-1);
+   if(fhr == 0) return (-1);
+   if(t == 0) return (-1);
+   if(xcorsta == 0) return (-1);
+
+/* last change:  vd   17 may 00   1:20 pm */
+/* these are the subroutines for the step2 of the tidal corrections. */
+
+/* they are called to account for the frequency dependence */
+/* of the love numbers. */
+
+    /* Function Body */
+/*** note, following table is derived from dehanttideinelMJD.f (2000oct30 16:10) */
+/*** has minor differences from that of dehanttideinel.f (2000apr17 14:10) */
+/*** D.M. edited to strictly follow published table 7.5a (2006aug08 13:46) */
+/* cf. table 7.5a of IERS conventions 2003 (TN.32, pg.82) */
+/* columns are s,h,p,N',ps, dR(ip),dR(op),dT(ip),dT(op) */
+/* units of mm */
+/*   data datdi/ */
+/*  * -3., 0., 2., 0., 0.,-0.01,-0.01, 0.0 , 0.0, */
+/*  * -3., 2., 0., 0., 0.,-0.01,-0.01, 0.0 , 0.0, */
+/*  * -2., 0., 1.,-1., 0.,-0.02,-0.01, 0.0 , 0.0, */
+/*  * -2., 0., 1., 0., 0.,-0.08, 0.00, 0.01, 0.01,      !*** table 7.5a
+ */
+/*  * -2., 2.,-1., 0., 0.,-0.02,-0.01, 0.0 , 0.0, */
+/*  * -1., 0., 0.,-1., 0.,-0.10, 0.00, 0.00, 0.00,      !*** table 7.5a
+ */
+/*  * -1., 0., 0., 0., 0.,-0.51, 0.00,-0.02, 0.03,      !*** table 7.5a
+ */
+/*  * -1., 2., 0., 0., 0., 0.01, 0.0 , 0.0 , 0.0, */
+/*  *  0.,-2., 1., 0., 0., 0.01, 0.0 , 0.0 , 0.0, */
+/*  *  0., 0.,-1., 0., 0., 0.02, 0.01, 0.0 , 0.0, */
+/*  *  0., 0., 1., 0., 0., 0.06, 0.00, 0.00, 0.00,      !*** table 7.5a
+ */
+/*  *  0., 0., 1., 1., 0., 0.01, 0.0 , 0.0 , 0.0, */
+/*  *  0., 2.,-1., 0., 0., 0.01, 0.0 , 0.0 , 0.0, */
+/*  *  1.,-3., 0., 0., 1.,-0.06, 0.00, 0.00, 0.00,      !*** table 7.5a
+ */
+/*  *  1.,-2., 0., 1., 0., 0.01, 0.0 , 0.0 , 0.0, */
+/*  *  1.,-2., 0., 0., 0.,-1.23,-0.07, 0.06, 0.01,      !*** table 7.5a
+ */
+/*  *  1.,-1., 0., 0.,-1., 0.02, 0.0 , 0.0 , 0.0, */
+/*  *  1.,-1., 0., 0., 1., 0.04, 0.0 , 0.0 , 0.0, */
+/*  *  1., 0., 0.,-1., 0.,-0.22, 0.01, 0.01, 0.00,      !*** table 7.5a
+ */
+/***  *  1., 0., 0., 0., 0.,12.00,-0.78,-0.67,-0.03,      !**** table 7.5a */
+/*  *  1., 0., 0., 1., 0., 1.73,-0.12,-0.10, 0.00,      !*** table 7.5a */
+/*  *  1., 0., 0., 2., 0.,-0.04, 0.0 , 0.0 , 0.0, */
+/*  *  1., 1., 0., 0.,-1.,-0.50,-0.01, 0.03, 0.00,      !*** table 7.5a */
+/*  *  1., 1., 0., 0., 1., 0.01, 0.0 , 0.0 , 0.0, */
+/***  *  1., 1., 0., 1.,-1.,-0.01, 0.0 , 0.0 , 0.0,       !*** v.dehant 2007 */
+/*  *  1., 2.,-2., 0., 0.,-0.01, 0.0 , 0.0 , 0.0, */
+/*  *  1., 2., 0., 0., 0.,-0.11, 0.01, 0.01, 0.00,      !*** table 7.5a */
+/*  *  2.,-2., 1., 0., 0.,-0.01, 0.0 , 0.0 , 0.0, */
+/*  *  2., 0.,-1., 0., 0.,-0.02, 0.02, 0.0 , 0.01, */
+/*  *  3., 0., 0., 0., 0., 0.0 , 0.01, 0.0 , 0.01, */
+/*  *  3., 0., 0., 1., 0., 0.0 , 0.01, 0.0 , 0.0/ */
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+    s = *t * 481267.88194 + 218.31664563 - *t * .0014663889 * *t + d__2 * (
+            d__1 * d__1) * 1.85139e-6;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+    tau = *fhr * 15. + 280.4606184 + *t * 36000.7700536 + *t * 3.8793e-4 * *t 
+            - d__2 * (d__1 * d__1) * 2.58e-8 - s;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    pr = *t * 1.396971278f + *t * 3.08889e-4f * *t + d__2 * (d__1 * d__1) * 
+            2.1e-8f + d__3 * d__3 * 7e-9f;
+    s += pr;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    h = *t * 36000.7697489 + 280.46645 + *t * 3.0322222e-4 * *t + d__2 * (
+            d__1 * d__1) * 2e-8f - d__3 * d__3 * 6.54e-9f;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    p = *t * 4069.01363525 + 83.35324312 - *t * .01032172222 * *t - d__2 * (
+            d__1 * d__1) * 1.24991e-5 + d__3 * d__3 * 5.263e-8;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    zns = *t * 1934.13626197 + 234.95544499 - *t * .00207561111 * *t - d__2 * 
+            (d__1 * d__1) * 2.13944e-6 + d__3 * d__3 * 1.65e-8;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    ps = *t * 1.71945766667 + 282.93734098 + *t * 4.5688889e-4 * *t - d__2 * (
+            d__1 * d__1) * 1.778e-8 - d__3 * d__3 * 3.34e-9;
+/* reduce angles to between 0 and 360 */
+    s = d_mod(&s, &c_b56);
+    tau = d_mod(&tau, &c_b56);
+    h = d_mod(&h, &c_b56);
+    p = d_mod(&p, &c_b56);
+    zns = d_mod(&zns, &c_b56);
+    ps = d_mod(&ps, &c_b56);
+/* Computing 2nd power */
+    d__1 = xsta[0];
+/* Computing 2nd power */
+    d__2 = xsta[1];
+/* Computing 2nd power */
+    d__3 = xsta[2];
+    rsta = sqrt(d__1 * d__1 + d__2 * d__2 + d__3 * d__3);
+    sinphi = xsta[2] / rsta;
+/* Computing 2nd power */
+    d__1 = xsta[0];
+/* Computing 2nd power */
+    d__2 = xsta[1];
+    cosphi = sqrt(d__1 * d__1 + d__2 * d__2) / rsta;
+    cosla = xsta[0] / cosphi / rsta;
+    sinla = xsta[1] / cosphi / rsta;
+    zla = atan2(xsta[1], xsta[0]);
+    for(i=0; i<=2; ++i) {
+        xcorsta[i] = 0.;
+    }
+    for(j=1; j<=31; ++j) {
+        thetaf = (tau + datdi[j * 9 - 9] * s + datdi[j * 9 - 8] * h + datdi[j 
+                * 9 - 7] * p + datdi[j * 9 - 6] * zns + datdi[j * 9 - 5] * ps)
+                 * deg2rad;
+        dr = datdi[j * 9 - 4] * 2. * sinphi * cosphi * sin(thetaf + zla) + 
+                datdi[j * 9 - 3] * 2. * sinphi * cosphi * cos(thetaf + zla);
+/* Computing 2nd power */
+        d__1 = cosphi;
+/* Computing 2nd power */
+        d__2 = sinphi;
+/* Computing 2nd power */
+        d__3 = cosphi;
+/* Computing 2nd power */
+        d__4 = sinphi;
+        dn = datdi[j * 9 - 2] * (d__1 * d__1 - d__2 * d__2) * sin(thetaf + 
+                zla) + datdi[j * 9 - 1] * (d__3 * d__3 - d__4 * d__4) * cos(
+                thetaf + zla);
+/***** following correction by V.Dehant to match eq.16b, p.81, 2003 Co
+nventions*/
+/* ****   de=datdi(8,j)*sinphi*cos(thetaf+zla)+ */
+        de = datdi[j * 9 - 2] * sinphi * cos(thetaf + zla) - datdi[j * 9 - 1] 
+                * sinphi * sin(thetaf + zla);
+        xcorsta[0] = xcorsta[0] + dr * cosla * cosphi - de * sinla - dn * 
+                sinphi * cosla;
+        xcorsta[1] = xcorsta[1] + dr * sinla * cosphi + de * cosla - dn * 
+                sinphi * sinla;
+        xcorsta[2] = xcorsta[2] + dr * sinphi + dn * cosphi;
+    }
+    for(i=0; i<= 2; ++i) {
+        xcorsta[i] /= 1e3;
+    }
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+int step2lon_(double *xsta, double *fhr, double *t, double *xcorsta)
+{
+    /* Initialized data */
+
+    static double deg2rad = .017453292519943295769;
+    static double datdi[45] /* was [9][5] */ = { 0.,0.,0.,1.,0.,.47,.23,
+            .16,.07,0.,2.,0.,0.,0.,-.2,-.12,-.11,-.05,1.,0.,-1.,0.,0.,-.11,
+            -.08,-.09,-.04,2.,0.,0.,0.,0.,-.13,-.11,-.15,-.07,2.,0.,0.,1.,0.,
+            -.05,-.05,-.06,-.03 };
+
+    /* F2C generated locals */
+    double d__1, d__2, d__3;
+
+    /* Local variables */
+    static double rsta, h;
+    static int i, j;
+    static double p, s, cosla, sinla, de, dn, dr, pr, ps, thetaf, cosphi, 
+            dn_tot__, sinphi, dr_tot__, zns;
+
+    if(xsta == 0) return (-1);
+    if(fhr == 0) return (-1);
+    if(t == 0) return (-1);
+    if(xcorsta == 0) return (-1);
+
+    /* Function Body */
+/* cf. table 7.5b of IERS conventions 2003 (TN.32, pg.82) */
+/* columns are s,h,p,N',ps, dR(ip),dT(ip),dR(op),dT(op) */
+/* IERS cols.= s,h,p,N',ps, dR(ip),dR(op),dT(ip),dT(op) */
+/* units of mm */
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+    s = *t * 481267.88194 + 218.31664563 - *t * .0014663889 * *t + d__2 * (
+            d__1 * d__1) * 1.85139e-6;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    pr = *t * 1.396971278f + *t * 3.08889e-4f * *t + d__2 * (d__1 * d__1) * 
+            2.1e-8f + d__3 * d__3 * 7e-9f;
+    s += pr;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    h = *t * 36000.7697489 + 280.46645 + *t * 3.0322222e-4 * *t + d__2 * (
+            d__1 * d__1) * 2e-8f - d__3 * d__3 * 6.54e-9f;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    p = *t * 4069.01363525 + 83.35324312 - *t * .01032172222 * *t - d__2 * (
+            d__1 * d__1) * 1.24991e-5 + d__3 * d__3 * 5.263e-8;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    zns = *t * 1934.13626197 + 234.95544499 - *t * .00207561111 * *t - d__2 * 
+            (d__1 * d__1) * 2.13944e-6 + d__3 * d__3 * 1.65e-8;
+/* Computing 3rd power */
+    d__1 = *t, d__2 = d__1;
+/* Computing 4th power */
+    d__3 = *t, d__3 *= d__3;
+    ps = *t * 1.71945766667 + 282.93734098 + *t * 4.5688889e-4 * *t - d__2 * (
+            d__1 * d__1) * 1.778e-8 - d__3 * d__3 * 3.34e-9;
+/* Computing 2nd power */
+    d__1 = xsta[0];
+/* Computing 2nd power */
+    d__2 = xsta[1];
+/* Computing 2nd power */
+    d__3 = xsta[2];
+    rsta = sqrt(d__1 * d__1 + d__2 * d__2 + d__3 * d__3);
+    sinphi = xsta[2] / rsta;
+/* Computing 2nd power */
+    d__1 = xsta[0];
+/* Computing 2nd power */
+    d__2 = xsta[1];
+    cosphi = sqrt(d__1 * d__1 + d__2 * d__2) / rsta;
+    cosla = xsta[0] / cosphi / rsta;
+    sinla = xsta[1] / cosphi / rsta;
+/* reduce angles to between 0 and 360 */
+    s = d_mod(&s, &c_b56);
+/* **** tau=dmod(tau,360.d0)       !*** tau not used here--09jul28 */
+    h = d_mod(&h, &c_b56);
+    p = d_mod(&p, &c_b56);
+    zns = d_mod(&zns, &c_b56);
+    ps = d_mod(&ps, &c_b56);
+    dr_tot__ = 0.;
+    dn_tot__ = 0.;
+    for(i=0; i<= 2; ++i) {
+        xcorsta[i] = 0.;
+    }
+/*             1 2 3 4   5   6      7      8      9 */
+/* columns are s,h,p,N',ps, dR(ip),dT(ip),dR(op),dT(op) */
+    for(j=1; j<=5; ++j) {
+        thetaf = (datdi[j * 9 - 9] * s + datdi[j * 9 - 8] * h + datdi[j * 9 - 
+                7] * p + datdi[j * 9 - 6] * zns + datdi[j * 9 - 5] * ps) * 
+                deg2rad;
+/* Computing 2nd power */
+        d__1 = sinphi;
+/* Computing 2nd power */
+        d__2 = sinphi;
+        dr = datdi[j * 9 - 4] * (d__1 * d__1 * 3. - 1.) / 2.f * cos(thetaf) + 
+                datdi[j * 9 - 2] * (d__2 * d__2 * 3. - 1.) / 2.f * sin(thetaf)
+                ;
+        dn = datdi[j * 9 - 3] * (cosphi * sinphi * 2.) * cos(thetaf) + datdi[
+                j * 9 - 1] * (cosphi * sinphi * 2.) * sin(thetaf);
+        de = 0.;
+        dr_tot__ += dr;
+        dn_tot__ += dn;
+        xcorsta[0] = xcorsta[0] + dr * cosla * cosphi - de * sinla - dn * 
+                sinphi * cosla;
+        xcorsta[1] = xcorsta[1] + dr * sinla * cosphi + de * cosla - dn * 
+                sinphi * sinla;
+        xcorsta[2] = xcorsta[2] + dr * sinphi + dn * cosphi;
+    }
+    for(i=0; i<= 2; ++i) {
+        xcorsta[i] /= 1e3;
+    }
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+int st1idiu_(double *xsta, double *xsun, double *xmon,
+             double *fac2sun, double *fac2mon, double *xcorsta)
+{
+    /* Initialized data */
+
+    static double dhi = -.0025;
+    static double dli = -7e-4;
+
+    /* F2C generated locals */
+    double d__1, d__2;
+
+    /* Local variables */
+    static double rsta, rmon, rsun, cosla, demon, sinla, dnmon, desun, 
+            drmon, dnsun, drsun;
+    static double de, dn, dr, cosphi, sinphi, cos2phi;
+
+    if(xsta == 0) return (-1);
+    if(xsun == 0) return (-1);
+    if(xmon == 0) return (-1);
+    if(fac2sun == 0) return (-1);
+    if(fac2mon == 0) return (-1);
+    if(xcorsta == 0) return (-1);
+
+/* this subroutine gives the out-of-phase corrections induced by */
+/* mantle inelasticity in the diurnal band */
+/*  input: xsta,xsun,xmon,fac2sun,fac2mon */
+/* output: xcorsta */
+
+    /* Function Body */
+    rsta = enorm8_(&xsta[0]);
+    sinphi = xsta[2] / rsta;
+/* Computing 2nd power */
+    d__1 = xsta[0];
+/* Computing 2nd power */
+    d__2 = xsta[1];
+    cosphi = sqrt(d__1 * d__1 + d__2 * d__2) / rsta;
+/* Computing 2nd power */
+    d__1 = cosphi;
+/* Computing 2nd power */
+    d__2 = sinphi;
+    cos2phi = d__1 * d__1 - d__2 * d__2;
+    sinla = xsta[1] / cosphi / rsta;
+    cosla = xsta[0] / cosphi / rsta;
+    rmon = enorm8_(&xmon[0]);
+    rsun = enorm8_(&xsun[0]);
+/* Computing 2nd power */
+    d__1 = rsun;
+    drsun = dhi * -3. * sinphi * cosphi * *fac2sun * xsun[2] * (xsun[0] * 
+            sinla - xsun[1] * cosla) / (d__1 * d__1);
+/* Computing 2nd power */
+    d__1 = rmon;
+    drmon = dhi * -3. * sinphi * cosphi * *fac2mon * xmon[2] * (xmon[0] * 
+            sinla - xmon[1] * cosla) / (d__1 * d__1);
+/* Computing 2nd power */
+    d__1 = rsun;
+    dnsun = dli * -3. * cos2phi * *fac2sun * xsun[2] * (xsun[0] * sinla - 
+            xsun[1] * cosla) / (d__1 * d__1);
+/* Computing 2nd power */
+    d__1 = rmon;
+    dnmon = dli * -3. * cos2phi * *fac2mon * xmon[2] * (xmon[0] * sinla - 
+            xmon[1] * cosla) / (d__1 * d__1);
+/* Computing 2nd power */
+    d__1 = rsun;
+    desun = dli * -3. * sinphi * *fac2sun * xsun[2] * (xsun[0] * cosla + xsun[
+            1] * sinla) / (d__1 * d__1);
+/* Computing 2nd power */
+    d__1 = rmon;
+    demon = dli * -3. * sinphi * *fac2mon * xmon[2] * (xmon[0] * cosla + xmon[
+            1] * sinla) / (d__1 * d__1);
+    dr = drsun + drmon;
+    dn = dnsun + dnmon;
+    de = desun + demon;
+    xcorsta[0] = dr * cosla * cosphi - de * sinla - dn * sinphi * cosla;
+    xcorsta[1] = dr * sinla * cosphi + de * cosla - dn * sinphi * sinla;
+    xcorsta[2] = dr * sinphi + dn * cosphi;
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+int st1isem_(double *xsta, double *xsun, double *xmon,
+             double *fac2sun, double *fac2mon, double *xcorsta)
+{
+    /* Initialized data */
+
+    static double dhi = -.0022;
+    static double dli = -7e-4;
+
+    /* F2C generated locals */
+    double d__1, d__2, d__3, d__4;
+
+    /* Local variables */
+    static double rsta, rmon, rsun, costwola, sintwola, cosla, demon, 
+                  sinla, dnmon, desun, drmon, dnsun, drsun;
+    static double de, dn, dr, cosphi, sinphi;
+
+    if(xsta == 0) return (-1);
+    if(xsun == 0) return (-1);
+    if(xmon == 0) return (-1);
+    if(fac2sun == 0) return (-1);
+    if(fac2mon == 0) return (-1);
+    if(xcorsta == 0) return (-1);
+
+/* this subroutine gives the out-of-phase corrections induced by */
+/* mantle inelasticity in the diurnal band */
+/*  input: xsta,xsun,xmon,fac2sun,fac2mon */
+/* output: xcorsta */
+
+    /* Function Body */
+    rsta = enorm8_(&xsta[0]);
+    sinphi = xsta[2] / rsta;
+/* Computing 2nd power */
+    d__1 = xsta[0];
+/* Computing 2nd power */
+    d__2 = xsta[1];
+    cosphi = sqrt(d__1 * d__1 + d__2 * d__2) / rsta;
+    sinla = xsta[1] / cosphi / rsta;
+    cosla = xsta[0] / cosphi / rsta;
+/* Computing 2nd power */
+    d__1 = cosla;
+/* Computing 2nd power */
+    d__2 = sinla;
+    costwola = d__1 * d__1 - d__2 * d__2;
+    sintwola = cosla * 2. * sinla;
+    rmon = enorm8_(&xmon[0]);
+    rsun = enorm8_(&xsun[0]);
+/* Computing 2nd power */
+    d__1 = cosphi;
+/* Computing 2nd power */
+    d__2 = xsun[0];
+/* Computing 2nd power */
+    d__3 = xsun[1];
+/* Computing 2nd power */
+    d__4 = rsun;
+    drsun = dhi * -.75 * (d__1 * d__1) * *fac2sun * ((d__2 * d__2 - d__3 * 
+            d__3) * sintwola - xsun[0] * 2.f * xsun[1] * costwola) / (d__4 * 
+            d__4);
+/* Computing 2nd power */
+    d__1 = cosphi;
+/* Computing 2nd power */
+    d__2 = xmon[0];
+/* Computing 2nd power */
+    d__3 = xmon[1];
+/* Computing 2nd power */
+    d__4 = rmon;
+    drmon = dhi * -.75 * (d__1 * d__1) * *fac2mon * ((d__2 * d__2 - d__3 * 
+            d__3) * sintwola - xmon[0] * 2.f * xmon[1] * costwola) / (d__4 * 
+            d__4);
+/* Computing 2nd power */
+    d__1 = xsun[0];
+/* Computing 2nd power */
+    d__2 = xsun[1];
+/* Computing 2nd power */
+    d__3 = rsun;
+    dnsun = dli * 1.5 * sinphi * cosphi * *fac2sun * ((d__1 * d__1 - d__2 * 
+            d__2) * sintwola - xsun[0] * 2. * xsun[1] * costwola) / (d__3 * 
+            d__3);
+/* Computing 2nd power */
+    d__1 = xmon[0];
+/* Computing 2nd power */
+    d__2 = xmon[1];
+/* Computing 2nd power */
+    d__3 = rmon;
+    dnmon = dli * 1.5 * sinphi * cosphi * *fac2mon * ((d__1 * d__1 - d__2 * 
+            d__2) * sintwola - xmon[0] * 2. * xmon[1] * costwola) / (d__3 * 
+            d__3);
+/* Computing 2nd power */
+    d__1 = xsun[0];
+/* Computing 2nd power */
+    d__2 = xsun[1];
+/* Computing 2nd power */
+    d__3 = rsun;
+    desun = dli * -1.5 * cosphi * *fac2sun * ((d__1 * d__1 - d__2 * d__2) * 
+            costwola + xsun[0] * 2.f * xsun[1] * sintwola) / (d__3 * d__3);
+/* Computing 2nd power */
+    d__1 = xmon[0];
+/* Computing 2nd power */
+    d__2 = xmon[1];
+/* Computing 2nd power */
+    d__3 = rmon;
+    demon = dli * -1.5 * cosphi * *fac2mon * ((d__1 * d__1 - d__2 * d__2) * 
+            costwola + xmon[0] * 2. * xmon[1] * sintwola) / (d__3 * d__3);
+    dr = drsun + drmon;
+    dn = dnsun + dnmon;
+    de = desun + demon;
+    xcorsta[0] = dr * cosla * cosphi - de * sinla - dn * sinphi * cosla;
+    xcorsta[1] = dr * sinla * cosphi + de * cosla - dn * sinphi * sinla;
+    xcorsta[2] = dr * sinphi + dn * cosphi;
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+int sprod_(double *x, double *y, double *scal, double *r1, double *r2)
+{
+
+   if(x == 0) return (-1); 
+   if(y == 0) return (-1); 
+   if(scal == 0) return (-1); 
+   if(r1 == 0) return (-1); 
+   if(r2 == 0) return (-1); 
+
+/*  computation of the scalar-product of two vectors and their norms */
+
+/*  input:   x(i),i=1,2,3  -- components of vector x */
+/*           y(i),i=1,2,3  -- components of vector y */
+/*  output:  scal          -- scalar product of x and y */
+/*           r1,r2         -- lengths of the two vectors x and y */
+
+    /* Function Body */
+    *r1 = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+    *r2 = sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2]);
+    *scal = x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+double enorm8_(double *a)
+{
+    /* F2C generated locals */
+    double ret_val;
+    if(a == 0) return 0.0;  // !!!!!!
+
+    /* compute euclidian norm of a vector (of length 3) */
+
+    /* Function Body */
+    ret_val = sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    return ret_val;
+}
+
+/* ----------------------------------------------------------------------- */
+
+int zero_vec8__(double *v)
+{
+    /* initialize a vector (of length 3) to zero */
+    /* Function Body */
+    if(v == 0) return (-1); 
+
+    v[0] = 0.;
+    v[1] = 0.;
+    v[2] = 0.;
+    return 0;
+} 
+
+int moonxyz_(int *mjd, double *fmjd, double *rm)
+{
+    /* F2C generated locals */
+    double d__1;
+
+    /* Local variables */
+    static double ghar, d, f, q, t, oblir, tjdtt, t1, t2, t3, el;
+    static double cselat, selatd, cselon, selond, fmjdtt, sselat, el0, 
+                  sselon, tsectt, rm1, rm2, rm3, elp, rse;
+    static double tsecgps;
+
+    if(mjd == 0) return (-1); 
+    if(fmjd == 0) return (-1); 
+    if(rm == 0) return (-1); 
+
+/* get low-precision, geocentric coordinates for moon (ECEF) */
+/*** input:  mjd/fmjd, is Modified Julian Date (and fractional) in GPS time*/
+/* output: rm, is geocentric lunar position vector [m] in ECEF */
+/*** 1."satellite orbits: models, methods, applications" montenbruck & gill(2000)*/
+/* section 3.3.2, pg. 72-73 */
+/*** 2."astronomy on the personal computer, 4th ed." montenbruck & pfleger (2005)*/
+/* section 3.2, pg. 38-39  routine MiniMoon */
+/* use TT for lunar ephemerides */
+
+    /* Function Body */
+    if((tide_options & LOW_RES_TIDES) == 0) {  // use more accurate values from moon_posn()
+       selatd = moon_lat;
+       selond = moon_lon;
+       rse = moon_dist;
+       oblir = obliquity(jd_utc, 1);
+    }
+    else {
+       tsecgps = *fmjd * 86400.;
+   /* *** GPS time (sec of */
+       tsectt = gps2tt_(&tsecgps);
+   /* *** TT  time (sec of */
+       fmjdtt = tsectt / 86400.;
+   /* julian centuries since 1.5 january 2000 (J2000) */
+   /*   (note: also low precision use of mjd --> tjd) */
+   /* *** TT  time (fract. */
+       tjdtt = *mjd + fmjdtt + 2400000.5;
+   /* *** Julian Date, TT */
+       t = (tjdtt - 2451545.) / 36525.;
+   /* el0 -- mean longitude of Moon (deg) */
+   /* el  -- mean anomaly of Moon (deg) */
+   /* elp -- mean anomaly of Sun  (deg) */
+   /* f   -- mean angular distance of Moon from ascending node (deg) */
+   /* d   -- difference between mean longitudes of Sun and Moon (deg) */
+   /* equations 3.47, p.72 */
+   /* *** julian centuries, */
+       el0 = t * 481267.88088 + 218.31617 - t * 1.3972f;
+       el = t * 477198.86753 + 134.96292;
+       elp = t * 35999.04944 + 357.52543;
+       f = t * 483202.01873 + 93.27283;
+       d = t * 445267.11135 + 297.85027;
+   /* longitude w.r.t. equinox and ecliptic of year 2000 */
+       selond = el0 + sin(el / stuff_1.rad) * 6.288888888888889 + sin((el + el) /
+                stuff_1.rad) * .2136111111111111 - sin((el - d - d) / 
+               stuff_1.rad) * 1.273888888888889 + sin((d + d) / stuff_1.rad) * 
+               .6583333333333333 - sin(elp / stuff_1.rad) * .1855555555555556 - 
+               sin((f + f) / stuff_1.rad) * .1144444444444444 - sin((el + el - d 
+               - d) / stuff_1.rad) * .05888888888888889 - sin((el + elp - d - d) 
+               / stuff_1.rad) * .05722222222222222 + sin((el + d + d) / 
+               stuff_1.rad) * .05333333333333334 - sin((elp - d - d) / 
+               stuff_1.rad) * .04583333333333333 + sin((el - elp) / stuff_1.rad) 
+               * .04111111111111111 - sin(d / stuff_1.rad) * .03472222222222222 
+               - sin((el + elp) / stuff_1.rad) * .03055555555555555 - sin((f + f 
+               - d - d) / stuff_1.rad) * .01527777777777778;
+   /* latitude w.r.t. equinox and ecliptic of year 2000 */
+   /* *** eq 3.48, p.72 */
+       q = sin((f + f) / stuff_1.rad) * .1144444444444444 + sin(elp / 
+               stuff_1.rad) * .1502777777777778;
+   /* *** temporary ter */
+       selatd = sin((f + selond - el0 + q) / stuff_1.rad) * 5.144444444444445 - 
+               sin((f - d - d) / stuff_1.rad) * .1461111111111111 + sin((el + f 
+               - d - d) / stuff_1.rad) * .01222222222222222 - sin((-el + f - d - 
+               d) / stuff_1.rad) * .008611111111111111 - sin((-el - el + f) / 
+               stuff_1.rad) * .006944444444444444 - sin((elp + f - d - d) / 
+               stuff_1.rad) * .006388888888888889 + sin((-el + f) / stuff_1.rad) 
+               * .005833333333333334 + sin((-elp + f - d - d) / stuff_1.rad) * 
+               .003055555555555556;
+   /* distance from Earth center to Moon (m) */
+   /* *** eq 3.49, p.72 */
+       rse = 3.85e8 - cos(el / stuff_1.rad) * 2.0905e7 - cos((d + d - el) / 
+               stuff_1.rad) * 3.699e6 - cos((d + d) / stuff_1.rad) * 2.956e6 - 
+               cos((el + el) / stuff_1.rad) * 5.7e5 + cos((el + el - d - d) / 
+               stuff_1.rad) * 2.46e5 - cos((elp - d - d) / stuff_1.rad) * 2.05e5 
+               - cos((el + d + d) / stuff_1.rad) * 1.71e5 - cos((el + elp - d - 
+               d) / stuff_1.rad) * 1.52e5;
+       selond += t * 1.3972;
+       oblir = 23.43929111 / stuff_1.rad;
+    }
+//sprintf(debug_text2, "seella:   %.9f %.9f %.9f", fmod(selatd+360.0, 360.0),fmod(selond,360.0), rse);
+/* convert spherical ecliptic coordinates to equatorial cartesian */
+/* precession of equinox wrt. J2000   (p.71) */
+/* *** eq 3.50, p.72 */
+
+
+/*** position vector of moon (mean equinox & ecliptic of J2000) (EME2000, ICRF)*/
+/***                         (plus long. advance due to precession -- eq. above)*/
+/* *** degrees */
+/* *** obliquity of the J2000 eclipti */
+    sselat = sin(selatd / stuff_1.rad);
+    cselat = cos(selatd / stuff_1.rad);
+    sselon = sin(selond / stuff_1.rad);
+    cselon = cos(selond / stuff_1.rad);
+    t1 = rse * cselon * cselat;
+/* *** meters          !*** eq. 3.51, */
+    t2 = rse * sselon * cselat;
+/* *** meters          !*** eq. 3.51, */
+    t3 = rse * sselat;
+//sprintf(debug_text3, "xyzt: %.9f %.9f %.9f  rse:%.9f", t1,t2,t3, rse);
+/* *** meters          !*** eq. 3.51, */
+    d__1 = -oblir;
+    rot1_(&d__1, &t1, &t2, &t3, &rm1, &rm2, &rm3);
+/* convert position vector of moon to ECEF  (ignore polar motion/LOD) 
+*/
+/* *** eq. 3.51, */
+    getghar_(mjd, fmjd, &ghar);
+/* *** sec 2.3.1, */
+    rot3_(&ghar, &rm1, &rm2, &rm3, &rm[0], &rm[1], &rm[2]);
+/* *** eq. 2.89, */
+    return 0;
+} 
+
+
+/*********************************************************************************/
+int getghar_(int *mjd, double *fmjd, double *ghar)
+{
+    static double ghad, d;
+    static int i;
+    static double fmjdutc, tsecgps, tsecutc;
+
+    if(mjd == 0) return (-1); 
+    if(fmjd == 0) return (-1); 
+    if(ghar == 0) return (-1); 
+
+/* convert mjd/fmjd in GPS time to Greenwich hour angle (in radians) */
+
+/*** "satellite orbits: models, methods, applications" montenbruck & gill(2000) */
+/* section 2.3.1, pg. 33 */
+/*** need UT to get sidereal time  ("astronomy on the personal computer", 4th ed) 2005) */
+    tsecgps = *fmjd * 86400.;
+/* *** GPS time (sec of */
+    tsecutc = gps2utc_(&tsecgps);
+/* *** UTC time (sec of */
+    fmjdutc = tsecutc / 86400.;
+/* **** d = MJD - 51544.5d0                               !*** footnote */
+
+/* *** UTC time (fract. */
+    d = *mjd - 51544 + (fmjdutc - .5);
+/* greenwich hour angle for J2000  (12:00:00 on 1 Jan 2000) */
+/***** ghad = 100.46061837504d0 + 360.9856473662862d0*d  !*** eq. 2.85 (+d
+igits)*/
+/* *** days since */
+    ghad = d * 360.9856473662862 + 280.46061837504;
+/* *** normalize to 0-360 and convert to radians */
+/* *** corrn.   (+ */
+    i = (int) (ghad / 360.);
+    *ghar = (ghad - i * 360.) / stuff_1.rad;
+    while(*ghar > stuff_1.pi2) {
+       *ghar -= stuff_1.pi2;
+    }
+    while(*ghar < 0.) {
+       *ghar += stuff_1.pi2;
+    }
+    return 0;
+} 
+
+
+/***************************************************************************/
+int sunxyz_(int *mjd, double *fmjd, double *rs)
+{
+    /* Local variables */
+    static double cobe, ghar, sobe, opod, slon, emdeg, r, t, cslon, slond,
+                  tjdtt, sslon, em;
+    static double fmjdtt, em2, tsectt, rs1, rs2, rs3, obe;
+    static double tsecgps;
+
+    if(mjd == 0) return (-1); 
+    if(fmjd == 0) return (-1); 
+    if(rs == 0) return (-1); 
+
+    /* get low-precision, geocentric coordinates for sun (ECEF) */
+    /*** input, mjd/fmjd, is Modified Julian Date (and fractional) in GPS time */
+    /* output, rs, is geocentric solar position vector [m] in ECEF */
+    /*** 1."satellite orbits: models, methods, applications" montenbruck & gill(2000) */
+    /* section 3.3.2, pg. 70-71 */
+    /*** 2."astronomy on the personal computer, 4th ed." montenbruck & pfleger (2005) */
+    /* section 3.2, pg. 39  routine MiniSun */
+    /* mean elements for year 2000, sun ecliptic orbit wrt. Earth */
+
+    /* Function Body */
+    if((tide_options & LOW_RES_TIDES) == 0) {  // use more accurate values from moon_posn()
+       slond = sun_hlon;
+       r = earth_sun_dist(jd_utc) * 1000.0;
+       obe = obliquity(jd_utc, 1);
+       cobe = cos(obe);
+       sobe = sin(obe);
+    }
+    else {
+       obe = 23.43929111 / stuff_1.rad;
+       /* *** obliquity of the J2000 ecliptic */
+       sobe = sin(obe);
+       cobe = cos(obe);
+       opod = 282.94;
+
+       /* use TT for solar ephemerides */
+       /* *** RAAN + arg.peri.  (deg.) */
+       tsecgps = *fmjd * 86400.;
+       /* *** GPS time (sec of */
+       tsectt = gps2tt_(&tsecgps);
+       /* *** TT  time (sec of */
+       fmjdtt = tsectt / 86400.;
+       /* julian centuries since 1.5 january 2000 (J2000) */
+       /*   (note: also low precision use of mjd --> tjd) */
+       /* *** TT  time (fract. */
+       tjdtt = *mjd + fmjdtt + 2400000.5;
+       /* *** Julian Date, TT */
+       t = (tjdtt - 2451545.) / 36525.;
+       /* *** julian centuries, */
+       emdeg = t * 35999.049 + 357.5256;
+       /* *** degrees */
+       em = emdeg / stuff_1.rad;
+       /* *** radians */
+       em2 = em + em;
+       /* series expansions in mean anomaly, em   (eq. 3.43, p.71) */
+       /* *** radians */
+       r = (149.619 - cos(em) * 2.499 - cos(em2) * .021) * 1.0e9;
+       /* *** m. */
+       slond = opod + emdeg + (sin(em) * 6892. + sin(em2) * 72.) / 3600.;
+       /* precession of equinox wrt. J2000   (p.71) */
+       slond += t * 1.3972;
+    }
+
+    /*** position vector of sun (mean equinox & ecliptic of J2000) (EME2000, ICRF)*/
+    /***                        (plus long. advance due to precession -- eq. above)*/
+    /* *** degrees */
+
+    slon = slond / stuff_1.rad;
+//sprintf(plot_title, "slond:%.9f  r:%.9f  sunhlon:%.9f  erad:%.9f  mjd:%d fmjd:%f", 
+//fmod(slond,360.0),r, sun_hlon,earth_sun_dist(jd_utc)*1000.0, *mjd,*fmjd);
+    /* *** radians */
+    sslon = sin(slon);
+    cslon = cos(slon);
+    rs1 = r * cslon;
+    /* *** meters             !*** eq. 3.46, */
+    rs2 = r * sslon * cobe;
+    /* *** meters             !*** eq. 3.46, */
+    rs3 = r * sslon * sobe;
+    /* convert position vector of sun to ECEF  (ignore polar motion/LOD) */
+
+    /* *** meters             !*** eq. 3.46, */
+    getghar_(mjd, fmjd, &ghar);
+    /* *** sec 2.3.1, */
+    rot3_(&ghar, &rs1, &rs2, &rs3, &rs[0], &rs[1], &rs[2]);
+    /* *** eq. 2.89, */
+    return 0;
+} 
+
+
+/***************************************************************************/
+int lhsaaz_(double *u, double *v, double *w, 
+        double *ra, double *az, double *va)
+{
+    /* Local variables */
+    static double s, r2, s2;
+
+    if(u == 0) return (-1); 
+    if(v == 0) return (-1); 
+    if(w == 0) return (-1); 
+    if(ra == 0) return (-1); 
+    if(az == 0) return (-1); 
+    if(va == 0) return (-1); 
+
+    /* determine range,azimuth,vertical angle from local horizon coord. */
+    s2 = *u * *u + *v * *v;
+    r2 = s2 + *w * *w;
+    s = sqrt(s2);
+    *ra = sqrt(r2);
+    *az = atan2(*v, *u);
+    *va = atan2(*w, s);
+    return 0;
+} 
+
+/* ----------------------------------------------------------------------- */
+int geoxyz_(double *gla, double *glo, double *eht, double *x, double *y, double *z)
+{
+    /* Local variables */
+    static double w, w2, en, cla, sla;
+
+    /* convert geodetic lat, long, ellip ht. to x,y,z */
+    sla = sin(*gla);
+    cla = cos(*gla);
+    w2 = 1. - eccSquared * sla * sla;
+    w = sqrt(w2);
+    en = WGS84_A / w;
+    *x = (en + *eht) * cla * cos(*glo);
+    *y = (en + *eht) * cla * sin(*glo);
+    *z = (en * (1. - eccSquared) + *eht) * sla;
+    return 0;
+}
+
+/* ----------------------------------------------------------------------- */
+int rge_(double *gla, double *glo, double *u, 
+        double *v, double *w, double *x, double *y, double *z)
+{
+    /* Local variables */
+    static double cb, cl, sb, sl;
+
+    /* given a rectangular cartesian system (x,y,z) */
+    /* compute a geodetic h cartesian sys   (u,v,w) */
+    sb = sin(*gla);
+    cb = cos(*gla);
+    sl = sin(*glo);
+    cl = cos(*glo);
+    *u = -sb * cl * *x - sb * sl * *y + cb * *z;
+    *v = -sl * *x + cl * *y;
+    *w = cb * cl * *x + cb * sl * *y + sb * *z;
+    return 0;
+}
+
+/* ----------------------------------------------------------------------- */
+int rot1_(double *theta, double *x, double *y, 
+        double *z, double *u, double *v, double *w)
+{
+    /* Local variables */
+    static double c, s;
+
+    /* rotate coordinate axes about 1 axis by angle of theta radians */
+    /* x,y,z transformed into u,v,w */
+    s = sin(*theta);
+    c = cos(*theta);
+    *u = *x;
+    *v = c * *y + s * *z;
+    *w = c * *z - s * *y;
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------- */
+int rot3_(double *theta, double *x, double *y, 
+        double *z, double *u, double *v, double *w)
+{
+    /* Local variables */
+    static double c, s;
+
+    /* rotate coordinate axes about 3 axis by angle of theta radians */
+    /* x,y,z transformed into u,v,w */
+
+    s = sin(*theta);
+    c = cos(*theta);
+    *u = c * *x + s * *y;
+    *v = c * *y - s * *x;
+    *w = *z;
+    return 0;
+} 
+
+
+
+/* *********************************************************************** */
+/* supplemental time functions **************************************** */
+/* *********************************************************************** */
+double gps2tt_(double *tsec)
+{
+    /* F2C generated locals */
+    double ret_val;
+
+    if(tsec == 0) return (-1); 
+
+    /* convert tsec in GPS to tsec in TT */
+    ret_val = *tsec + 51.184;
+    /* *** fixed offset */
+    return ret_val;
+}
+
+
+double gps2utc_(double *tsec)
+{
+    /* F2C generated locals */
+    double ret_val;
+
+    if(tsec == 0) return (-1);
+
+    /* convert tsec in GPS to tsec in UTC */
+    /* GPS is ahead of UTC  (c.f. USNO) */
+    /* UTC is behind GPS */
+    /* gpsleap() is (so far) positive (and increasing) */
+    /* so, must subtract gpsleap from GPS to get UTC */
+
+    ret_val = *tsec - utc_offset;
+    return ret_val;
+}
+
+
+double grav_force(double jd)
+{
+double d;
+
+   // jd is utc time
+   d = 0.0;
+   if(lat && lon) {  // only do this if lat/lon available
+      d = calc_gals(jd, lat*180.0/PI, lon*180.0/PI, alt);
+
+      calc_earth_tide(jd + jtime(0,0,utc_offset,0.0));  // uses GPS time
+      d = alt_tide;
+   }
+
+   return d;
+}
+
+
+//
+//
+//   Calendar conversions
+//
+//
 
 void easter(int y)
 {
@@ -7623,18 +15442,18 @@ double jd;
 
     // calculate Ash Wednesday
     jd = jdate(y, m, d);
-    gregorian(jd-46.0);
+    gregorian(0, jd-46.0);
     set_holiday(ASH, g_month, g_day);
 
-    gregorian(jd-47.0);
+    gregorian(0, jd-47.0);
     set_holiday(MARDI_GRAS, g_month, g_day);
 
     // calculate Palm Sunday
-    gregorian(jd-7.0);
+    gregorian(0, jd-7.0);
     set_holiday(PALM_SUNDAY, g_month, g_day);
 
     // calculate Good Friday
-    gregorian(jd-2.0);
+    gregorian(0, jd-2.0);
     set_holiday(GOOD_FRIDAY, g_month, g_day);
 }
 
@@ -7828,7 +15647,7 @@ double jd;
 int leap;
 int mm;
 
-// gregorian(spring-365.24238426);    // time of spring in GMT of last year;
+// gregorian(0, spring-365.24238426);    // time of spring in GMT of last year;
 // jd = jdate(g_year, g_month, g_day);   // jdate of start of spring
 // if((jd - (3.5/24.0) + (12.0/24.0)) > spring) {  // it's after noon in Tehran
 //    jd += 1.0;  //!!! kludge - we should be using solar noon in Tehran
@@ -7979,7 +15798,7 @@ int m_year;
    if(i >= 0) holiday[i].text = &winter_s[0];
 
    t = chinese_ny();
-   gregorian(t);
+   gregorian(0, t);
    sprintf(china_year, "Happy Chinese New Year!  It's the Year of the %s.", zodiac[this_year%12]);
 // sprintf(china_year, "Happy Chinese New Year!  It's the Year of the %s.", zodiac[g_year%12]);
    i = set_holiday(CHINA_NY, g_month, g_day);
@@ -7989,11 +15808,11 @@ int m_year;
 
    if(dst_disabled() == 0) {    // daylight savings time days
       t = jdate(this_year, dst_start_month, dst_start_day) - 1.0;
-      gregorian(t);
+      gregorian(0, t);
       set_holiday(CLOCK_FWD, g_month, g_day);
 
       t = jdate(this_year, dst_end_month, dst_end_day) - 1.0;
-      gregorian(t);
+      gregorian(0, t);
       set_holiday(CLOCK_BACK, g_month, g_day);
    }
    else {  // disable DST message
@@ -8004,7 +15823,7 @@ int m_year;
    // grandprents day
    gd = nth_dow_in(1, 1, 9, this_year);  // first Monday in sept = Labor Day
    t = jdate(this_year, 9, gd) + 6.0;    // the next sunday
-   gregorian(t);
+   gregorian(0, t);
    set_holiday(GRANNY, g_month, g_day);
 
    // election day
@@ -8045,48 +15864,48 @@ int m_year;
    rosh = rosh_jd(this_year);        // our reference is Rosh Hashahna 
                                      // once you know Rosh Hashahna,  all is revealed
 
-   gregorian(rosh-1.0);              // Rosh Hashahna (party starts the night before)
+   gregorian(0, rosh-1.0);              // Rosh Hashahna (party starts the night before)
    set_holiday(ROSH, g_month, g_day);
 
-   gregorian(rosh+9.0-1.0);          // Yom Kipper is nine days after Rosh Hashanah
+   gregorian(0, rosh+9.0-1.0);          // Yom Kipper is nine days after Rosh Hashanah
    set_holiday(YOM, g_month, g_day);
 
    po = rosh - 29.0 - 30.0 - 29.0 - 30.0 - 29.0 - 30.0;  // Julian date of Nisan 1
    purim = po - 29.0 + 13.0;   // Purim is Adar 14
 
    purim -= 1.0;               // start observance the night before
-   gregorian(purim);
+   gregorian(0, purim);
    set_holiday(PURIM, g_month, g_day);
 
    po += 14.0;                 // Passover is Nisan 15
    po -= 1.0;                  // but starts the night before
-   gregorian(po);              // convert Julian passover to Gregorian terms
+   gregorian(0, po);              // convert Julian passover to Gregorian terms
    set_holiday(PASSOVER, g_month, g_day);
 
    rosh += 30.0 + 29.0 + 24.0;   // Hanukkah is Kislev 25
    rosh -= 1.0;                  // start observance the night before
-   gregorian(rosh);
+   gregorian(0, rosh);
    set_holiday(HANUKKAH, g_month, g_day);
 
    t = jtimes[9] + 14.0 - 1.0;   // 15 Tishrei
 // rosh -= 1.0;                  // start observance the night before
-   gregorian(t);
+   gregorian(0, t);
    set_holiday(SUKKOT, g_month, g_day);
 
    t = jtimes[5] + 5.0 - 1.0;    // 6 Sivan
 // rosh -= 1.0;                  // start observance the night before
-   gregorian(t);
+   gregorian(0, t);
    set_holiday(SHAVUOT, g_month, g_day);
 
 // get_mayan_date();  // Mayan Tzolkin new year
 // t = (360 - ((uinal * 20) + kin)) % 360;
 // t += jdate(pri_year, pri_month, pri_day);
-// gregorian(t);
+// gregorian(0, t);
 // set_holiday(MAYAN_NY, g_month, g_day);
 
    t = jdate(2010,5,27);      // t = known Tzolkin new year
-   t += (float) (MAYAN_CORR-mayan_correlation);
-   gregorian(jd_local);
+   t += (MAYAN_CORR-mayan_correlation);
+   gregorian(0, jd_local);
    po = jdate(g_year,g_month,g_day);  // today
    m_year = 2010;
    while(m_year <= (this_year+2)) {  // find Mayan Tzolkin new year that starts on or after today
@@ -8094,18 +15913,18 @@ int m_year;
       t += 260.0;
       ++m_year;
    }
-   gregorian(t);
+   gregorian(0, t);
    set_holiday(MAYAN_NY, g_month, g_day);
 
    t = jdate(2012, 12, 20);
-   t += (float) (MAYAN_CORR-mayan_correlation);
-   gregorian(t);
+   t += (MAYAN_CORR-mayan_correlation);
+   gregorian(0, t);
    if(g_year == this_year) set_holiday(DOOMSDAY, g_month, g_day);
    else                    set_holiday(DOOMSDAY, 0, 0);
 
    t = jdate(2009,10,7);      // t = known Aztec new year
    t += (double) aztec_epoch;
-   gregorian(jd_local);
+   gregorian(0, jd_local);
    po = jdate(g_year,g_month,g_day);  // today
    g_year = 2009;
    while(g_year <= (this_year+2)) {   // find Aztec new year that starts on or after today
@@ -8113,7 +15932,7 @@ int m_year;
       t += 365.0;
       ++g_year;
    }
-   gregorian(t);
+   gregorian(0, t);
    set_holiday(AZTEC_NY, g_month, g_day);
 
    if(this_year == 2038) set_holiday(UNIX_CLOCK, 1, 18);
@@ -8194,21 +16013,13 @@ double t;
    }
 }
 
-
-int show_greetings()
+int is_holiday(int pri_year,int pri_month,int pri_day)
 {
 int i;
-int day;
 int dow;
+int day;
 
-   // see if today is a day of greetings
-   if(no_greetings) return 0;         // user is a grinch...
-   if(title_type == USER) return 0;   // don't override the user's title
-   if(!have_local_time) return 0;     // time is in an astronomical scale
-//printf("greetings %d\n", calendar_entries);
-//for(i=0; i<calendar_entries; i++) { // is it a special day?
-//printf("i:%-3d  nth:%d  day:%d  mo:%d   text:%s\n", i, holiday[i].nth,holiday[i].day,holiday[i].month,holiday[i].text);
-//}
+   if(no_greetings) return 0;
 
    for(i=0; i<calendar_entries; i++) { // is it a special day?
       if(holiday[i].month == 0) continue;
@@ -8226,17 +16037,96 @@ int dow;
          if(dow != holiday[i].month) continue;
       }
       if(day != pri_day) continue;
-
-      sprintf(plot_title, "%s", holiday[i].text);
-      title_type = GREETING;
-      return day;
-   }
-
-   if(title_type == GREETING) {  // erase old greeting
-      plot_title[0] = 0;
-      title_type = NONE;
+      return 1;
    }
    return 0;
+}
+
+
+int show_greetings()
+{
+int i;
+unsigned j;
+char c;
+int day;
+int dow;
+int shown;
+char alarm[SLEN+1];
+
+   // see if today is a day of greetings
+   if(no_greetings) return 0;         // user is a grinch...
+   if(greet_on == 0) return 0;        // not all info available for calculating greetings
+   if(title_type == USER) return 0;   // don't override the user's title
+   if(!have_local_time) return 0;     // time is in an astronomical scale
+//printf("greetings %d\n", calendar_entries);
+//for(i=0; i<calendar_entries; i++) { // is it a special day?
+//printf("i:%-3d  nth:%d  day:%d  mo:%d   text:%s\n", i, holiday[i].nth,holiday[i].day,holiday[i].month,holiday[i].text);
+//}
+
+   shown = 0;
+   for(i=0; i<calendar_entries; i++) { // is it a special day?
+      if(holiday[i].month == 0) continue;
+
+      day = holiday[i].day;
+      if(day < 0) ;   // day number for dates like Friday the 13th (would be -13)
+      else if(pri_month != holiday[i].month) continue;
+
+      if((holiday[i].nth != 0) && (holiday[i].nth < 100)) {
+         day = nth_dow_in(holiday[i].nth, day, pri_month, pri_year);
+      }
+      if(day < 0) {
+         day = 0 - day;
+         dow = day_of_week(pri_day,pri_month,pri_year);
+         if(dow != holiday[i].month) continue;
+      }
+      if(day != pri_day) continue;
+//if(debug_file) fprintf(debug_file, "toots pri:%02d/%02d/%04d  on:%d  day:%d  i:%d  hlt:%d  tz:%.9f  holiday:%d (%s)\n", 
+//pri_day,pri_month,pri_year, greet_on, day,i,have_local_time,time_zone(),holiday[i].month, holiday[i].text);
+
+      j = 0;
+      if(alarm_jd) ;  // alarm already set, don't set calendar alarm
+      else if(holiday[i].text[0] == '@') {  // calendar entry has an alarm time set
+         alarm[0] = 0;
+         for(j=1; j<strlen(holiday[i].text); j++) {
+            c = holiday[i].text[j];
+            if(c == 0) break;
+            if(isdigit(c)) ;
+            else if(c == ':') ;
+            else break;
+            alarm[j-1] = c;
+            alarm[j] = 0;
+         }
+         if(alarm[0]) {
+            sprintf(out, " %04d/%02d/%02d", pri_year,pri_month,pri_day);
+            strcat(alarm, out);
+         }
+         set_alarm(alarm);
+      }
+
+      ++shown;
+      title_type = GREETING;
+//    plot_title[0] = 0;
+      debug_text[0] = 0;
+      debug_text2[0] = 0;
+      debug_text3[0] = 0;
+      debug_text4[0] = 0;
+      if     (shown == 1) sprintf(plot_title,  "%s", &holiday[i].text[j]);
+      else if(shown == 2) sprintf(debug_text,  "%s", &holiday[i].text[j]);
+      else if(shown == 3) sprintf(debug_text2, "%s", &holiday[i].text[j]);
+      else if(shown == 4) sprintf(debug_text3, "%s", &holiday[i].text[j]);
+      else if(shown == 5) sprintf(debug_text4, "%s", &holiday[i].text[j]);
+   }
+   if(shown) return shown;
+
+   if(title_type == GREETING) {  // erase old greetings
+      plot_title[0] = 0;
+      debug_text[0] = 0;
+      debug_text2[0] = 0;
+      debug_text3[0] = 0;
+      debug_text4[0] = 0;
+      title_type = NONE;
+   }
+   return shown;
 }
 
 void setup_calendars(int why)
@@ -8249,7 +16139,7 @@ void setup_calendars(int why)
   #endif
 
    calc_seasons();                   // calc jdates of the equinoxes
-   calc_moons(1);                    // moon phases for the current month
+   calc_moons(jd_local, 1);          // moon phases for the current month
 
    init_chinese(this_year);          // setup chinese calendar
    init_hebrew(this_year);           // setup Hebrew calendar (oy, vey! it be complicated)
@@ -8273,6 +16163,7 @@ long x;
 int month;
 int day;
 int year;
+int d, iso_year, iso_week, iso_day;
 char *date_flag;
 
    // return a string of the current date formatted for the selected calendar
@@ -8371,6 +16262,22 @@ char *date_flag;
       sprintf(date, "%04d-%03d%s   ", pri_year,(int)jd, date_flag); 
       return &date[0];
    }
+   else if(alt_calendar == ISO_WEEK) {
+      d = nth_dow_in(1, 1, 1, pri_year); // first monday in the year
+      jd = jdate(pri_year,pri_month,pri_day) - jdate(pri_year,1,d);
+      iso_week = ((int) jd) / 7;
+      iso_day = ((int) jd) % 7;
+      iso_year = pri_year;
+      if(iso_day < 0) {
+         iso_day += 7;
+         iso_week += 51;
+         iso_year -= 1;
+      }
+//sprintf(debug_text, "doy:%g  pri:%d/%d/%d  iy:%d iw:%d  id:%d  d:%d", jd, pri_year,pri_month,pri_day, iso_year,iso_week,iso_day, d);
+      sprintf(date, "%04d-W%02d-%d%s", iso_year, iso_week+1,iso_day+1, date_flag); 
+
+      return &date[0];
+   }
    else if(alt_calendar == MAYAN) {  // long count
       get_mayan_date();
       sprintf(date, "%02d.%02d.%02d.%02d.%02d%s", baktun,katun,tun,uinal,kin, date_flag); 
@@ -8416,6 +16323,7 @@ char *date_flag;
       jd = (jdate(pri_year+5001, pri_month, pri_day) - jdate(1492, 6, 21));
       jd += (double) bolivian_epoch;
       year = (int) (jd/365.25);
+      pri_month = fix_month(pri_month);
       sprintf(date, "%02d %s %04d%s", pri_day, months[pri_month], year, date_flag);
       return &date[0];
    }
@@ -8459,7 +16367,11 @@ char *date_flag;
    if(show_euro_dates) {
       sprintf(date, "%02d.%02d.%04d%s ", pri_day, pri_month, pri_year, date_flag);
    }
+   else if(show_iso_dates) {
+      sprintf(date, "%04d.%02d.%02d%s ", pri_year, pri_month, pri_day, date_flag);
+   }
    else {
+      pri_month = fix_month(pri_month);
       sprintf(date, "%02d %s %04d%s", pri_day, months[pri_month], pri_year, date_flag);
    }
    return &date[0];
@@ -8472,7 +16384,7 @@ char *date_flag;
 char *tz_info()
 {
    if(time_zone_set && tz_string[0]) return &tz_string[0];
-   else if(time_flags & 0x0001) return "UTC";
+   else if(time_flags & TFLAGS_UTC) return "UTC";
    else return"GPS";
 }
 
@@ -8480,8 +16392,10 @@ char *tz_info()
 int show_digital_clock(int row, int col)
 {
 int time_exit;
-COORD time_row, time_col;
 int width, height;
+int www;
+int ofs;
+int min_scale;
 int top_line;
 int len;
 int i;
@@ -8489,12 +16403,18 @@ int hh;
 char s[32];
 char *am_pm;
 int old_vs;
-int yyy;
-#define TIME_CHARS 8
+int time_top;
+int old_time_color;
+int date_row, date_scale;
+int hhh;
+#define TIME_CHARS len
 
    // show the big digital clock if we can find a place for it
+
    old_vs = VCHAR_SCALE;
    time_exit = 0;     // assume there is room for the sat info and clock
+   www = 0;
+   ofs = 2;
 
    if(pri_hours >= 12) am_pm = "PM";
    else                am_pm = "AM";
@@ -8504,6 +16424,46 @@ int yyy;
       if(first_key) return 0;
       if(zoom_screen) return 0;
    }
+
+// if(all_adevs && (SCREEN_WIDTH < MEDIUM_WIDTH)) return 0;
+   if(all_adevs && (SCREEN_WIDTH < NARROW_SCREEN)) return 0;
+
+   old_time_color = time_color;
+   if(eclipsed) time_color = YELLOW;
+
+   // format the time display string
+   ofs = 2;
+   if(show_elapsed_time && jd_elapsed) { // must be first item in this if statement
+      sprintf(out, "%.3f secs", (jd_utc-jd_elapsed)*24.0*60.0*60.0+0.00001);
+   }
+   else if(show_julian_time) {
+      sprintf(out, "%.6f", jd_display);  // 14.
+      ofs = 1;
+   }
+   else if(show_mjd_time) {
+      sprintf(out, "%.6f", jd_display-JD_MJD);  // 12.
+      ofs = 1;
+   }
+   else if(show_unix_time) { // 12.
+      sprintf(out, "%.3f", (jd_display-LINUX_EPOCH)*24.0*60.0*60.0);
+      ofs = 1;
+   }
+   else if(show_gps_time) {  // 12.
+      sprintf(out, "%.3f", (jd_display-GPS_EPOCH)*24.0*60.0*60.0);
+      ofs = 1;
+   }
+   else if(show_msecs) {
+      sprintf(out, "%02d:%02d:%02d.%03d", clock_12?(pri_hours%12):pri_hours, pri_minutes, pri_seconds, (int)(pri_frac*1000.0));
+      ofs = 3;
+   }
+   else if(clock_12) {
+      sprintf(out, "%02d:%02d:%02d %s", pri_hours%12, pri_minutes, pri_seconds, am_pm);
+      ofs = 3;
+   }
+   else {
+      sprintf(out, "%02d:%02d:%02d", pri_hours, pri_minutes, pri_seconds);
+   }
+   len = strlen(out)+1;
 
    if((zoom_screen == 'C') || (rcvr_type == NO_RCVR)) { 
       if(0 && show_euro_dates) {
@@ -8520,14 +16480,20 @@ int yyy;
          if(zoom_screen != 'C') {  // tweak scale factor for wide/short screens
             VCHAR_SCALE = (SCREEN_WIDTH / len);
             VCHAR_SCALE = (((VCHAR_SCALE*SCREEN_HEIGHT*1024)/768)) / (SCREEN_WIDTH*8);
+            if(SCREEN_WIDTH < TINY_TINY_WIDTH) {
+               VCHAR_SCALE = (VCHAR_SCALE*vc_font_scale/100);
+            }
          }
       }
 
       if(jpl_clock) {
          i = ((SCREEN_HEIGHT) / (6*VCHAR_H));
          if(i < VCHAR_SCALE) VCHAR_SCALE = i;
-if(SCREEN_WIDTH > 1280) VCHAR_SCALE = ((SCREEN_HEIGHT) / (11*VCHAR_H));
+         if(SCREEN_WIDTH > WIDE_WIDTH) VCHAR_SCALE = ((SCREEN_HEIGHT) / (11*VCHAR_H));
+
          time_row = VCHAR_SCALE/4;
+         date_row = time_row;
+         date_scale = VCHAR_SCALE;
 
          center_vstring(time_row, VCHAR_SCALE, time_color, out);
 
@@ -8551,26 +16517,48 @@ if(SCREEN_WIDTH > 1280) VCHAR_SCALE = ((SCREEN_HEIGHT) / (11*VCHAR_H));
       else {
          time_row = ((SCREEN_HEIGHT/TEXT_HEIGHT)/2) - ((VCHAR_SCALE*16)/(2*TEXT_HEIGHT));
          time_row += (VCHAR_SCALE*16/2)/TEXT_HEIGHT;
+
          if((rcvr_type == NO_RCVR) && (zoom_screen != 'C')) {
             time_row = SCREEN_HEIGHT / TEXT_HEIGHT;
             time_row +=2;
             time_row -= (VCHAR_SCALE*16*3/2)/TEXT_HEIGHT;
 
-            yyy = (time_row*TEXT_HEIGHT-0*(VCharHeight-VCharHeight/2));
-            yyy -= (VCHAR_SCALE*16*3/2); // top scan line of digital clock area
+            time_top = (time_row * TEXT_HEIGHT);  // top line of digital clock display
+            time_top -= (VCHAR_SCALE*16*3/2);
 
-            aclock_y = yyy;
-            ACLOCK_SIZE = aclock_y - (TEXT_HEIGHT*1);
-if(ACLOCK_SIZE > (SCREEN_WIDTH/3)) ACLOCK_SIZE = (SCREEN_WIDTH/3);
+            ACLOCK_SIZE = time_top - (TEXT_HEIGHT*1);
+            if(ACLOCK_SIZE > (SCREEN_WIDTH/3)) ACLOCK_SIZE = (SCREEN_WIDTH/3);
             aclock_y = (ACLOCK_SIZE/2) + (TEXT_HEIGHT*1);
             aclock_x = SCREEN_WIDTH - (ACLOCK_SIZE/2) - (TEXT_WIDTH*2);
          }
 
+         date_row = time_row;
+         date_scale = VCHAR_SCALE;
          center_vstring(time_row, VCHAR_SCALE, time_color, out);
 
          time_row -= (VCHAR_SCALE*16*3/2)/TEXT_HEIGHT;
-         if(show_julian_time) {
+         if(show_elapsed_time && jd_elapsed) { // must be first item in this if statement
+            sprintf(out, "%.3f secs", (jd_utc-jd_elapsed)*24.0*60.0*60.0+0.00001);
+            len = strlen(out)+1;
+            center_vstring(time_row, VCHAR_SCALE, time_color, out);
+         }
+         else if(show_julian_time) {
             sprintf(out, "%14.6f %s", jd_local, tz_info());
+            len = strlen(out)+1;
+            center_vstring(time_row, VCHAR_SCALE*14/len, time_color, out);
+         }
+         else if(show_mjd_time) {
+            sprintf(out, "%12.6f %s", jd_local-JD_MJD, tz_info());
+            len = strlen(out)+1;
+            center_vstring(time_row, VCHAR_SCALE*14/len, time_color, out);
+         }
+         else if(show_unix_time) {
+            sprintf(out, "%14.3f %s", (jd_local-LINUX_EPOCH)*24.0*60.0*60.0, tz_info());
+            len = strlen(out)+1;
+            center_vstring(time_row, VCHAR_SCALE*14/len, time_color, out);
+         }
+         else if(show_gps_time) {
+            sprintf(out, "%14.3f %s", (jd_local-GPS_EPOCH)*24.0*60.0*60.0, tz_info());
             len = strlen(out)+1;
             center_vstring(time_row, VCHAR_SCALE*14/len, time_color, out);
          }
@@ -8597,48 +16585,114 @@ if(ACLOCK_SIZE > (SCREEN_WIDTH/3)) ACLOCK_SIZE = (SCREEN_WIDTH/3);
          }
       }
 
+      if(1 && ((zoom_screen == 'C') || (rcvr_type == NO_RCVR)) && enviro_mode()) {  // show environmental sensor data on the clock screen
+         #define ENV_COL (VCharWidth*3)
+         if(zoom_screen == 'C') {
+            date_row += (date_scale*1);
+
+            hhh = (SCREEN_HEIGHT - date_row*date_scale) / 8;
+            VCHAR_SCALE = (hhh/16);
+
+            date_row = (SCREEN_HEIGHT-VCharHeight*4);
+            col = ENV_COL;
+         }
+         else {
+            VCHAR_SCALE = 3; // (hhh/16);
+            date_row = (VCharHeight*50)/19;
+            col = (VCharWidth*2);
+         }
+
+
+         i = round_temp;
+         round_temp = 2;
+         if     (have_temperature0) sprintf(out, "Temp0:%7.2f%c%c",  scale_temp(tc0),DEGREES,DEG_SCALE);
+         else if(have_temperature1) sprintf(out, "Temp1:%7.2f%c%c",  scale_temp(tc1),DEGREES,DEG_SCALE); 
+         else if(have_temperature2) sprintf(out, "Temp2:%7.2f%c%c",  scale_temp(tc2),DEGREES,DEG_SCALE); 
+         else if(have_temperature)  sprintf(out, "Temp:  %7.2f%c%c", scale_temp(temperature),DEGREES,DEG_SCALE); 
+         else                       sprintf(out, "                ");
+
+         graphics_coords = 1;
+
+         round_temp = i;
+         vchar_string(date_row, col, time_color, out);
+
+         date_row += VCharHeight; //VCHAR_SCALE;
+         sprintf(out, "Baro: %7.2f mb", pressure);
+         vchar_string(date_row, col, time_color, out);
+
+         date_row += VCharHeight; //VCHAR_SCALE;
+         sprintf(out, "RH:   %7.2f %%", humidity);
+         vchar_string(date_row, col, time_color, out);
+
+         graphics_coords = 0;
+      }
+
       digital_clock_shown = 1;
       show_title();
+
+      time_color = old_time_color;
       return time_exit;
    }
-   else if(zoom_screen) return 1;
-   else if(all_adevs) {
+   else if(zoom_screen) {
+      time_color = old_time_color;
+      return 1;
+   }
+   else if(all_adevs) { 
       if(small_font == 2) VCHAR_SCALE = 5;  // DOS 8x8 font
       else                VCHAR_SCALE = 6;
+      if(rcvr_type == TICC_RCVR) VCHAR_SCALE -= 1;
+
+      if(SCREEN_WIDTH <= 640) { 
+         VCHAR_SCALE = 2;
+      }
+      else if(SCREEN_WIDTH < MEDIUM_WIDTH) {
+         VCHAR_SCALE = 3;
+         col -= 6;
+      }
 
       if(WIDE_SCREEN) {  // center digital clock over right hand adev tables
          width = VCharWidth;
       }
       else {   // center digital clock in the upper right hand corner space
          width = ((SCREEN_WIDTH/TEXT_WIDTH)-col)*TEXT_WIDTH;
-         width -= (TIME_CHARS * VCharWidth);
+         if(clock_12) i = 3;
+         else         i = 2;
+         width -= ((TIME_CHARS+ofs) * VCharWidth);
          width /= 2;
       }
+      www = width;
       time_col = col + (width/TEXT_WIDTH);
       time_row = row;
    }
-   else if(0 && (TEXT_HEIGHT >= 16) && (SCREEN_WIDTH >= 1900) && (plot_lla == 0) && ebolt) { 
-      time_col = (AZEL_COL + AZEL_SIZE + TEXT_WIDTH-1) / TEXT_WIDTH;
-      time_col += 4;
-      time_row = 2;
-      if(SCREEN_WIDTH >= 1900) VCHAR_SCALE = 7;
-      else VCHAR_SCALE = 5;
-   }
-   else {  // clock goes in sat info area
-      top_line = (row+1+temp_sats);
-if(sat_cols > 1) top_line = (row+1+sat_rows);
-      width = (INFO_COL - TIME_CHARS) * TEXT_WIDTH;
-      height = (MOUSE_ROW-top_line-1);
-      height *= TEXT_HEIGHT;
+   else {  // clock goes in or below sat info area
+      if(temp_sats < 8) top_line = (row+1+8);
+      else              top_line = (row+1+temp_sats);
+      if(sat_cols > 1)  top_line = (row+1+sat_rows);
+
+//    width = (INFO_COL - TIME_CHARS) * TEXT_WIDTH;
+      width = (INFO_COL - 0*TIME_CHARS) * TEXT_WIDTH;
+      www = width;
+      height = (MOUSE_ROW-top_line-1) * TEXT_HEIGHT;
 
       VCHAR_SCALE = 1;
 
-      width = (width / (VCharWidth*TIME_CHARS));
       height = (height / VCharHeight);
+      width = (width / (VCharWidth*TIME_CHARS));
+      if(use_vc_fonts && (vc_font_scale < 100)) width = (width*vc_font_scale) / 100;
+      if(width < 0) width = 1;
+      if(height < 0) height = 1;
+
       if(width > height) VCHAR_SCALE = height;
       else               VCHAR_SCALE = width;
 
-#define MIN_SCALE 2
+      if(SCREEN_HEIGHT < TINY_TINY_HEIGHT) {
+//       if(VCHAR_SCALE < 2) VCHAR_SCALE = 1;
+//       else                VCHAR_SCALE = 2;
+         VCHAR_SCALE = 2;
+      }
+
+#define MIN_SCALE 2 
+      min_scale = MIN_SCALE;
 
       if(VCHAR_SCALE < MIN_SCALE) {  // no room for time under the sat info
          time_exit = 1;      // so dont draw the sat info table
@@ -8649,41 +16703,37 @@ if(sat_cols > 1) top_line = (row+1+sat_rows);
       time_col = (INFO_COL - 0 - ((TIME_CHARS*VCharWidth)/TEXT_WIDTH)) / 2;
       time_row = (MOUSE_ROW - top_line - (VCharHeight/TEXT_HEIGHT)) / 2;
       time_row += top_line+1;
+      if((MOUSE_ROW-time_row) > 1) ++time_row;
+   }
+   if(time_col < 0) time_col = 0;
+   clock_show_row = time_row;
+//sprintf(plot_title, "r:%d c:%d  w:%d h:%d www:%d  top:%d  vscale:%d  mscale:%d", time_row,time_col, width,height, www, top_line, VCHAR_SCALE, min_scale);
+
+   if((MOUSE_ROW-time_row) <= 1) {  // very small area for clock display
+      min_scale = 1;                // ... use unscaled text format
+      VCHAR_SCALE = 1;
    }
 
-   if(show_julian_time) {
-      sprintf(out, "%14.6f", jd_display);
-      len = strlen(out)+1;
-      i = VCHAR_SCALE;
-      VCHAR_SCALE = (VCHAR_SCALE) * 8 / len;
-      if(VCHAR_SCALE < MIN_SCALE) VCHAR_SCALE = MIN_SCALE;
-      vchar_string(time_row, time_col, time_color, out);
+   // show the time
+   i = VCHAR_SCALE;
+   if(all_adevs) {
       VCHAR_SCALE = i;
-   }
-   else if(show_msecs) {
-      sprintf(out, "%02d:%02d:%02d.%03d", clock_12?(pri_hours%12):pri_hours, pri_minutes, pri_seconds, (int)(pri_frac*1000.0));
-      i = VCHAR_SCALE;
-      VCHAR_SCALE = (VCHAR_SCALE) * 8 / 12;
-      if(VCHAR_SCALE < MIN_SCALE) VCHAR_SCALE = MIN_SCALE;
-      vchar_string(time_row, time_col, time_color, out);
-      VCHAR_SCALE = i;
-   }
-   else if(clock_12) {
-//    sprintf(out, "%02d:%02d:%02d", pri_hours%12, pri_minutes, pri_seconds);
-VCHAR_SCALE = (VCHAR_SCALE * 8) / 11;
-      sprintf(out, "%02d:%02d:%02d %s", pri_hours%12, pri_minutes, pri_seconds, am_pm);
-      vchar_string(time_row, time_col, time_color, out);
    }
    else {
-      sprintf(out, "%02d:%02d:%02d", pri_hours, pri_minutes, pri_seconds);
-      vchar_string(time_row, time_col, time_color, out);
+      VCHAR_SCALE = (VCHAR_SCALE) * 8 / len;
+      if(VCHAR_SCALE < min_scale) VCHAR_SCALE = min_scale;
    }
+
+   vchar_string(time_row, time_col, time_color, out);
+
+   VCHAR_SCALE = i;
 
    if(old_vs != VCHAR_SCALE) {  // screen config changed
       need_redraw = 1100;
    }
 
    digital_clock_shown = 1;
+   time_color = old_time_color;
    return time_exit;
 }
 #endif  // DIGITAL_CLOCK
@@ -8734,10 +16784,20 @@ char **face[] = {  // select the watch face style
    stars
 };
 
-void calc_moon_posn()
+void calc_moon_posn(int watch)
 {
 double maz,mel;
-// moon_posn(jd_tt);
+int r;
+
+   if(map_and_watch && (watch == 0)) {
+      r = AZEL_RADIUS;
+      moon_size = (AZEL_RADIUS/4);
+   }
+   else {
+      r = ACLOCK_R;
+      moon_size = (ACLOCK_R/4);
+   }
+
    mel = moon_el;
    if(mel < 0.0) {
       mel = 0.0 - mel;
@@ -8748,8 +16808,10 @@ double maz,mel;
    maz = moon_az;
    maz += 90.0F;
    if(maz >= 360.0) maz -= 360.0;
-   moon_x = (int) (mel * cos360((int)maz) * ACLOCK_R);
-   moon_y = (int) (mel * sin360((int)maz) * ACLOCK_R);
+   if(maz <= 360.0) maz += 360.0;
+   moon_x = (int) (mel * cos360((int)maz) * r);
+   moon_y = (int) (mel * sin360((int)maz) * r);
+//sprintf(plot_title, "ACLOCK:%d  AZEL:%d  maw:%d", ACLOCK_R,AZEL_RADIUS, map_and_watch);
 }
 
 
@@ -8762,6 +16824,10 @@ char **wf;
 float hr;
 u08 bottom_blocked, top_blocked;
 int i;
+int old_time_color;
+
+   old_time_color = time_color;
+   if(eclipsed) time_color = YELLOW;
 
    wf = face[watch_face%NUM_FACES];
    graphics_coords = 1;
@@ -8779,19 +16845,16 @@ int i;
    else                                           top_blocked |= 6;
 
    moon_x = 0;
-   if     (top_blocked == 0)    { y = aclock_y-ACLOCK_SIZE/4; moon_y = +ACLOCK_SIZE/4; }
-   else if(bottom_blocked == 0) { y = aclock_y+ACLOCK_SIZE/4; moon_y = -ACLOCK_SIZE/4; }
-   else if(top_blocked & 1)     { y = aclock_y-ACLOCK_SIZE/4; moon_y = +ACLOCK_SIZE/4; }
-   else                         { y = aclock_y+ACLOCK_SIZE/4; moon_y = -ACLOCK_SIZE/4; }
+   if     (top_blocked == 0)    { y = aclock_y-ACLOCK_SIZE/4; moon_y = (+ACLOCK_SIZE/4); }
+   else if(bottom_blocked == 0) { y = aclock_y+ACLOCK_SIZE/4; moon_y = (-ACLOCK_SIZE/4); }
+   else if(top_blocked & 1)     { y = aclock_y-ACLOCK_SIZE/4; moon_y = (+ACLOCK_SIZE/4); }
+   else                         { y = aclock_y+ACLOCK_SIZE/4; moon_y = (-ACLOCK_SIZE/4); }
 
-   moon_color = YELLOW;
-   #ifdef TRUE_MOON
-      calc_moon_posn();
-   #endif
-
+// sprintf(plot_title, "lwf:%d  wn[%02X]:%s  hlt:%d  r:%d  xy:%d,%d  gc:%d", label_watch_face, watch_name[0], watch_name, have_local_time, ACLOCK_R, aclock_x,y, graphics_coords);
    if(label_watch_face) {
       out[0] = 0;
-      if(watch_name[0]) strcpy(out, watch_name);
+      if(eclipsed) strcpy(out, "ECLIPSE!");
+      else if(watch_name[0]) strcpy(out, watch_name);
       else if(!have_local_time) ;
       else if(ACLOCK_R < 70) ;
       else strcpy(out, days[day_of_week(pri_day, pri_month, pri_year)]);
@@ -8864,7 +16927,7 @@ int i;
          }
       }
 
-      if(SCREEN_WIDTH <= 800) {  // tweaks for small screens
+      if(SCREEN_WIDTH <= NARROW_SCREEN) {  // tweaks for small screens
          if(hh == (1*WATCH_MULT)) {           // 1:00
             x += TEXT_WIDTH;
             if(PLOT_HEIGHT < 160) y += TEXT_HEIGHT/4;
@@ -8910,6 +16973,7 @@ int i;
       vidstr(y,x, time_color, wf[lasth]);
    }
 
+   time_color = old_time_color;
    graphics_coords = 0;
 }
 
@@ -8927,10 +16991,14 @@ double jd_timer;
 int color;
 int stem_size;
 #define THETA_STEP 1
+int old_time_color;
 
    // draw the watch outline
+   old_time_color = time_color;
+   if(eclipsed) time_color = YELLOW;
+
    alarm_ticks = 0;
-   alarm_theta = (999);
+   alarm_theta = (999);  // shut up compiler warnings
 
    if(1) ;  // use edge ticks
    else if(alarm_date || alarm_time) {  // highlight the alarm clock time
@@ -8948,7 +17016,7 @@ int stem_size;
    }    
 
    timer_ticks = 0;
-   timer_theta = (999);
+   timer_theta = (999);  // shut up compiler warnings 
 
    if(1) ;  // use edge ticks
    else if(egg_timer) {  // highlight the egg time time
@@ -9020,23 +17088,35 @@ int stem_size;
    line(aclock_x-stem_size, aclock_y-ACLOCK_R-stem_size, aclock_x+stem_size, aclock_y-ACLOCK_R-stem_size, time_color);
    line(aclock_x-stem_size, aclock_y-ACLOCK_R-stem_size, aclock_x-stem_size, aclock_y-ACLOCK_R, time_color);
    line(aclock_x+stem_size, aclock_y-ACLOCK_R-stem_size, aclock_x+stem_size, aclock_y-ACLOCK_R, time_color);
+
+   time_color = old_time_color;
 }
 
+
+#define FANCY_ANGLE 2.50   // half width of hands in degrees
+#define FANCY_STEP  0.25   // degrees step of hand color fill lines
+#define FANCY_BREAK 0.66   // length of hands where the angle changes
 
 void draw_watch_hands(void) 
 {
 int thickness;
 int x, y;
-float hr;
+int xx,yy;
+int xxx,yyy;
+double ang;
+double hr;
 double a;
+int old_time_color;
 
    // Draw new hands.  If zoom_screen == 'X', try and outline the hand in black
    // so that they show up better agains the signal level map.
+   old_time_color = time_color;
+   if(eclipsed) time_color = YELLOW;
 
    thickness = 2;
    if((zoom_screen == 'X') || (zoom_screen == 'Y')) thickness = 3;
 
-   a = hand_angle((float)pri_seconds + (float) pri_frac);
+   a = hand_angle((double) pri_seconds + pri_frac);
    x = (int) ((ACLOCK_R-AA) * cos(a));
    y = (int) ((ACLOCK_R-AA) * sin(a));  
    if(zoom_screen == 'X') thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, BLACK, thickness+2);
@@ -9047,27 +17127,74 @@ double a;
    else if(ACLOCK_R > 100) thickness = 3;
    else               thickness = 2+1;
 
-   hr = (float) pri_minutes;
-// hr += ((float) pri_seconds) / 60.0F;
+
+   hr = (double) pri_minutes;
+// hr += ((double) pri_seconds) / 60.0F;
    a = hand_angle(hr);
    x = (int) ((ACLOCK_R-AA) * cos(a));  
    y = (int) ((ACLOCK_R-AA) * sin(a));  
-   if(zoom_screen == 'X') thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, BLACK, thickness+2);
-   thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, time_color, thickness);
 
-   hr = (float) pri_hours;
-   hr += ((float)pri_minutes/60.0F);
-   hr *= (60.0F/(float)WATCH_HOURS);  // convert hour angle to minute angle
+   if(fancy_hands) {  // use trapazoidal hands
+      if(fancy_hands > 1) ang = FANCY_ANGLE;  // hollow hands
+      else ang = 0.0;  // filled hands
+
+      while(ang<=FANCY_ANGLE) {
+         xx = (int) ((ACLOCK_R-AA)*FANCY_BREAK * cos(a+ang*PI/180.0)); 
+         yy = (int) ((ACLOCK_R-AA)*FANCY_BREAK * sin(a+ang*PI/180.0));
+
+         xxx = (int) ((ACLOCK_R-AA)*FANCY_BREAK * cos(a-(ang*PI/180.0))); 
+         yyy = (int) ((ACLOCK_R-AA)*FANCY_BREAK * sin(a-(ang*PI/180.0)));
+
+         thick_line(aclock_x,aclock_y,  aclock_x+xx,aclock_y+yy, time_color, thickness);
+         thick_line(aclock_x,aclock_y,  aclock_x+xxx,aclock_y+yyy, time_color, thickness);
+         thick_line(aclock_x+x,aclock_y+y,  aclock_x+xx,aclock_y+yy, time_color, thickness);
+         thick_line(aclock_x+x,aclock_y+y,  aclock_x+xxx,aclock_y+yyy, time_color, thickness);
+         ang += FANCY_STEP;
+      }
+   }
+   else {  // linear hands
+      if(zoom_screen == 'X') thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, BLACK, thickness+2);
+      thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, time_color, thickness);
+   }
+
+
+
+   hr = (double) pri_hours;
+   hr += ((double)pri_minutes/60.0);
+   hr *= (60.0/(double)WATCH_HOURS);  // convert hour angle to minute angle
    a = hand_angle(hr);
    x = (int) ((ACLOCK_R-AA*3) * cos(a)); 
    y = (int) ((ACLOCK_R-AA*3) * sin(a)); 
-   if(zoom_screen == 'X') thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, BLACK, thickness+2);
-   thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, time_color, thickness);
+
+   if(fancy_hands) {  // use trapazoidal hands
+      if(fancy_hands > 1) ang = FANCY_ANGLE;  // hollow hands
+      else ang = 0.0;  // filled hands
+
+      while(ang<=FANCY_ANGLE) {
+         xx = (int) ((ACLOCK_R-AA*3)*FANCY_BREAK * cos(a+ang*PI/180.0)); 
+         yy = (int) ((ACLOCK_R-AA*3)*FANCY_BREAK * sin(a+ang*PI/180.0));
+
+         xxx = (int) ((ACLOCK_R-AA*3)*FANCY_BREAK * cos(a-(ang*PI/180.0))); 
+         yyy = (int) ((ACLOCK_R-AA*3)*FANCY_BREAK * sin(a-(ang*PI/180.0)));
+
+         thick_line(aclock_x,aclock_y,  aclock_x+xx,aclock_y+yy, time_color, thickness);
+         thick_line(aclock_x,aclock_y,  aclock_x+xxx,aclock_y+yyy, time_color, thickness);
+         thick_line(aclock_x+x,aclock_y+y,  aclock_x+xx,aclock_y+yy, time_color, thickness);
+         thick_line(aclock_x+x,aclock_y+y,  aclock_x+xxx,aclock_y+yyy, time_color, thickness);
+         ang += FANCY_STEP;
+      }
+   }
+   else {  // linear hands
+     if(zoom_screen == 'X') thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, BLACK, thickness+2);
+     thick_line(aclock_x,aclock_y,  aclock_x+x,aclock_y+y, time_color, thickness);
+   }
+
+   time_color = old_time_color;
 }
 
 
 
-void draw_moon(double jd, int x0,int y0, int r)
+void draw_moon(double jd, int x0,int y0, int r, int watch)
 {
 int Xpos, Ypos, Rpos;
 int Xpos1, Xpos2;
@@ -9075,6 +17202,7 @@ int y, x1,x2;
 int t;
 double age;
 double synod;  // length of the synodic month
+int moon_r;
 
     // This routine draws an image of the moon phase on the analog watch display
     // This code derived from code by Mostafa Kaisoun.
@@ -9111,8 +17239,16 @@ jd, synod, moon_synod(jd), age, age/synod);
 //  y0 = aclock_y;
 //  r = ACLOCK_SIZE;
 
-    for(Ypos=0; Ypos<=MOON_SIZE/2; Ypos++) {  // draw the moon        
-       Xpos = (int)(sqrt((MOON_SIZE*MOON_SIZE/4.0) - ((double) Ypos * (double) Ypos)));
+    if(watch == 0) {
+       sat[MOON_PRN].plot_x = x0 + moon_x;
+       sat[MOON_PRN].plot_y = y0 + moon_y;
+       sat[MOON_PRN].plot_r = MOON_SIZE;
+       sat[MOON_PRN].plot_color = moon_color;
+    }
+
+    moon_r = 0;
+    for(Ypos=0; Ypos<=MOON_SIZE; Ypos++) {  // draw the moon        
+       Xpos = (int)(sqrt((MOON_SIZE*MOON_SIZE) - ((double) Ypos * (double) Ypos)));
 
        // determine the edges of the lighted part of the moon       
        Rpos = 2 * Xpos;
@@ -9171,27 +17307,126 @@ jd, synod, moon_synod(jd), age, age/synod);
 
 #define SUN_STRING "\002"
 
-void draw_sun_rays(int x, int y, int marker_size)
+int small_azel()
 {
-int k;
-
-   k = marker_size + marker_size/3;
-   line(x+k,y, x+k+4,y, YELLOW_SAT_COLOR);
-   line(x-k,y, x-k-4,y, YELLOW_SAT_COLOR);
-   line(x,y-k, x,y-k-4, YELLOW_SAT_COLOR);
-   line(x,y+k, x,y+k+4, YELLOW_SAT_COLOR);
-
-   k = (int) (((double) k) * 0.707);
-   line(x+k,y+k, x+k+4,y+k+4, YELLOW_SAT_COLOR);
-   line(x-k,y+k, x-k-4,y+k+4, YELLOW_SAT_COLOR);
-   line(x+k,y-k, x+k+4,y-k-4, YELLOW_SAT_COLOR);
-   line(x-k,y-k, x-k-4,y-k-4, YELLOW_SAT_COLOR);
+   // see if azel plot is too small to label 
+   if((AZEL_SIZE < AZEL_LABEL_THRESH) && (zoom_screen == 0)) { 
+      return 1;
+   }
+   return 0;
 }
 
+void draw_sun_rays(int x,int y, int marker_size, int watch)
+{
+int k;
+int thickness;
+int ray_len;
+int ray_gap;
+#define RAY_LEN 4
+#define RAY_GAP (marker_size / 3)
+int color;
+int clip_left_x, clip_right_x;
+int clip_top_y, clip_bottom_y;
+int NO_CLIP;
+
+   color = sat_colors[YELLOW_SAT_COLOR];
+
+   last_sun_x = x;
+   last_sun_y = y;
+   last_sun_r = marker_size;
+
+   thickness = 1;
+   if(!small_azel()) thickness = 2;
+
+   // erase the satellite map area on the screen
+   if((zoom_screen == 'W') || ((zoom_screen == 0) && NO_SATS)) {
+      clip_left_x = aclock_x-ACLOCK_R;
+      clip_right_x = aclock_x+ACLOCK_R;
+      clip_top_y = aclock_y-ACLOCK_R;
+      clip_bottom_y = aclock_y+ACLOCK_R;
+   }
+   else if(watch && ((zoom_screen == 0) || (zoom_screen == 'V'))) {
+      clip_left_x = aclock_x-ACLOCK_R;
+      clip_right_x = aclock_x+ACLOCK_R;
+      clip_top_y = aclock_y-ACLOCK_R;
+      clip_bottom_y = aclock_y+ACLOCK_R;
+   }
+   else {
+      clip_left_x = AZEL_X-AZEL_RADIUS;
+      clip_right_x = AZEL_X+AZEL_RADIUS;
+      clip_top_y = AZEL_Y-AZEL_RADIUS;
+      clip_bottom_y = AZEL_Y+AZEL_RADIUS;
+   }
+//draw_rectangle(clip_left_x,clip_top_y, clip_right_x-clip_left_x,clip_bottom_y-clip_top_y, WHITE);
+   clip_right_x -= thickness;
+   clip_left_x += thickness;
+   clip_top_y += thickness;
+   clip_bottom_y -= thickness;
+//draw_rectangle(clip_left_x,clip_top_y, clip_right_x-clip_left_x,clip_bottom_y-clip_top_y, RED);
+
+   ray_gap = RAY_GAP;
+   ray_len = RAY_LEN;
+
+   k = marker_size + ray_gap;
+
+NO_CLIP = 0;
+
+   if(NO_CLIP || (x+k+ray_len < clip_right_x))  {
+      thick_line(x+k,y, x+k+ray_len,y, color, thickness);
+   }
+   if(NO_CLIP || (x-k-ray_len > clip_left_x)) {
+      thick_line(x-k,y, x-k-ray_len,y, color, thickness);
+   }
+   if(NO_CLIP || (y-k-ray_len > clip_top_y)) {
+      thick_line(x,y-k, x,y-k-ray_len, color, thickness);
+   }
+   if(NO_CLIP || (y+k+ray_len < clip_bottom_y)) {
+      thick_line(x,y+k, x,y+k+ray_len, color, thickness);
+   }
+
+   k = (int) (((double) k) * 0.707);
+   if(NO_CLIP || ((x+k+ray_len < clip_right_x) && (y+k+ray_len < clip_bottom_y))) {
+      thick_line(x+k,y+k, x+k+ray_len,y+k+ray_len, color, thickness);
+   }
+   if(NO_CLIP || ((x-k-ray_len > clip_left_x) && (y+k+ray_len < clip_bottom_y))) {
+      thick_line(x-k,y+k, x-k-ray_len,y+k+ray_len, color, thickness);
+   }
+   if(NO_CLIP || ((x+k+ray_len < clip_right_x) && (y-k-ray_len > clip_top_y))) {
+       thick_line(x+k,y-k, x+k+ray_len,y-k-ray_len, color, thickness);
+   }
+   if(NO_CLIP || ((x-k-ray_len > clip_left_x) && (y-k-ray_len > clip_top_y))) {
+      thick_line(x-k,y-k, x-k-ray_len,y-k-ray_len, color, thickness);
+   }
+}
+
+
+int set_marker_size(int prn)
+{
+int marker_size;
+
+   if(prn < 0) return 0;
+   if(prn > SUN_MOON_PRN) return 0;
+
+   marker_size = (int) sat[prn].sig_level;
+if((rcvr_type == UBX_RCVR) && (prn != SUN_PRN)) marker_size += (marker_size / 3);  // UBX receivers have smaller sig level values
+   if(marker_size < 0) marker_size = 0 - marker_size;
+   if(amu_mode == 0) {
+       marker_size -= 30;  // 30 dBc represents our minimum marker size
+   }
+
+   if(marker_size > MAX_MARKER_SIZE) marker_size = MAX_MARKER_SIZE;   // and 44 dBc is our max size
+   else if(marker_size < MIN_MARKER_SIZE) marker_size = MIN_MARKER_SIZE;
+   marker_size = (int) (((float) marker_size) / (float) MAX_MARKER_SIZE * (float) AZEL_SIZE/20.0F);
+   if(marker_size < MIN_MARKER_SIZE) marker_size = MIN_MARKER_SIZE;
+
+   return marker_size;
+}
 
 void draw_watch_sun()
 {
 double az, el;
+int x0,y0;
+int r;
 int x, y;
 
    if(have_sun_el == 0) return;
@@ -9202,6 +17437,10 @@ int x, y;
    if(SUN_PRN == 0) return;
    if(no_sun_moon & 0x01) return;
 
+   x0 = aclock_x;
+   y0 = aclock_y;
+   r = ACLOCK_R;
+
    el = sun_el;
    if(el < 0.0) el = 0.0 - el;
    if((el < 0.0F) || (el > 90.0F)) return;
@@ -9210,16 +17449,18 @@ int x, y;
    az = sun_az;
    if((az < 0.0F) || (az >= 360.0F)) return;
    az += 90.0F;
+   if(az > 360.0) az -= 360.0;
 
-   x = aclock_x + (int) (el * cos360(az) * ACLOCK_R);
-   if(x > aclock_x) x -= 1;   // clipping tweak
-   else             x += 1;
-   y = aclock_y + (int) (el * sin360(az) * ACLOCK_R);
+   x = x0 + (int) (el * cos360(az) * r);
+   if(x > x0) x -= 1;   // clipping tweak
+   else       x += 1;
+   y = y0 + (int) (el * sin360(az) * r);
 
-   if(sun_el >= 0.0) draw_circle(x,y, ACLOCK_R/16, YELLOW, 1);
-   else              draw_circle(x,y, ACLOCK_R/16, YELLOW, 0);
+   if(sun_el >= 0.0) draw_circle(x,y, r/16, YELLOW, 1);
+   else              draw_circle(x,y, r/16, YELLOW, 0);
 
-   draw_sun_rays(x,y, ACLOCK_R/16);
+   draw_sun_rays(x,y, r/16, 1);
+// draw_sun_rays(x,y, set_marker_size(SUN_PRN), 1);
 }
 
 
@@ -9275,31 +17516,46 @@ double jd_timer;
 int draw_watch(int why)
 {
    if(text_mode) return 1;
+   if(measure_jitter) return 1;
+//sprintf(plot_title, "draw watch:%d", why);
 
    if((zoom_screen == 'W') || (zoom_screen == 'B') || (zoom_screen == 'X')) ;
    else if(zoom_screen == 'Y') ;
    else if(zoom_screen == 'V') ;
    else if(plot_watch == 0) return 2;
+   else if(first_key && shared_plot && (shared_item & SHARE_WATCH)) return 66;
    else if(all_adevs && plot_lla && (WIDE_SCREEN == 0)) return 3;
-else if(plot_lla && SMALL_SCREEN) return 15;
+   else if(plot_lla && lla_showing) {
+//.     if(SMALL_SCREEN) return 15;
+////  if((shared_item & SHARE_WATCH) == 0) return 15;
+if(SMALL_SCREEN && ((shared_item & SHARE_WATCH) == 0)) {
+////return 15;
+}
+   }
+
+if(zoom_screen == 'B') {
+   ACLOCK_SIZE = AZEL_SIZE;
+   aclock_x = AZEL_X;        //SCREEN_WIDTH/2 - TEXT_WIDTH*2;
+   aclock_y = AZEL_Y;        //TEXT_HEIGHT*2 + ACLOCK_SIZE/2;
+}
 
    if((zoom_screen == 'W') || (zoom_screen == 'B') || (zoom_screen == 'X')) ;
    else if(zoom_screen == 'Y') ;
    else if(zoom_screen == 'V') ;
-//wwwww   else if(rcvr_type == NO_RCVR) ;
    else if(map_and_watch) ;
    else if(shared_plot) {
       if(plot_signals && zoom_screen) return 4; 
-      if(plot_lla && (SCREEN_WIDTH < 800)) return 5;
+      if(plot_lla && (SCREEN_WIDTH < NARROW_SCREEN)) return 5;
    }
    else {  // see if no room for both watch and lla
       if(plot_signals) return 6;
       if(plot_lla && (WIDE_SCREEN == 0)) return 7;
-      if(SCREEN_WIDTH < 800) return 8; 
+      if(SCREEN_WIDTH < NARROW_SCREEN) return 8; 
    }
 
    if(first_key && (aclock_y > PLOT_ROW)) return 9;  // watch would be in active help screen
-   if(aclock_y > PLOT_ROW) shared_item = 'W';
+   if(aclock_y > PLOT_ROW) shared_item = SHARE_WATCH;
+
 
    if(MESS && map_and_watch && map_and_sigs && (plot_areas == 1)) ;
    else if(zoom_screen == 'X') ;
@@ -9312,8 +17568,23 @@ else if(plot_lla && SMALL_SCREEN) return 15;
 
    if(zoom_screen == 'X') ;
    else if((lat != 0.0) || (lon != 0.0)) {
-      draw_moon(jd_utc, aclock_x,aclock_y, ACLOCK_SIZE/2);
-      draw_watch_sun();
+      moon_color = YELLOW;
+      #ifdef TRUE_MOON
+         calc_moon_posn(1);
+      #endif
+
+      // don't draw moon twice in the watch/map areas because
+      // they have slighly different sizes and locations.
+      if(zoom_screen) goto watch_moon;
+      if(map_and_watch && map_and_sigs && (plot_areas == 1)) ;
+      else if(map_and_watch && (map_and_sigs == 0) && (plot_areas == 2)) ;
+      else if(map_and_watch && (map_and_sigs == 0) && (plot_areas == 1)) ;
+      else {  // watch and map do not overlap, ok to draw watch's moon
+         watch_moon:
+         draw_moon(jd_utc, aclock_x,aclock_y, ACLOCK_SIZE/2, 1);
+         draw_watch_sun();
+      }
+
       if(0 && ((zoom_screen == 'W') || ((zoom_screen == 'B') && (SCREEN_WIDTH >= MEDIUM_WIDTH)))) {
          show_sun_moon(TIME_ROW-1, TIME_COL);
       }
@@ -9325,14 +17596,134 @@ else if(plot_lla && SMALL_SCREEN) return 15;
 #endif // analog_clock
 
 
+//
+//
+//  Zoomed calendar
+//
+//
+
+void zoom_cal(int year, int month)
+{
+int day;
+int dow;
+int row, col;
+int top;
+int color;
+int i, j;
+int CAL_WIDTH;
+int CAL_LEFT;
+int pre_month;
+double jd;
+char *days;
+
+   // Show a zoomed full screen calendar
+   
+   CAL_WIDTH = 30;
+   CAL_LEFT = 2;
+   i = 4;
+   days = "SUN MON TUE WED THU FRI SAT";
+   if(SMALL_SCREEN) {
+      CAL_WIDTH = 24;
+      CAL_LEFT = 2;
+      i = 3;
+      days = "SU MO TU WE TH FR SA";
+   }
+
+   CAL_LEFT = (TEXT_COLS - ((CAL_WIDTH*3) + (i*2))) / 2;
+
+   if(month < 1) month = 1;
+   if(month > 12) month = 12;
+
+   erase_screen();
+
+   col = CAL_LEFT;
+   top = 0;
+   if(SCREEN_HEIGHT < SHORT_SCREEN) pre_month = 1; // start with 1 previous months
+   else pre_month = 4;  // 4 previous months
+   month = month - pre_month;
+   if(month <= 0) { 
+      --year;
+      month += 12;
+   }
+
+   for(j=1; j<=48; j++) {  // display up to 48 months
+      init_dsm(year);
+      calc_dst_times(year, dst_list[dst_area]);  // find daylight savings change times
+
+      row = 0;
+
+      dow = day_of_week(1, month, year);
+      if(year < 0) sprintf(out, "%s %d BC", full_months[month], 0-year);
+      else         sprintf(out, "%s %04d",  full_months[month], year);
+      i = ((CAL_WIDTH-3) - strlen(out)) / 2;
+      color = WHITE;
+      if((month == pri_month) && (year == pri_year)) color = GREEN;
+      else if(j <= pre_month) color = DIM_WHITE;
+      vidstr(top+row, col+i, color, out);  // center year/month string
+      ++row;
+
+      vidstr(top+row, col, color, days);
+      ++row;
+
+      jd = jdate(year,month,1);
+      calc_moons(jd, 3); 
+
+      for(day=1; day<=dim[month]; day++) {  // show the day values
+         dow = day_of_week(day, month, year);
+
+         if(SMALL_SCREEN) sprintf(out, "%-3d", day);
+         else             sprintf(out, "%-4d", day);
+         i = col + (dow * strlen(out));
+
+         if((month == dst_start_month) && (day == dst_start_day)) color = BLUE;
+         else if((month == dst_end_month) && (day == dst_end_day)) color = BLUE;
+         else if(moons[day][0] && (moons[day][0] != 'Q')) {
+            if(strstr(moons[day], "Full")) color = YELLOW;     // full moon
+            else if(strstr(moons[day], "Blue")) color = YELLOW; // blue moon
+            else color = BROWN;  // new moon / black moon
+         }
+         else if(is_holiday(year,month,day)) color = CYAN;
+         else if((month == pri_month) && (year == pri_year)) color = GREEN;
+         else if(j <= pre_month) color = DIM_WHITE;
+         else color = WHITE;
+         if((pri_year == year) && (pri_month == month) && (pri_day == day) && (pri_seconds & 1)) {
+            color = BLACK;  // blink today's date
+         }
+         vidstr(top+row, i, color, out);
+
+         if(dow >= 6) {  // end of week, go to next row
+            ++row;
+         }
+      }
+
+
+      col += CAL_WIDTH;  // setup for next month
+      if(col > ((CAL_WIDTH*2)+CAL_LEFT)) {
+         col = CAL_LEFT;
+         top += 8;
+      }
+      if(top >= (TEXT_ROWS-8)) break;
+
+      ++month;
+      if(month > 12) {
+         month = 1;
+         year += 1;
+      }
+   }
+
+   init_dsm(this_year);
+   calc_dst_times(this_year, dst_list[dst_area]);  // find daylight savings change times
+   calc_moons(jd_local, 5); 
+}
+
+
 #ifdef AZEL_STUFF
+
 //
 //
 // AZIMUTH/ELEVATION plots
 //
 //
-
-
 
 void tick_radial(int grid_x,int grid_y, int grid_r, int max_el, int az)
 {
@@ -9340,12 +17731,12 @@ int x0,y0;
 int x1,y1;
 int x2,y2;
 int el;
-float len;
-float r;
+double len;
+double r;
 
    x0 = grid_x;
    y0 = grid_y;
-   r = (float) grid_r;
+   r = (double) grid_r;
    if(plot_signals == 3) {
       x0 -= grid_r;
       y0 += grid_r;
@@ -9353,7 +17744,7 @@ float r;
    }
 
    for(el=0; el<max_el; el+=5) {
-      len = ((float) r) * ((float)(max_el-el)/(float) max_el);
+      len = (r * ((double)(max_el-el)/(double) max_el));
       x1 = (int) (len * cos360(az-2));
       y1 = (int) (len * sin360(az-2));
 
@@ -9374,8 +17765,6 @@ float elx;
 float len;
 float r;
 int max_el, el_grid;
-
-//wwwwww  if(rcvr_type == NO_RCVR) return;
 
    x0 = grid_x;
    y0 = grid_y;
@@ -9472,9 +17861,10 @@ int max_el, el_grid;
 int trail_count;    // how many reference points that we have accumulated
 
 struct SAT_TRAIL {  // the satellite location history (newest to oldest)
-   s16 az[TRAIL_POINTS+1];  // (az<<6) | (lower 6 bits are minutes)
-   s08 el[TRAIL_POINTS+1];
-} sat_trail[256+2+1];       // one member for each sat
+   float az[TRAIL_POINTS+1];  // (az<<6) | (lower 6 bits are minutes)
+   float el[TRAIL_POINTS+1];
+   int mins[TRAIL_POINTS+1];
+} sat_trail[MAX_PRN+2+1];   // one member for each sat plus sun and moon
 
 void clear_sat_trails()
 {
@@ -9483,8 +17873,9 @@ int prn;
 
    for(prn=0; prn<=MOON_PRN; prn++) {
       for(i=0; i<TRAIL_POINTS; i++) {  // clear the sat's position list
-         sat_trail[prn].az[i] = 0;
-         sat_trail[prn].el[i] = 0;
+         sat_trail[prn].az[i] = 0.0F;
+         sat_trail[prn].el[i] = 0.0F;
+         sat_trail[prn].mins[i] = 0;
       }
    }
    trail_count = 0;
@@ -9495,35 +17886,41 @@ void update_sat_trails()
 {
 int prn;
 int i;
-int az,el;
+float az,el;
 
    if(pri_seconds != TRAIL_UPDATE_SECOND) return;      // keeps too many things from happening at the same time
    if((pri_minutes % TRAIL_INTERVAL) != 0) return;
 
    for(prn=1; prn<=SUN_MOON_PRN; prn++) {       // !!!! mooooo for each satellite
-      az = (int) (sat[prn].azimuth+0.5F);      // get current position
-      el = (int) (sat[prn].elevation+0.5F);
-      if((az < 0) || (az > 360)) az = el = 0;  // validate it
-      else if((el < 0) || (el > 90)) az = el = 0;
+      az = (sat[prn].azimuth);      // get current position
+      el = (sat[prn].elevation);
+      if((az < 0.0F) || (az > 360.0F)) az = el = 0.0F;  // validate it
+      else if((prn == SUN_PRN) || (prn == MOON_PRN)) {
+         if((el < -90.0F) || (el > 90.0F)) az = el = 0.0F;
+      }
+      else if((el < 0.0F) || (el > 90.0F)) az = el = 0.0F;
 
       // duplicate or zero entry means sat is no longer tracked
-      if(((az == 0) && (el == 0)) || (((sat_trail[prn].az[0]>>6) == az) && (sat_trail[prn].el[0] == el) && (i != SUN_PRN) && (i != MOON_PRN))) {  
+      if(((az == 0.0F) && (el == 0.0F)) || ((sat_trail[prn].az[0] == az) && (sat_trail[prn].el[0] == el) && (i != SUN_PRN) && (i != MOON_PRN))) {  
          sat[prn].azimuth = 0.0F;
          sat[prn].elevation = 0.0F;
          for(i=0; i<TRAIL_POINTS; i++) {  // clear the sat's position list
-            sat_trail[prn].az[i] = 0;
-            sat_trail[prn].el[i] = 0;
+            sat_trail[prn].az[i] = 0.0F;
+            sat_trail[prn].el[i] = 0.0F;
+            sat_trail[prn].mins[i] = 0;
          }
       }
-      else {   // sat is being tracked
+      else if(1) {   // sat is being tracked
          for(i=trail_count; i>0; i--) {  // shift the old positions down one slot
-            sat_trail[prn].az[i] = sat_trail[prn].az[i-1];
-            sat_trail[prn].el[i] = sat_trail[prn].el[i-1];
+            sat_trail[prn].az[i]   = sat_trail[prn].az[i-1];
+            sat_trail[prn].el[i]   = sat_trail[prn].el[i-1];
+            sat_trail[prn].mins[i] = sat_trail[prn].mins[i-1];
          }
 
          // insert current position at top of the list
-         sat_trail[prn].az[0] = (s16) ((az<<6) | pri_minutes);
-         sat_trail[prn].el[0] = (s08) el;
+         sat_trail[prn].az[0] = az;
+         sat_trail[prn].el[0] = el;
+         sat_trail[prn].mins[0] = (int) pri_minutes;
       }
    }
 
@@ -9552,23 +17949,41 @@ u08 m;
    row = 0;
 
    // the current location of the sat
-   x1 = grid_x + (int) (el * cos360(az) * grid_r);
-   y1 = grid_y + (int) (el * sin360(az) * grid_r);
+   if(az < 0.0F) az += 360.0F;
+   if(az >= 360.0F) az -= 360.0F;
+   x1 = grid_x + (int) ((el * cos360(az) * grid_r)+0.50);
+   y1 = grid_y + (int) ((el * sin360(az) * grid_r)+0.50);
+   if(x1 < 0) return;
+   if(y1 < 0) return;
+   if(x1 >= SCREEN_WIDTH) return;
+   if(y1 >= SCREEN_WIDTH) return;
 
    for(i=0; i<trail_count; i++) { // check the old locations of the sat
       el = (float) sat_trail[prn].el[i];
-      az = (float) (sat_trail[prn].az[i]>>6);
+      az = (float) sat_trail[prn].az[i];
       if((az == 0.0F) && (el == 0.0F)) break;  // end of valid locations
+      if((prn == MOON_PRN) || (prn == SUN_PRN)) {  // moon color depends upon elevation
+         if(el < 0.0F) color = GREY;  // !!!! this does not work since saved el is always positive
+         else color = MOON_COLOR;
+//sprintf(debug_text2, "moon: el:%f  moon_el:%f  color:%d", el, moon_el, color);
+      }
+      if(el < 0.0F) el = 0.0F - el;
 
       el = (el - 90.0F) / 90.0F;
       az += 90.0F;
+      if(az < 0.0F) az += 360.0F;
+      if(az >= 360.0F) az -= 360.0F;
 
-      x2 = grid_x + (int) (el * cos360(az) * grid_r);
-      y2 = grid_y + (int) (el * sin360(az) * grid_r);
+      x2 = grid_x + (int) ((el * cos360(az) * grid_r)+0.50);
+      y2 = grid_y + (int) ((el * sin360(az) * grid_r)+0.50);
+      if(x2 < 0) continue;
+      if(y2 < 0) continue;
+      if(x2 >= SCREEN_WIDTH) continue;
+      if(y2 >= SCREEN_WIDTH) continue;
 
       if(dots) {  // mark the trail with time markers
-         if(((sat_trail[prn].az[i] & 0x3F) % TRAIL_MARKER) == 0) {    // it's time to mark the trail
-            if((sat_trail[prn].az[i] & 0x3F) != 0) {  // it's not the hour... dot the dot
+         if((sat_trail[prn].mins[i] % TRAIL_MARKER) == 0) {    // it's time to mark the trail
+            if(sat_trail[prn].mins[i] != 0) {  // it's not the hour... dot the dot
                draw_circle(x2,y2, 2, color, 0);  // hollow circle
             }
             else {
@@ -9588,7 +18003,7 @@ u08 m;
 
 void log_sun_posn()
 {
-   // record the position of the sun (as satellite PRN 256)
+   // record the position of the sun (as satellite PRN 1000)
 
    sunrise = sunset = 0;
    if(have_sun_el == 0) ;
@@ -9609,6 +18024,7 @@ void log_sun_posn()
       sat[SUN_PRN].sig_level = (-40.0F);
       sat[SUN_PRN].tracking = 0;
    }
+sat[SUN_PRN].elevation = (float) sun_el;
    if(sat[SUN_PRN].elevation > 90.0) sat[SUN_PRN].elevation = 90.0;
    if(sat[SUN_PRN].elevation < -90.0) sat[SUN_PRN].elevation = -90.0;
    if(sat[SUN_PRN].azimuth > 360.0) sat[SUN_PRN].azimuth -= 360.0;
@@ -9627,9 +18043,146 @@ void log_sun_posn()
       sat[MOON_PRN].sig_level = (-40.0F);
       sat[MOON_PRN].tracking = 0;
    }
+
+sat[MOON_PRN].elevation = (float) moon_el;
    if(sat[MOON_PRN].elevation > 90.0) sat[MOON_PRN].elevation = 90.0;
    if(sat[MOON_PRN].elevation < -90.0) sat[MOON_PRN].elevation = -90.0;
    if(sat[MOON_PRN].azimuth > 360.0) sat[MOON_PRN].azimuth -= 360.0;
+}
+
+int blink_sat()
+{
+   if(blink_prn >= 0) return blink_prn;    // user specified sat
+   else if(blink_prn == BLINK_HIGHEST) return highest_sat();
+   else if(blink_prn == BLINK_PLOT) return plot_prn;
+
+   return 0;
+}
+
+void draw_sat(int prn, int x, int y, int r, int color, int fill)
+{
+int i,j;
+int clip_left_x, clip_right_x;
+int clip_top_y, clip_bottom_y;
+int thickness;
+
+   // draw the satellite on the map
+
+   if(blink_sat() && (prn == blink_sat()) && (seconds & 1)) {  // blink the specified sat
+      color = BLACK;
+   }
+
+   thickness = 1;
+   if(!small_azel()) thickness = 2;
+
+   if((zoom_screen == 'W') || ((zoom_screen == 0) && NO_SATS)) {
+      clip_left_x = aclock_x-ACLOCK_R;
+      clip_right_x = aclock_x+ACLOCK_R;
+      clip_top_y = aclock_y-ACLOCK_R;
+      clip_bottom_y = aclock_y+ACLOCK_R;
+   }
+   else {
+      clip_left_x = AZEL_X-AZEL_RADIUS;
+      clip_right_x = AZEL_X+AZEL_RADIUS;
+      clip_top_y = AZEL_Y-AZEL_RADIUS;
+      clip_bottom_y = AZEL_Y+AZEL_RADIUS;
+   }
+clip_right_x -= thickness;
+clip_left_x += thickness;
+clip_top_y += thickness;
+clip_bottom_y -= thickness;
+
+
+   if(fancy_sats == ROUND_SATS) {  // simple circular sats
+      draw_circle(x,y, r, color, fill);
+   }
+   else if(fancy_sats == RECT_SATS) {  // simple rectangular sats
+      i = j = r;
+      if(fill) fill_rectangle(x-i,y-j, i+i,j+j, color);
+      else     draw_rectangle(x-i,y-j, i+i,j+j, color);
+   }
+   else { // fancy sats
+      if((fancy_sats == RECT_WINGS) || (fancy_sats == RECT_LINES)) {  // rectangle with wings
+         i = (r*4) / 10;
+         if(i < 2) i = 2;
+
+         j = (r*3)/4;
+         if(j < 3) j = 3;
+
+         if(fill) fill_rectangle(x-i,y-j, i+i,j+j, color);
+         else     draw_rectangle(x-i,y-j, i+i,j+j, color);
+      }
+      else if(fancy_sats == ROUND_LINES) {
+         i = r*2/3;
+         draw_circle(x,y, r*2/3, color, fill);
+      }
+      else {  // circle with wings
+         draw_circle(x,y, r*2/3, color, fill);
+      }
+
+      // draw the wings
+      if((fancy_sats == RECT_WINGS) || (fancy_sats == ROUND_WINGS)) {
+         line(x+r,y+r, x+r,y-r, color);
+         line(x-r,y+r, x-r,y-r, color);
+
+         if(fill) {
+            for(i=0-r; i<r; i++) {
+               line(x+i,y+i, x+i,y-i, color);
+            }
+         }
+         if(color) {
+            line(x-r,y+r, x+r,y-r, color);
+            line(x+r,y+r, x-r,y-r, color);
+         }
+      }
+      else if(fancy_sats == RECT_LINES) {
+         j = 3;
+         i += 2;
+         if(zoom_screen) j = 4;
+         else if((y+r) <= clip_top_y) return;
+         else if((y-r) >= clip_bottom_y) return;
+
+         if(zoom_screen || ((x+r-2) <= clip_right_x)) {
+            thick_line(x+r-2,y+r, x+r-2,y-r, color,j);
+         }
+         if(zoom_screen || ((x-r) >= (clip_left_x))) {
+            thick_line(x-r,y+r,   x-r,y-r,   color,j);
+         }
+
+         if(zoom_screen) {
+            thick_line(x+r-2,y, x+r-2-i-j,  y, color,j);
+            thick_line(x-r,y,   x-r+i+(j-1),y, color,j);
+         }
+         else {
+            if((x+r-1) <= clip_right_x) {
+               thick_line(x+r-1,y, x+r-i-j-0,y, color,j);
+            }
+            if((x-r) >= clip_left_x) {
+               thick_line(x-r,y,   x-r+i+j-1,y, color,j);
+            }
+         }
+      }
+      else if(fancy_sats == ROUND_LINES) {
+         j = 3;
+         if(zoom_screen) j = 4;
+         else if((y+r) <= clip_top_y) return;
+         else if((y-r) >= clip_bottom_y) return;
+
+         if(zoom_screen || ((x+r-2) <= clip_right_x)) {
+            thick_line(x+r-2,y+r, x+r-2,y-r, color,j);
+         }
+         if(zoom_screen || ((x-r) >= clip_left_x)) {
+            thick_line(x-r,y+r,   x-r,y-r,   color,j);
+         }
+
+         if(zoom_screen || ((x+r-2) <= clip_right_x)) {
+            thick_line(x+r-2,y, x+r-i/2,y,   color,j);
+         }
+         if(zoom_screen || ((x-r) >= clip_left_x)) {
+            thick_line(x-r,y,   x-r+i/2-1,y, color,j);
+         }
+      }
+   }
 }
 
 void draw_azel_sats(int grid_x,int grid_y, int grid_r)
@@ -9650,24 +18203,36 @@ u08 m;
    j = 0;
    row = 0;
 
-   if(AZEL_Y >= PLOT_ROW) shared_item = 'M';
-   if(map_and_watch && (shared_item == 'M')) shared_item = 'B';
+   map_x = grid_x;
+   map_y = grid_y;
+   map_r = grid_r;
+
+   if(AZEL_Y >= PLOT_ROW) shared_item = SHARE_MAP;
+   if(map_and_watch && (shared_item == SHARE_MAP)) {
+      if(0 && plot_lla && lla_showing) ;
+      else shared_item = (SHARE_MAP | SHARE_WATCH);
+   }
 
    log_sun_posn();
    if(1 || (shared_plot == 0) || (aclock_y < (SCREEN_HEIGHT/3)) || (zoom_screen == 'M') || (zoom_screen == 'X') || (zoom_screen == 'Y')) {
       #ifdef TRUE_MOON
-         calc_moon_posn();
+         calc_moon_posn(0);
       #endif
-      if((lat != 0.0) || (lon != 0.0)) draw_moon(jd_utc, grid_x,grid_y, grid_r);
+      if((lat != 0.0) || (lon != 0.0)) {
+         draw_moon(jd_utc, grid_x,grid_y, grid_r, 0);
+      }
    }
    
+   drawn_sats = 0;
    for(i=1; i<=SUN_MOON_PRN; i++) { // !!!!! mooooo  now draw the sat vectors
       if(sat[i].level_msg == 0x00) continue;
       if((i == SUN_PRN) && (no_sun_moon & 0x01)) continue;
       if((i == MOON_PRN) && (no_sun_moon & 0x02)) continue;
 
 if(tracked_only & (sat[i].tracking <= 0) && (i != SUN_PRN) && (i != MOON_PRN)) continue;
-//if(sat[i].sig_level <= 0.0) continue;  // zzzzzzzzzzzzzzz
+      if(i == SUN_PRN) ;
+      else if(i == MOON_PRN);
+      else if(sat[i].sig_level <= 0.0) continue;  // zzzzzzzzzzzzzzz
 
       if((i == SUN_PRN) && (sun_el == 0.0F) && (sun_az == 0.0F)) continue;
       if((i == MOON_PRN) && (moon_el == 0.0F) && (moon_az == 0.0F)) continue;
@@ -9678,29 +18243,27 @@ if(tracked_only & (sat[i].tracking <= 0) && (i != SUN_PRN) && (i != MOON_PRN)) c
 
       if((az == 0.0F) && (el == 0.0F)) continue;
       if((az < 0.0F) || (az >= 360.0F)) continue;
+      if((el < -90.0F) || (el > 90.0F)) continue;
 
-      if(i == SUN_PRN) ;
-      else if(i == MOON_PRN) ;
-      else if((el < 0.0F) || (el > 90.0F)) continue;
+      if((i == SUN_PRN) || (i == MOON_PRN)) {
+         if(el < 0.0F) el = 0.0F - el;
+      }
+      if((el < 0.0F) || (el > 90.0F)) continue;
 
       el = (el - 90.0F) / 90.0F;
       az += 90.0F;
+      if(az < 0.0F) az += 360.0F;
+      if(az >= 360.0F) az -= 360.0F;
 
       x = grid_x + (int) (el * cos360(az) * grid_r);
       y = grid_y + (int) (el * sin360(az) * grid_r);
+      if(x < 0) continue;
+      if(y < 0) continue;
+      if(x >= SCREEN_WIDTH) continue;
+      if(y >= SCREEN_HEIGHT) continue;
 
       // the size of the sat marker is based upon the signal strength
-      marker_size = (int) sat[i].sig_level;
-if((rcvr_type == UBX_RCVR) && (i != SUN_PRN)) marker_size += (marker_size / 3);  // UBX receivers have smaller sig level values
-      if(marker_size < 0) marker_size = 0 - marker_size;
-      if(amu_mode == 0) {
-          marker_size -= 30;  // 30 dBc represents our minimum marker size
-      }
-
-      if(marker_size > MAX_MARKER_SIZE) marker_size = MAX_MARKER_SIZE;   // and 44 dBc is our max size
-      else if(marker_size < MIN_MARKER_SIZE) marker_size = MIN_MARKER_SIZE;
-      marker_size = (int) (((float) marker_size) / (float) MAX_MARKER_SIZE * (float) AZEL_SIZE/20.0F);
-      if(marker_size < MIN_MARKER_SIZE) marker_size = MIN_MARKER_SIZE;
+      marker_size = set_marker_size(i);
   
       
       color = j;
@@ -9723,26 +18286,50 @@ if((rcvr_type == UBX_RCVR) && (i != SUN_PRN)) marker_size += (marker_size / 3); 
       #endif
 
       if(i == MOON_PRN) ;  // we draw the moon separately
+      else if((i == SUN_PRN) && (fancy_sats >= RECT_SATS)) {
+         if(sat[i].tracking > 0) {  //  mark sats that are actively tracked with a filled box
+            draw_circle(x,y, marker_size, sat_colors[color], 1);     
+         }
+         else {
+            draw_circle(x,y, marker_size, sat_colors[color], 0);     
+         }
+         sat[i].plot_x = x;
+         sat[i].plot_y = y;
+         sat[i].plot_r = marker_size;
+         sat[i].plot_color = sat_colors[color];
+      }
       else if(sat[i].tracking > 0) {  //  mark sats that are actively tracked with a filled box
-         draw_circle(x,y, marker_size, sat_colors[color], 1);     
-         if(map_and_sigs || (zoom_screen == 'X') || (zoom_screen == 'Y')) {  // outline the sats in black
-            draw_circle(x,y, marker_size+1, BLACK, 0);
-            draw_circle(x,y, marker_size+2, BLACK, 0);
+         draw_sat(i, x,y, marker_size, sat_colors[color], 1);     
+         ++drawn_sats;
+         sat[i].plot_x = x;
+         sat[i].plot_y = y;
+         sat[i].plot_r = marker_size;
+         sat[i].plot_color = sat_colors[color];
+
+         if((fancy_sats <= RECT_SATS) && (map_and_sigs || (zoom_screen == 'X') || (zoom_screen == 'Y'))) {  // outline the sats in black
+            draw_sat(i, x,y, marker_size+1, BLACK, 0);
+            draw_sat(i, x,y, marker_size+2, BLACK, 0);
          }
       }
       else {  // mark inactive sats with a hollow box
-         draw_circle(x,y, marker_size, sat_colors[color], 0);          
-         if(map_and_sigs || (zoom_screen == 'X') || (zoom_screen == 'Y')) {  // outline the sats in black
-            draw_circle(x,y, marker_size+1, BLACK, 0);
-            draw_circle(x,y, marker_size+2, BLACK, 0);
+         draw_sat(i, x,y, marker_size, sat_colors[color], 0);          
+         ++drawn_sats;
+         sat[i].plot_x = x;
+         sat[i].plot_y = y;
+         sat[i].plot_r = marker_size;
+         sat[i].plot_color = sat_colors[color];
+
+         if((fancy_sats <= RECT_SATS) && (map_and_sigs || (zoom_screen == 'X') || (zoom_screen == 'Y'))) {  // outline the sats in black
+            draw_sat(i, x,y, marker_size+1, BLACK, 0);
+            draw_sat(i, x,y, marker_size+2, BLACK, 0);
          }
-         if(marker_size > 1+1) {
-            draw_circle(x,y, marker_size-1-1, BLACK, 1);
+         if((fancy_sats <= RECT_SATS) && (marker_size > 1+1)) {
+            draw_sat(i, x,y, marker_size-1-1, BLACK, 1);
          }
       }
 
       if(i == SUN_PRN) {
-         draw_sun_rays(x,y, marker_size);
+         draw_sun_rays(x,y, marker_size, 0);
       }
       else if(i == MOON_PRN) {
       }
@@ -9755,6 +18342,7 @@ if((rcvr_type == UBX_RCVR) && (i != SUN_PRN)) marker_size += (marker_size / 3); 
 void draw_azel_prns(int signals)
 {
 int i, j;
+int kl, kr;
 char el_dir;
 float az,el;
 int q1_row,q2_row,q3_row,q4_row;
@@ -9768,9 +18356,9 @@ int color;
    q3_row = q2_row = ((AZEL_Y + AZEL_SIZE/2) / TEXT_HEIGHT) - 1;
    q3_q4_col = (AZEL_X-AZEL_SIZE/2)/TEXT_WIDTH+2;
    q1_q2_col = (AZEL_X+AZEL_SIZE/2)/TEXT_WIDTH-2;
-   if(SCREEN_WIDTH <= 800) {
+   if(SCREEN_WIDTH <= NARROW_SCREEN) {
       if(all_adevs || shared_plot) {  // plot area shared with az/el map
-         if(SCREEN_HEIGHT < 600) {
+         if(SCREEN_HEIGHT < SHORT_SCREEN) {
             ++q4_row;  ++q1_row;
             ++q3_row;  ++q2_row;
          }
@@ -9788,7 +18376,7 @@ int color;
       q1_q2_col -= 1;
    }
 
-   if(0 & (SCREEN_HEIGHT < 600)) {
+   if(0 & (SCREEN_HEIGHT < SHORT_SCREEN)) {
       --q2_row;
       --q3_row;
    }
@@ -9801,16 +18389,18 @@ int color;
    if(q4_row < 0) q4_row = 0;
 
    if((zoom_screen == 'U') || (zoom_screen == 'V')) {
-      if(SCREEN_HEIGHT > 600) show_title();
+      if(SCREEN_HEIGHT > SHORT_SCREEN) show_title();
    }
    else if(zoom_screen) {
       show_title();
    }
 
+   if(small_azel()) return;  // map is too small to label
+
    no_x_margin = no_y_margin = 1;
 
    #ifdef SIG_LEVELS 
-      if(zoom_screen || ((SCREEN_HEIGHT >= 832) && (all_adevs == 0)) || ((SCREEN_WIDTH >= MEDIUM_WIDTH) && (AZEL_ROW < PLOT_ROW))) {
+      if(zoom_screen || ((SCREEN_HEIGHT >= AZEL_TITLE_THRESH) && (all_adevs == SINGLE_ADEVS)) || ((SCREEN_WIDTH >= MEDIUM_WIDTH) && (AZEL_ROW < PLOT_ROW))) {
          if(zoom_screen == 'S')      label_circles(signals, q2_row+3); 
          else if(zoom_screen == 'U') label_circles(signals, q2_row+3); 
          else if((zoom_screen == 'V') || (zoom_screen == 'I')) {
@@ -9824,18 +18414,29 @@ int color;
       l = min_sig_db;
       step = sig_level_step;
 
-if((zoom_screen == 'X') || (zoom_screen == 'Y')) {
-   q1_q2_col += 9;
-   q3_q4_col -= 9;
-   goto xxxx;
-}
-else if((zoom_screen == 'U') || (zoom_screen == 'V') || (zoom_screen == 'I')) {
-   q1_q2_col += 3;
-   q3_q4_col -= 3;
-   if(plot_signals == 4) goto xxxx;
-   else if(plot_signals == 0) goto yyyy;
-   return;
-}
+      if((zoom_screen == 'X') || (zoom_screen == 'Y')) {
+         if(SCREEN_WIDTH < TINY_TINY_WIDTH) {
+            q1_q2_col += 4;
+            q3_q4_col -= 4;
+         }
+         else {
+            q1_q2_col += 9;
+            q3_q4_col -= 9;
+         }
+         goto xxxx;
+      }
+      else if((zoom_screen == 'U') || (zoom_screen == 'V') || (zoom_screen == 'I')) {
+         q1_q2_col += 3;
+         q3_q4_col -= 3;
+         if(plot_signals == 4) goto xxxx;
+         else if(plot_signals == 0) goto yyyy;
+no_x_margin = no_y_margin = 0;
+         return;
+      }
+      else if((zoom_screen == 'M') || (zoom_screen == 'B')) {
+         q1_q2_col += 4;
+         q3_q4_col -= 4;
+      }
 
       if(map_and_watch && (zoom_screen != 'S')) ;
       else if((signals || (zoom_screen == 'S')) && (plot_signals >= 4)) {
@@ -9843,7 +18444,7 @@ else if((zoom_screen == 'U') || (zoom_screen == 'V') || (zoom_screen == 'I')) {
             xxxx:
             q1_q2_col-=2;
             q3_q4_col-=2;
-            if(zoom_screen && (SCREEN_WIDTH == 800)) {
+            if(zoom_screen && (SCREEN_WIDTH >= (NARROW_SCREEN-24)) && (SCREEN_WIDTH <= (NARROW_SCREEN+24))) {  // !!!!! == NARROW_SCREEN?
                ++q1_row;  ++q4_row;
             }
 //sprintf(debug_text, "q1r:%d  q2r:%d  q3r:%d  q4r:%d  q34c:%d  q12c:%d", q1_row,q2_row,q3_row,q4_row, q3_q4_col, q1_q2_col);
@@ -9930,13 +18531,22 @@ if((zoom_screen == 'X') || (zoom_screen == 'Y')) {
       if((i == MOON_PRN) && (no_sun_moon & 0x02)) continue;
 
 if(tracked_only & (sat[i].tracking <= 0) && (i != SUN_PRN) && (i != MOON_PRN)) continue;
-// if(sat[i].sig_level <= 0.0) continue; // zzzzzzzzzzzzzzzzzzzz
+      if(i == SUN_PRN) ;
+      else if(i == MOON_PRN);
+      else if(sat[i].sig_level <= 0.0) continue; // zzzzzzzzzzzzzzzzzzzz
+
       el = sat[i].elevation;
       az = sat[i].azimuth;
 
       if((az == 0.0F) && (el == 0.0F)) continue;
-      if((el < 0.0F) || (el > 90.0F)) continue;
       if((az < 0.0F) || (az >= 360.0F)) continue;
+      if(el > 90.0F) continue;
+      if(el < 0.0F) {
+         if(i == SUN_PRN) ;
+         else if(i == MOON_PRN) ;
+         else continue;
+         el = 0.0F - el;
+      }
 
 //sprintf(debug_text2, "Q1r:%d  Q2r:%d  Q3r:%d  Q4r:%d  Q34c:%d  Q12c:%d", q1_row,q2_row,q3_row,q4_row, q3_q4_col, q1_q2_col);
 //DEBUGSTR3(debug_text2);
@@ -9947,38 +18557,54 @@ if(tracked_only & (sat[i].tracking <= 0) && (i != SUN_PRN) && (i != MOON_PRN)) c
       el_dir = sat[i].el_dir;
       if(el_dir == 0) el_dir = ' ';
 
-      if(SCREEN_WIDTH > 800) {
+      kl = kr = 0;
+//gns if(SCREEN_WIDTH > NARROW_SCREEN) {
+      if((SCREEN_WIDTH > 800) || zoom_screen) {
          if(i == SUN_PRN)       sprintf(out, "SUN "); 
          else if(i == MOON_PRN) sprintf(out, "MOON"); 
+         else if(i >= 100)      sprintf(out, "%03d%c", i,el_dir);
          else                   sprintf(out, "%02d%c ", i,el_dir);
+         kl = 1;
+         kr = 0;
       }
       else {
          if(i == SUN_PRN)       sprintf(out, "SUN "); 
          else if(i == MOON_PRN) sprintf(out, "MOON"); 
-         else                   sprintf(out, "%02d ", i);
+         else if(i >= 100)      sprintf(out, "%03d ", i);
+         else                   sprintf(out, "%02d  ", i);
+//gns    kl = 0;
+//gns    kr = 1;
+//       kl = 2;
+         kl = 1;  // helps with small screens with no critical info
+         kr = 1;
       }
 
       color = j;
-if(i == SUN_PRN) color = YELLOW_SAT_COLOR;  // !!!! kludge: force YELLOW for the sun
-if(i == MOON_PRN) {
-   if(moon_el < 0) color = GREY_SAT_COLOR;
-   else            color = YELLOW_SAT_COLOR;  // !!!! kludge: force YELLOW for the moon
-}
+      if(i == SUN_PRN) color = YELLOW_SAT_COLOR;  // !!!! kludge: force YELLOW for the sun
+      if(i == MOON_PRN) {
+         if(moon_el < 0) color = GREY_SAT_COLOR;
+         else            color = YELLOW_SAT_COLOR;  // !!!! kludge: force YELLOW for the moon
+      //sprintf(debug_text, "moon: el:%f  moon_el:%f  color:%d", el, moon_el, color);
+      }
+      color = sat_colors[color];
+      if(blink_sat() && (i == blink_sat()) && (seconds & 1)) {  // blink the specified sat
+         color = BLACK;
+      }
 
       if(az < 90.0F) {  // figure out what quadrant they are in
-         vidstr(q1_row, q1_q2_col, sat_colors[color], out);
+         vidstr(q1_row, q1_q2_col+kr, color, out);
          ++q1_row;
       }
       else if(az < 180.0F) {
-         vidstr(q2_row, q1_q2_col, sat_colors[color], out);
+         vidstr(q2_row, q1_q2_col+kr, color, out);
          --q2_row;
       }
       else if(az < 270.0F) {
-         vidstr(q3_row, q3_q4_col, sat_colors[color], out);
+         vidstr(q3_row, q3_q4_col-kl, color, out);
          --q3_row;
       }
       else {
-         vidstr(q4_row, q3_q4_col, sat_colors[color], out);
+         vidstr(q4_row, q3_q4_col-kl, color, out);
          ++q4_row;
       }
 
@@ -10046,10 +18672,22 @@ int i;
 
 void small_screen_watch()
 {
-   if(SMALL_SCREEN && (SCREEN_WIDTH>800) && (all_adevs == 0)) {
-      ACLOCK_SIZE = WATCH_SIZE;
-      aclock_x = WATCH_COL + ACLOCK_R + TEXT_WIDTH;
-      aclock_y = WATCH_ROW + ACLOCK_R + TEXT_WIDTH;
+int medium_touch;  // for 1024x600 touch screen
+
+if(plot_lla && lla_showing) return;
+
+   medium_touch = ((SCREEN_WIDTH > MEDIUM_WIDTH) && (SCREEN_WIDTH <= (MEDIUM_WIDTH+X11_MARGIN)) && (SCREEN_HEIGHT <= SHORT_SCREEN) && (all_adevs == SINGLE_ADEVS));
+
+   if(medium_touch || (SMALL_SCREEN && (SCREEN_WIDTH > NARROW_SCREEN) && (all_adevs == SINGLE_ADEVS))) {
+      if(rcvr_type == NO_RCVR) {
+         aclock_y = WATCH_ROW + ACLOCK_R + TEXT_WIDTH;
+         aclock_x = WATCH_COL + TEXT_WIDTH;
+      }
+      else {
+         ACLOCK_SIZE = WATCH_SIZE;
+         aclock_y = WATCH_ROW + ACLOCK_R + TEXT_WIDTH;
+         aclock_x = WATCH_COL + ACLOCK_R + TEXT_WIDTH;
+      }
    }
 }
 
@@ -10062,14 +18700,28 @@ u08 show_sigs;
 
    // This routine controls the display of the lat/lon/alt map,  sat position
    // map, signal level map,  and analog watch displays.  
+//sprintf(debug_text, "plot_lla:%d  fixes:%d  x:%d  row:%d  showing:%d  shared:%02X  aclock:%d,%d %d  WATCH:%d,%d %d", 
+//plot_lla, show_fixes, LLA_Y, LLA_ROW, lla_showing, shared_item, aclock_x,aclock_y,ACLOCK_R, WATCH_COL,WATCH_ROW,WATCH_SIZE);
+#define XXXX (NARROW_SCREEN)
 
+   if(zoom_screen == '`') {
+      zoom_calc();
+      return;
+   }
+   else if(zoom_screen == 'Q') {
+      zoom_cal(cal_year, cal_month);
+      return;
+   }
+
+   azel_erased = 0;
    if(text_mode) plot_areas = 0;
    else if(just_read) plot_areas = 0;
    else if(zoom_screen == 'L') plot_areas = 0;
    else if(zoom_screen) plot_areas = 1;
-   else if(SCREEN_WIDTH < 800) {
+   else if(SCREEN_WIDTH < XXXX) {
       if(shared_plot) plot_areas = 1;
-      else if(rcvr_type == NO_RCVR) plot_areas = 1;  // nnnnnn
+      else if(rcvr_type == NO_RCVR) plot_areas = 1;
+////else if(rcvr_type == TIDE_RCVR) plot_areas = 1;  // ckckck
       else plot_areas = 0;
    }
    else if(shared_plot == 0) plot_areas = 1;
@@ -10084,9 +18736,9 @@ u08 show_sigs;
    show_sigs = plot_signals;
 
    if(first_key && plot_areas) {
-      if(SCREEN_WIDTH < 800) plot_areas = 0;
+      if(SCREEN_WIDTH < XXXX) plot_areas = 0;
       else if(all_adevs) plot_areas = 0;
-      else if(shared_plot) plot_areas = 0;
+//ssssssss      else if(shared_plot) plot_areas = 0;
       else plot_areas = 1;
    }
 
@@ -10094,11 +18746,12 @@ u08 show_sigs;
    map_and_sigs = 0; 
    if(show_watch && show_map && ((plot_areas == 1) || show_sigs || plot_lla)) {
       map_and_watch = 1;
-      if(zoom_screen) {
+      if(zoom_screen && (zoom_screen != 'K')) {
          aclock_x = AZEL_COL + AZEL_SIZE/2 - 2;
          aclock_y = AZEL_ROW + AZEL_SIZE/2 - 2;
       }
    }
+
    if(zoom_screen == 'S') ;
    else if(zoom_screen == 'X') ;
    else if(zoom_screen == 'Y') ;
@@ -10119,7 +18772,25 @@ u08 show_sigs;
    }
 
    if(zoom_screen == 'B') goto maw;
-   else if(zoom_screen == 'W') goto maw;
+   else if(zoom_screen == 'D') {  // zoom to receiver data info
+      if     (rcvr_type == BRANDY_RCVR) show_brandy_info(1,4);
+      else if(rcvr_type == CS_RCVR)     show_cs_info();
+      else if(rcvr_type == LPFRS_RCVR)  show_lpfrs_info(1,3, 999);
+      else if(rcvr_type == PRS_RCVR)    show_prs_info(1,3, 999);
+      else if(rcvr_type == SA35_RCVR)   show_sa35_info(1,3, 999);
+      else if(rcvr_type == SRO_RCVR)    show_sro_info(1,3, 999);
+      else if(rcvr_type == RFTG_RCVR)   show_rftg_info(1,4);
+      else if(rcvr_type == X72_RCVR)    show_x72_info(1,3, 999);
+      return;
+   }
+   else if(zoom_screen == 'F') {  // FFT waterfall
+      // image drawn in process_signal()
+      return;
+   }
+   else if(zoom_screen == 'I') {
+      zoom_sat_info();
+      return;
+   }
    else if(zoom_screen == 'U') {
       zoom_all_signals();
       return;
@@ -10128,19 +18799,20 @@ u08 show_sigs;
       zoom_stuff();
       return;
    }
-   else if(zoom_screen == 'I') {
-      zoom_sat_info();
+   else if(zoom_screen == 'W') goto maw;
+   else if((zoom_screen == 'X') || (zoom_screen == 'Y')) {
+      draw_azel_plot(1);
       return;
    }
-   else if((zoom_screen == 'X') || (zoom_screen == 'Y')) {
-      draw_azel_plot();
+   else if(zoom_screen == '`') {
+      zoom_calc();
       return;
    }
    else if(zoom_screen) ;
    else if(map_and_watch) {
       maw:
       if(MESS && map_and_sigs && (plot_areas == 1)) {
-         draw_signal_map();
+         draw_signal_map(1);
          show_sigs = 0;
       }
 
@@ -10148,7 +18820,12 @@ u08 show_sigs;
 //       update_sat_trails(); // update az/el position array
       #endif
       if(zoom_screen == 'W') draw_watch(1);
-      else                   draw_azel_plot();
+      else {
+         if(rotate_screen && (azel_erased == 0) && (AZEL_ROW >= PLOT_ROW)) {
+            erase_azel(20);
+         }
+         draw_azel_plot(2);
+      }
       --plot_areas;
       show_watch = 0; 
       show_map = 0;
@@ -10162,7 +18839,7 @@ u08 show_sigs;
 
    #ifdef SIG_LEVELS
       if((show_sigs && (plot_areas > 0)) || (zoom_screen == 'S')) {
-         draw_signal_map();      // draw signal level map
+         draw_signal_map(2);      // draw signal level map
          show_sigs = 0;
 
          if(map_and_sigs) {
@@ -10172,6 +18849,9 @@ u08 show_sigs;
       }
    #endif
 
+//sprintf(debug_text3, "areas:%d  watch:%d  map:%d sigs:%d lla:%d  azel:%d,%d",
+//plot_areas, show_watch,show_map, show_sigs, plot_lla, AZEL_COL,AZEL_ROW);
+
    #ifdef AZEL_STUFF
       if((zoom_screen == 'M') || (zoom_screen == 'B')) goto do_map;
       else if(zoom_screen) ;
@@ -10180,7 +18860,7 @@ u08 show_sigs;
          #ifdef SAT_TRAILS
 //          update_sat_trails(); // update az/el position array
          #endif
-         draw_azel_plot();
+         draw_azel_plot(3);
          show_map = 0;
          --plot_areas;
       }
@@ -10192,7 +18872,7 @@ u08 show_sigs;
          goto anaw;
       }
       else if(zoom_screen) ;
-      else if((plot_areas > 0) || (rcvr_type == NO_RCVR)) {
+      else if((plot_areas > 0) || (rcvr_type == NO_RCVR) || (rcvr_type == TIDE_RCVR)) {
          if(luxor && luxor_fault()) {
             --plot_areas;
          }
@@ -10207,6 +18887,97 @@ small_screen_watch();
    #endif
 }
 
+int center_sat;
+int cursor_sat_color;
+
+void find_cursor_sat()
+{
+int prn;
+int close_prn;
+double close_dist;
+double dist;
+double dx, dy;
+double az, el;
+char az_dir;
+char el_dir;
+
+   // show info of the satellite the mouse cursor is over in the sat map
+
+   if(drawn_sats == 1) sprintf(out, "%d Satellite Position ", drawn_sats);
+   else if(drawn_sats) sprintf(out, "%d Satellite Positions ", drawn_sats);
+   else                sprintf(out, "Satellite Positions ");
+
+   if(map_r == 0) return;
+
+   if(mouse_x < map_x-map_r) return;
+   if(mouse_x > map_x+map_r) return;
+   if(mouse_y < map_y-map_r) return;
+   if(mouse_y > map_y+map_r) return;
+
+   close_prn = 0;
+   close_dist = 1E10;
+   for(prn=1; prn<=MOON_PRN; prn++) {
+//if(prn == SUN_PRN) ;
+//else if(prn == MOON_PRN) ;
+      if(sat[prn].level_msg == 0) continue;
+
+      if(mouse_x < sat[prn].plot_x - sat[prn].plot_r) continue;
+      if(mouse_x > sat[prn].plot_x + sat[prn].plot_r) continue;
+      if(mouse_y < sat[prn].plot_y - sat[prn].plot_r) continue;
+      if(mouse_y > sat[prn].plot_y + sat[prn].plot_r) continue;
+
+      dx = (double) (sat[prn].plot_x - mouse_x);
+      dy = (double) (sat[prn].plot_y - mouse_y);
+      dist = sqrt(dx*dx + dy*dy);
+      if(dist < close_dist) {
+         close_dist = dist;
+         close_prn = prn;
+      }
+   }
+
+   if(close_prn) {  // show info of the sat at the mouse cursor
+      az_dir = (char) sat[close_prn].az_dir;
+      if(az_dir == 0) az_dir = ' ';
+      else if(sat[close_prn].azimuth == 0.0F) az_dir = ' ';
+      el_dir = (char) sat[close_prn].el_dir;
+      if(el_dir == 0) el_dir = ' ';
+      else if(sat[close_prn].elevation == 0.0F) el_dir = ' ';
+
+      if(close_prn == SUN_PRN) {
+         if(sat[close_prn].elevation >= 0) cursor_sat_color = YELLOW;
+         else                              cursor_sat_color = GREY;
+         sprintf(out, "SUN: az:%.2f%c el:%.2f%c", sat[close_prn].azimuth,az_dir,  sat[close_prn].elevation,el_dir);
+      }
+      else if(close_prn == MOON_PRN) {
+         if(sat[close_prn].elevation >= 0) cursor_sat_color = YELLOW;
+         else                              cursor_sat_color = GREY;
+         sprintf(out, "MOON: az:%.0f%c el:%.0f%c phase:%.0f%%", sat[close_prn].azimuth,az_dir, sat[close_prn].elevation,el_dir,MoonPhase*100.0);
+      }
+      else {
+         if     (sat[close_prn].disabled)         cursor_sat_color = BLUE;
+         else if(sat[close_prn].health_flag == 1) cursor_sat_color = RED;
+         else if(sat[close_prn].tracking <= 0)    cursor_sat_color = YELLOW;
+         else                                     cursor_sat_color = GREEN;
+         sprintf(out, "%s:%d az:%.0f%c el:%.0f%c sig:%.0f", gnss_id(close_prn),close_prn, sat[close_prn].azimuth,az_dir, sat[close_prn].elevation,el_dir,sat[close_prn].sig_level);
+      }
+//    cursor_sat_color = sat[close_prn].plot_color;
+//    center_sat = 0;
+   }
+   else {   // show az/el at the mouse cursor
+      dx = mouse_x - AZEL_X;
+      dy = mouse_y - AZEL_Y;
+      az = 90.0 + atan2(dy,dx) * 180.0/PI;
+      if(az < 0.0) az += 360.0;
+      else if(az >= 360.0) az -= 360.0;
+
+      el = sqrt(dx*dx+dy*dy) / AZEL_RADIUS;
+      el = 90.0 - (90.0 * el);
+      if(el >= 0.0) {
+         sprintf(out, "az:%.0f  el:%.0f", az,el);
+      }
+   }
+}
+
 void label_circles(int signals, int row)
 {
 int col;
@@ -10215,7 +18986,14 @@ char *s;
 
    // label the various az/el plots
 
-   if(rcvr_type == NO_RCVR) return;
+   center_sat = 1;
+   cursor_sat_color = WHITE;
+
+   if(rcvr_type == CS_RCVR) return;
+   else if(rcvr_type == NO_RCVR) return;
+   else if(rcvr_type == THERMO_RCVR) return;
+   else if(rcvr_type == TICC_RCVR) return;
+////else if(rcvr_type == TIDE_RCVR) return;  // ckckck
    else if(signals && (plot_signals == 1)) {
       s = "Relative strength vs azimuth";
       if(zoom_screen == 'U') row -= 2;
@@ -10237,15 +19015,26 @@ char *s;
       s = "Raw signal level data";
    }
    else {
-      s = "Satellite positions";
+      find_cursor_sat();
+      s = &out[0];
       if(zoom_screen == 'U') row -= 2;
-      if(zoom_screen == 'V') row -= 2;
-      if(zoom_screen == 'I') row -= 2;
+      else if(zoom_screen == 'V') row -= 2;
+      else if(zoom_screen == 'I') row -= 2;
+      else if((zoom_screen == 'B') || (zoom_screen == 'M')) {
+         if(SCREEN_HEIGHT < TINY_TINY_HEIGHT) row -= 1;
+      }
    }
 
-   col = (AZEL_X/TEXT_WIDTH) - (strlen(s)/2);
    if(zoom_screen) ++row;
-   vidstr(row,col, WHITE, s);
+   col = ((AZEL_X-AZEL_RADIUS)/TEXT_WIDTH);
+   x = (AZEL_RADIUS*2) / TEXT_WIDTH;
+   vidstr(row,col, WHITE, &blanks[TEXT_COLS-x]);
+
+   if(center_sat) col = (AZEL_X/TEXT_WIDTH) - (strlen(s)/2);
+   else           col = ((AZEL_X-AZEL_RADIUS)/TEXT_WIDTH);
+   vidstr(row,col, cursor_sat_color, s);
+
+   if(small_azel()) return;  // map is too small to label
 
    graphics_coords = 1;   // these labels need fine positioning
 
@@ -10348,12 +19137,41 @@ int x, y;
    }
 
    max_sig_level = 0.0F;
+   min_sig_level = 999.0F;
+   sig_level_sum = 0.0;
+   sig_level_count = 0.0;
+   max_sat_prn = 0;
    for(x=0; x<=32; x++) {
       max_sat_db[x] = 0.0F;
    }
 
    reading_signals = 0;  // re-enable live data recording
    signal_length = 0L;
+}
+
+
+
+void freshen_sig_info()
+{
+int az, ell;
+
+   // keep signal level maps "fresh" by periodically re-starting the averaging
+   // of readings from the current avaerage.
+
+   for(az=0; az<=360; az++) {
+      if(db_az_count[az]) {
+         db_weighted_az_sum[az] = (db_weighted_az_sum[az] / db_az_count[az]);
+         db_az_sum[az] = (db_az_sum[az] / db_az_count[az]);
+         db_az_count[az] = 1;
+      }
+   }
+
+   for(ell=0; ell<=90; ell++) {
+      if(db_el_count[ell]) {
+         db_el_sum[ell] = (db_el_sum[ell] / db_el_count[ell]);
+         db_el_count[ell] = 1;
+      }
+   }
 }
 
 
@@ -10378,12 +19196,27 @@ return;  // fixes problems at high latitudes with receivers that report sigs of 
       sig_level = amu_to_dbc(sig_level);
    }
 
-   db_az_sum[az] += sig_level;
-   db_weighted_az_sum[az] += (sig_level * ((90.0F-(float)ell)/90.0F));
-   db_az_count[az] += 1.0F;
+   if((MAX_AVG_COUNT > 0.0F) && (db_az_count[az] > MAX_AVG_COUNT)) {
+      db_weighted_az_sum[az] -= (db_weighted_az_sum[az] / db_az_count[az]);
+      db_weighted_az_sum[az] += (sig_level * ((90.0F-(float)ell)/90.0F));
 
-   db_el_sum[ell] += sig_level;
-   db_el_count[ell] += 1.0F;
+      db_az_sum[az] -= (db_az_sum[az] / db_az_count[az]);
+      db_az_sum[az] += sig_level;
+   }
+   else {
+      db_weighted_az_sum[az] += (sig_level * ((90.0F-(float)ell)/90.0F));
+      db_az_sum[az] += sig_level;
+      db_az_count[az] += 1.0F;
+   }
+
+   if((MAX_AVG_COUNT > 0.0) && (db_el_count[ell] > MAX_AVG_COUNT)) {
+      db_el_sum[ell] -= (db_el_sum[ell] / db_el_count[ell]);
+      db_el_sum[ell] += sig_level;
+   }
+   else {
+      db_el_sum[ell] += sig_level;
+      db_el_count[ell] += 1.0F;
+   }
 
    if(ell > max_el[az]) max_el[az] = ell;
    if(ell < min_el[az]) min_el[az] = ell;
@@ -10393,15 +19226,20 @@ return;  // fixes problems at high latitudes with receivers that report sigs of 
       db_3d_count[az][ell] = 1.0F;
    }
    else {   // track average signal
-      if(db_3d_count[az][ell] < 1.0F) {
+      if(db_3d_count[az][ell] < 1.0F) {   // first signal level seen at this location
          db_3d_sum[az][ell] = sig_level;
          db_3d_count[az][ell] = 1.0F;
       }
-      else {
+      else if((MAX_AVG_COUNT > 0.0F) && (db_3d_count[az][ell] > MAX_AVG_COUNT)) {  // keep map fresh by averaging last 10 readings
+         db_3d_sum[az][ell] -= (db_3d_sum[az][ell] / db_3d_count[az][ell]);  // remove current average
+         db_3d_sum[az][ell] += sig_level;                                    // add in new reading
+      }
+      else {  // calculate average signal level
          db_3d_sum[az][ell] += sig_level;
          db_3d_count[az][ell] += 1.0F;
       }
    }
+
    ++signal_length;
 }
 
@@ -10418,9 +19256,10 @@ int az, el;
    f = topen(fn, "w");
    if(f == 0) return;
 
-   write_log_header(f);
+   write_log_header(f, 3);
+   month = fix_month(month);
    fprintf(f,"#   %02d:%02d:%02d %s   %02d %s %04d\n", 
-      hours,minutes,seconds, (time_flags & 0x0001)?"UTC":"GPS", day,months[month],year);
+      hours,minutes,seconds, (time_flags & TFLAGS_UTC)?"UTC":"GPS", day,months[month],year);
    fprintf(f, "#\n");
    fprintf(f, "#az el dBc\n");
 
@@ -10448,7 +19287,6 @@ float az, el, sig;
    if(sig_file == 0) return;
    clear_signals();       // flush the old data
    
-//sssssssss   reading_signals = 1;   // signal we are reading data from a log file
    plot_signals = 4;      // show the pretty color map
 
    while(fgets(out, sizeof out, sig_file) != NULL) {
@@ -10460,6 +19298,31 @@ float az, el, sig;
    }
 
    fclose(sig_file);
+}
+
+
+void read_prn(char *s)
+{
+FILE *prn_file;
+double jd;
+int prn;
+float az, el, sig;
+
+   // load in satellie time, prn, az, el, signal strength 
+   // data from a .prn file
+
+   prn_file = topen(s, "r");
+   if(prn_file == 0) return;
+
+   while(fgets(out, sizeof out, prn_file) != NULL) {
+      if((out[0] == '*') || (out[0] == ';') || (out[0] == '/') || (out[0] == '#')) {
+         continue;  // comment line
+      }
+      sscanf(out, "%lf %d %f %f %f", &jd, &prn, &az, &el, &sig);
+      log_signal(az, el, sig, 0);   // !!!!! do something with this data?
+   }
+
+   fclose(prn_file);
 }
 
 
@@ -10549,6 +19412,7 @@ int thickness;
       if(thickness <= 0) thickness = 1;
    }
 
+   if(start < 0) start += 360;
    elf = ((float)(90 - el)) / 90.0F;
    az = start + 90;
    x1 = AZEL_X - (int) (elf * cos360(az) * AZEL_RADIUS) - (thickness/2)-1;
@@ -10612,7 +19476,7 @@ int last_max;
    // draw the signal level vs az/el map, filling in sparse data areas as
    // best we can.
 
-   max_arc = last_max = MAX_ARC;;
+   max_arc = last_max = MAX_ARC;
    start_az = 0;
    color = 0;
    while(start_az < 360) {
@@ -10638,7 +19502,7 @@ int last_max;
       if(db_3d_count[center_az][el] > 0.0F) {
          elf = db_3d_sum[center_az][el] / db_3d_count[center_az][el];
          elf -= min_sig_db;
-         if(sig_level_step) color = (int) (elf / (float) sig_level_step);
+         if(sig_level_step)            color = (int) (elf / (float) sig_level_step);
          if     (color > LEVEL_COLORS) color = LEVEL_COLORS;
          else if(color <= BLACK)       color = LOW_SIGNAL;
          else                          color = level_color[color];
@@ -10829,7 +19693,8 @@ int color;
    }
 }
 
-#define GOOD_EL_LEVEL  (30)   // if no good signal found, use this elevation
+#define GOOD_EL_LEVEL  (30)    // if no good signal found, use this elevation
+#define GOOD_SIG_LEVEL (20.0F) // if no good signal level found, use this sig level mask
 #define EL_THRESHOLD   ((res_t && (res_t != RES_T)) ? 0.750F:0.875F)  // "good" is this percent of max signal
 // #define EL_THRESHOLD   ((res_t && (res_t != RES_T)) ? 0.750F:0.750F)  // "good" is this percent of max signal
 
@@ -10863,12 +19728,40 @@ float r;
 }
 
 
-void draw_signal_map()
+int good_sig_level()
+{
+float count, sum;
+int prn;
+
+   // find reasonable signal level mask setting (0.4 * the average max sig level)
+
+   count = sum = 0.0;
+   for(prn=1; prn<=MAX_PRN; prn++) {
+      if(max_sat_db[prn]) {
+         sum += max_sat_db[prn];
+         ++count;
+      }
+   }
+
+   if(count) {
+      sum /= count;
+      sum *= 0.40F;
+   }
+   else {
+      sum = GOOD_SIG_LEVEL;
+   }
+
+   return (int) (sum+0.50F);
+}
+
+void draw_signal_map(int why)
 {
    if(text_mode) return;
    if(rcvr_type == NO_RCVR) return;
+   if(rcvr_type == TIDE_RCVR) return;  // ckckck
    if(zoom_screen == 'L') return;
-   if(zoom_screen == 'S') ;
+
+   if     (zoom_screen == 'S') ;
    else if(zoom_screen == 'X') ;
    else if(zoom_screen == 'Y') ;
    else if(zoom_screen == 'U') ;
@@ -10876,6 +19769,7 @@ void draw_signal_map()
    else if(zoom_screen == 'I') ;
    else if(zoom_screen) return;
    else if(plot_signals == 0) return;
+if(first_key && shared_plot && (shared_item & SHARE_SIGNALS)) return;
 
    AZEL_X = (AZEL_COL+AZEL_SIZE/2-1);   // center point of plot
    AZEL_Y = (AZEL_ROW+AZEL_SIZE/2-1);   
@@ -10883,9 +19777,11 @@ void draw_signal_map()
    if(zoom_screen == 'X') ;
    else if(zoom_screen == 'Y') ;
    else if(zoom_screen == 'I') ;
-   else erase_azel();       // erase the old az/el plot
+   else {
+      erase_azel(1);       // erase the old az/el plot
+   }
 
-   if(AZEL_Y >= PLOT_ROW) shared_item = 'S';
+   if(AZEL_Y >= PLOT_ROW) shared_item = SHARE_SIGNALS;
 
    azel_grid_color = AZEL_COLOR;
    draw_azel_prns(1);
@@ -10911,35 +19807,42 @@ void zoom_all_signals()
 int old_sigs;
 int old_row, old_col;
 int old_size;
+int w;
 
    old_sigs = plot_signals;
    old_row = AZEL_ROW;
    old_col = AZEL_COL;
    old_size = AZEL_SIZE;
 
-   AZEL_SIZE = ((SCREEN_HEIGHT / 2) * 8) / 10;
+   if((SCREEN_WIDTH < TINY_TINY_WIDTH) || (SCREEN_WIDTH < SCREEN_HEIGHT)) {
+      w = SCREEN_WIDTH;
+   }
+   else {
+      w = SCREEN_HEIGHT;
+   }
+   AZEL_SIZE = ((w / 2) * 8) / 10;
 
    plot_signals = 1;
    AZEL_COL = 0 + TEXT_WIDTH*8;
    AZEL_ROW = TEXT_HEIGHT*2;
-   erase_azel();
-   draw_signal_map();
+   erase_azel(2);
+   draw_signal_map(3);
 
    plot_signals = 2;
    AZEL_COL = SCREEN_WIDTH/2;
-   erase_azel();
-   draw_signal_map();
+   erase_azel(3);
+   draw_signal_map(4);
 
    plot_signals = 3;
    AZEL_COL = 0 + TEXT_WIDTH*8;
    AZEL_ROW = (SCREEN_HEIGHT/2) + (TEXT_HEIGHT/2);
-   erase_azel();
-   draw_signal_map();
+   erase_azel(4);
+   draw_signal_map(5);
 
    plot_signals = 4;
    AZEL_COL = SCREEN_WIDTH/2;
-   erase_azel();
-   draw_signal_map();
+   erase_azel(5);
+   draw_signal_map(6);
 
    AZEL_COL = old_col;
    AZEL_ROW = old_row;
@@ -10959,7 +19862,14 @@ int old_size;
    old_col = AZEL_COL;
    old_size = AZEL_SIZE;
 
-   AZEL_SIZE = ((SCREEN_HEIGHT / 2) * 8) / 10;
+   if((SCREEN_WIDTH < TINY_TINY_WIDTH) || (SCREEN_WIDTH < SCREEN_HEIGHT)) { 
+      AZEL_SIZE = ((SCREEN_WIDTH / 2) * 8) / 10;
+   }
+   else {
+      AZEL_SIZE = ((SCREEN_HEIGHT / 2) * 8) / 10;
+   }
+
+   erase_screen();
 
    plot_signals = 0;
    ACLOCK_SIZE = AZEL_SIZE;
@@ -10970,19 +19880,19 @@ int old_size;
    AZEL_ROW = TEXT_HEIGHT*2;
    AZEL_COL = SCREEN_WIDTH/2;
 // AZEL_RADIUS = AZEL_SIZE/2;
-   erase_azel();
-   draw_azel_plot();
+   erase_azel(6);
+   draw_azel_plot(4);
 
    plot_signals = 2;
    AZEL_COL = 0 + TEXT_WIDTH*8;
    AZEL_ROW = (SCREEN_HEIGHT/2) + (TEXT_HEIGHT/2);
-   erase_azel();
-   draw_signal_map();
+   erase_azel(7);
+   draw_signal_map(7);
 
    plot_signals = 4;
    AZEL_COL = SCREEN_WIDTH/2;
-   erase_azel();
-   draw_signal_map();
+   erase_azel(8);
+   draw_signal_map(8);
 
    AZEL_COL = old_col;
    AZEL_ROW = old_row;
@@ -11004,24 +19914,25 @@ int old_clk_r;
    old_size = AZEL_SIZE;
    old_clk_r = ACLOCK_SIZE;
 
-//   AZEL_SIZE = ((SCREEN_WIDTH / 4) * 8) / 10;
-   AZEL_SIZE = ((SCREEN_WIDTH-((MINOR_COL+4)*TEXT_WIDTH)) * 8) / 10;
+   if(SCREEN_HEIGHT < TINY_HEIGHT) AZEL_SIZE = ((SCREEN_WIDTH-((MINOR_COL+4)*TEXT_WIDTH)) * 6) / 10;
+   else AZEL_SIZE = ((SCREEN_WIDTH-((MINOR_COL+4)*TEXT_WIDTH)) * 8) / 10;
+
    if(AZEL_SIZE > (SCREEN_HEIGHT/2)) AZEL_SIZE = ((SCREEN_HEIGHT/2) * 8) / 10;
-   if(AZEL_SIZE > 320) AZEL_SIZE = 320;
+   if(AZEL_SIZE > MAX_AZEL) AZEL_SIZE = MAX_AZEL;
 
    plot_signals = 0;
    AZEL_ROW = TEXT_HEIGHT*2;
    AZEL_COL = (MINOR_COL+4)*TEXT_WIDTH;
 // AZEL_RADIUS = AZEL_SIZE/2;
    ACLOCK_SIZE = AZEL_SIZE;
-   erase_azel();
-   draw_azel_plot();
+   erase_azel(9);
+   draw_azel_plot(5);
 
    plot_signals = 4;
    AZEL_ROW = (SCREEN_HEIGHT/2);// + TEXT_WIDTH*8;
    AZEL_COL = (MINOR_COL+4)*TEXT_WIDTH;
-   erase_azel();
-   draw_signal_map();
+   erase_azel(10);
+   draw_signal_map(9);
 
    AZEL_COL = old_col;
    AZEL_ROW = old_row;
@@ -11049,14 +19960,14 @@ void clear_maps()
    need_posns = 2;
 }
 
-void draw_azel_plot()
+void draw_azel_plot(int why)
 {
 int save_row, save_col, save_size;
 int did_watch;
 
    // draw satellite position map, analog watch, and/or signal level map
+
    if(text_mode) return;
-//wwwwww if(rcvr_type == NO_RCVR) return;
    did_watch = 99;
    if(zoom_screen == 'L') return;
    if(zoom_screen == 'C') return;
@@ -11067,16 +19978,22 @@ int did_watch;
    else if(plot_azel == 0) return;
 
    if     (zoom_screen == 'W') ;
-   else if(zoom_screen == 'B') ;
+   else if(zoom_screen == 'B') erase_screen();
    else if(zoom_screen == 'M') ;
    else if(zoom_screen == 'S') ;
    else if(zoom_screen == 'X') ;
    else if(zoom_screen == 'Y') ;
    else if(zoom_screen == 'V') ;
    else if(zoom_screen == 'I') ;
+   else if(zoom_screen == 'N') {
+      erase_screen();
+      return;
+   }
    else if(zoom_screen) return;
+
 // if(all_adevs && plot_signals && shared_plot) return;  //zzzzzzz
    if(plot_lla && (shared_plot == 0)) return;
+   if(first_key && shared_plot && (shared_item & SHARE_MAP)) return;
 
    save_row = AZEL_ROW;
    save_col = AZEL_COL;
@@ -11086,13 +20003,21 @@ int did_watch;
    AZEL_Y = (AZEL_ROW+AZEL_SIZE/2-1);   
 
 
+   if(zoom_screen == 'N') {  // blank (mostly) screen
+      erase_screen();
+      return;
+   }
+
+if(last_sun_x && last_sun_y && last_sun_r && (show_fixes == 0) && (zoom_screen != 'V')) {  // erase the old sun disk
+   draw_circle(last_sun_x,last_sun_y, last_sun_r, BLACK, 1);
+}
    if((zoom_screen == 'W') || (zoom_screen == 'B')) {
       if(luxor && luxor_fault()) ;
       else draw_watch(3);
    }
    else if(zoom_screen) ;
    else if(map_and_watch) {
-small_screen_watch();
+      small_screen_watch();
       if(luxor && luxor_fault()) ;
       else did_watch = draw_watch(4);
    } 
@@ -11100,7 +20025,6 @@ small_screen_watch();
       if(all_adevs) {
          if(WIDE_SCREEN == 0) return;
       }
-//wwwww      else if(rcvr_type == NO_RCVR) ;
       else if(WIDE_SCREEN && (shared_plot == 0) && plot_lla) return;  // the watch wins
       else if(WIDE_SCREEN && plot_lla) ;
       else if(WIDE_SCREEN && (shared_plot == 0) && (plot_lla == 0)) {
@@ -11108,7 +20032,9 @@ small_screen_watch();
          AZEL_ROW = LLA_ROW;
          AZEL_COL = LLA_COL;
       }
-      else if((shared_plot == 0) || all_adevs || plot_lla || (SCREEN_HEIGHT < 600)) return;  // the watch wins
+      else if((shared_plot == 0) || all_adevs || plot_lla) {
+         return;  // the watch wins
+      }
    }
    else if(all_adevs && WIDE_SCREEN && (plot_lla == 0)) {
    }
@@ -11118,19 +20044,18 @@ small_screen_watch();
    else if((plot_signals == 0) && (plot_areas == 2)) ;
    else if(map_and_watch && plot_lla && (plot_areas == 1)) ;
    else if(map_and_sigs && plot_lla && (plot_areas == 1)) ;
-   else if(map_and_watch && (SCREEN_WIDTH >= 800) && (all_adevs == 0)) {
+   else if(map_and_watch && (SCREEN_WIDTH >= XXXX) && (all_adevs == SINGLE_ADEVS)) {
       AZEL_ROW = WATCH_ROW;
       AZEL_COL = WATCH_COL;
       AZEL_SIZE = WATCH_SIZE;
    }
 // else if(plot_signals && plot_azel && (SCREEN_WIDTH >= 1280)) {
-   else if(plot_signals && plot_azel && (SCREEN_WIDTH >= 1280) && (all_adevs == 0)) {
+   else if(plot_signals && plot_azel && (SCREEN_WIDTH >= WIDE_WIDTH) && (all_adevs == SINGLE_ADEVS)) {
       AZEL_ROW = WATCH_ROW;
       AZEL_COL = WATCH_COL;
       AZEL_SIZE = WATCH_SIZE;
    }
-// else if(plot_signals && plot_azel && shared_plot && (all_adevs == 0)) {
-   else if(plot_signals && plot_azel && shared_plot && (all_adevs == 0) && (SCREEN_WIDTH >= 800)) {
+   else if(plot_signals && plot_azel && shared_plot && (all_adevs == SINGLE_ADEVS) && (SCREEN_WIDTH >= XXXX)) {
       AZEL_ROW = WATCH_ROW;
       AZEL_COL = WATCH_COL;
       AZEL_SIZE = WATCH_SIZE;
@@ -11144,31 +20069,35 @@ small_screen_watch();
    AZEL_X = (AZEL_COL+AZEL_SIZE/2-1);   // center point of plot
    AZEL_Y = (AZEL_ROW+AZEL_SIZE/2-1);   
 
+   if(rcvr_type == NO_RCVR) return;
+//// if(rcvr_type == TIDE_RCVR) return;  // ckckck
+
    if(zoom_screen == 'B') ;
    else if(zoom_screen) ;     
    else if(map_and_watch || map_and_sigs) ;
 // else if((did_watch == 0) && (AZEL_ROW == WATCH_ROW) && (AZEL_COL == WATCH_COL)) ;
-   else erase_azel();       // erase the old az/el plot
+   else erase_azel(11);       // erase the old az/el plot
+
 
    azel_grid_color = AZEL_COLOR;
    if(zoom_screen == 'M') {
-      erase_azel();
+      erase_azel(12);
       draw_azel_prns(0);   // label the azel plot
       draw_azel_grid(0, AZEL_X,AZEL_Y, AZEL_RADIUS); // now draw the az/el grid
    }
    else if(zoom_screen == 'X') {
-      erase_azel();
+      erase_azel(13);
       draw_azel_prns(0);   // label the azel plot
       draw_azel_grid(0, AZEL_X,AZEL_Y, AZEL_RADIUS); // now draw the az/el grid
-      draw_signal_map();
+      draw_signal_map(10);
       draw_azel_sats(AZEL_X,AZEL_Y, AZEL_RADIUS);   // fill in the satellites
       draw_watch(66);
    }
    else if(zoom_screen == 'Y') {
-      erase_azel();
-      draw_azel_prns(0);   // label the azel plot
+      erase_azel(14);
+      draw_azel_prns(11);   // label the azel plot
       draw_azel_grid(0, AZEL_X,AZEL_Y, AZEL_RADIUS); // now draw the az/el grid
-      draw_signal_map();
+      draw_signal_map(12);
       draw_azel_sats(AZEL_X,AZEL_Y, AZEL_RADIUS);   // fill in the satellites
    }
    else if(zoom_screen == 'B') {
@@ -11182,6 +20111,7 @@ small_screen_watch();
    else if(zoom_screen == 'V') {
       draw_azel_prns(1);   // label the azel plot
       draw_azel_grid(1, AZEL_X,AZEL_Y, AZEL_RADIUS); // now draw the az/el grid
+      draw_azel_sats(AZEL_X,AZEL_Y, AZEL_RADIUS);    // fill in the satellites
    }
    else if(zoom_screen == 'I') {
       draw_azel_prns(1);   // label the azel plot
@@ -11223,7 +20153,7 @@ u08 debug_lla = 1;
 #define LAT_REF (precise_lat*RAD_TO_DEG)
 #define LON_REF (precise_lon*RAD_TO_DEG)
 #define ALT_REF precise_alt
-#define COS_FACTOR(x) cos((x)/RAD_TO_DEG)    //!!!!! verify usages
+#define COS_FACTOR(x) cos((x)/RAD_TO_DEG)
 
 long start_tow;
 long minute_tow;
@@ -11254,17 +20184,19 @@ int hour_alts;
 #define ALT_THRESH (1.0)
 
 
-#define LAT_SEC_TURN 0.457374
-#define LON_SEC_TURN 0.469305
-#define ALT_SEC_TURN 0.461097
+// empirically determined weights for median calculation
+#define WEIGHT_MEDIAN 0
+#define LAT_SEC_TURN ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.457374 : 0.50)
+#define LON_SEC_TURN ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.469305 : 0.50)
+#define ALT_SEC_TURN ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.461097 : 0.50)
 
-#define LAT_MIN_TURN 0.371318
-#define LON_MIN_TURN 0.414684
-#define ALT_MIN_TURN 0.405716
+#define LAT_MIN_TURN ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.371318 : 0.50)
+#define LON_MIN_TURN ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.414684 : 0.50)
+#define ALT_MIN_TURN ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.405716 : 0.50)
 
-#define LAT_HR_TURN  0.469675
-#define LON_HR_TURN  0.439141
-#define ALT_HR_TURN  0.416180
+#define LAT_HR_TURN  ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.469675 : 0.50)
+#define LON_HR_TURN  ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.439141 : 0.50)
+#define ALT_HR_TURN  ((WEIGHT_MEDIAN && (rcvr_type == TSIP_RCVR)) ? 0.416180 : 0.50)
 
 
 double float_error(double val)
@@ -11280,12 +20212,18 @@ float x;
 
 void open_lla_file(int why)
 {
-   if(lla_file == 0) lla_file = topen(LLA_FILE, "w");
+   if(lla_file == 0) {
+//    strcpy(out, LLA_FILE);
+      sprintf(out, "%s.lla", unit_file_name);
+      lla_file = topen(out, "w");
+   }
    if(lla_file == 0) return;
 //fprintf(lla_file, "### open_lla_file(%d)\n", why);
-   fprintf(lla_file, "#TITLE: LLA log: %02d %s %04d  %02d:%02d:%02d - receiver mode %d\n", 
-      day, months[month], year, hours,minutes,seconds, rcvr_mode);
-   fprintf(lla_file, "#LLA: %.8lf %.8lf %.3lf\n", precise_lat*RAD_TO_DEG, precise_lon*RAD_TO_DEG, precise_alt);
+
+   month = fix_month(month);
+   fprintf(lla_file, "#TITLE: LLA log %s: %02d %s %04d  %02d:%02d:%02d - receiver mode %d\n", 
+      out, day, months[month], year, hours,minutes,seconds, rcvr_mode);
+   fprintf(lla_file, "#LLA: %.9f %.9f %.4f\n", precise_lat*RAD_TO_DEG, precise_lon*RAD_TO_DEG, precise_alt);
 }
 
 void close_lla_file(int cleanup)
@@ -11301,7 +20239,7 @@ void close_lla_file(int cleanup)
 void start_3d_fixes(int mode, int why)
 {
    #ifdef BUFFER_LLA
-      if(mode >= 0) clear_lla_points();
+      if(mode >= 0) clear_lla_points(0);
    #endif
 // open_lla_file(1);
 
@@ -11313,26 +20251,48 @@ void start_3d_fixes(int mode, int why)
    update_azel = 1;
    if(WIDE_SCREEN == 0) {
       shared_plot = 1; 
-      all_adevs = 0;
+      if(rcvr_type == TICC_RCVR) all_adevs = ALL_CHANS;
+      else                       all_adevs = SINGLE_ADEVS;
    }
 if(mode >= 0) precision_samples = 0L;
 }
 
-void start_precision_survey()
+void start_precision_survey(int why)
 {
-   stop_self_survey();  // abort standard survey
-   if(do_survey <= 0) { do_survey = 48; survey_why = 1; }
-   else if(do_survey > SURVEY_BIN_COUNT) { do_survey = 48; survey_why = 2; }
+   stop_self_survey(1);  // abort standard survey
+   if(do_median_survey <= 0) { 
+      do_median_survey = 48; 
+      survey_why = 1;
+   }
+   else if(do_median_survey > SURVEY_BIN_COUNT) { 
+      do_median_survey = 48; 
+      survey_why = 2;
+   }
+
+   do_survey = do_median_survey; // medsurv
    set_rcvr_mode(RCVR_MODE_3D);  // put receiver into 3D mode
 
    if(log_comments && log_file) {
-      sprintf(log_text, "# Precision %ld hour survey started.", do_survey);
+      sprintf(log_text, "# Precision %ld hour survey started.", do_median_survey);
       write_log_comment(1);
    }
 
    open_lla_file(2);
    if(lla_file) {
-      fprintf(lla_file, "# Precision %ld hour survey started.\n", do_survey);
+      fprintf(lla_file, "# Precision %ld hour survey started.\n", do_median_survey);
+      fprintf(lla_file, "#\n");
+      fprintf(lla_file, "#tow  status  lat  lon  alt\n");
+      fprintf(lla_file, "#     status  0: doing fixes\n");
+      fprintf(lla_file, "#     status  1: no time\n");
+      fprintf(lla_file, "#     status  2: no fixes\n");
+      fprintf(lla_file, "#     status  3: PDOP too high\n");
+      fprintf(lla_file, "#     status  8: no sats\n");
+      fprintf(lla_file, "#     status  9: one sat\n");
+      fprintf(lla_file, "#     status  A: two sats\n");
+      fprintf(lla_file, "#     status  B: three sats\n");
+      fprintf(lla_file, "#     status  C: sat unavailable\n");
+      fprintf(lla_file, "#     else:      unknown error\n");
+      fprintf(lla_file, "#\n");
    }
 
    precision_survey = 1;   // config screen to show survey map
@@ -11342,7 +20302,7 @@ else if(1) {
    change_fix_config(show_fixes);
    start_3d_fixes(-1, 555);
    #ifdef BUFFER_LLA
-      clear_lla_points();
+      clear_lla_points(0);
    #endif
 }
 else {
@@ -11355,7 +20315,8 @@ else {
    update_azel = 1;
    if(WIDE_SCREEN == 0) {
       shared_plot = 1; 
-      all_adevs = 0;
+      if(rcvr_type == TICC_RCVR) all_adevs = ALL_CHANS;
+      else                       all_adevs = SINGLE_ADEVS;
    }
    config_screen(41);
 
@@ -11363,6 +20324,7 @@ else {
 //start_tow = survey_tow; //"###
    minute_tow = start_tow + 60L;
    hour_tow = start_tow + 60L*60L;
+//if(debug_file) fprintf(debug_file, "surv_tow:%d  start_tow:%d  min_tow:%d  hr_tow:%d  psh:%d\n", survey_tow,start_tow,minute_tow,hour_tow, PRECISE_SURVEY_HOURS); //plugh
 
    lat_sum = lon_sum = alt_sum = 0.0;
    precision_samples = 0;
@@ -11378,12 +20340,13 @@ else {
    plot_lla_axes(3);
 }
 
-void stop_precision_survey()
+void stop_precision_survey(int why)
 {
    if(precision_survey == 0) return;
    precision_survey = 0;
 
-   sprintf(log_text, "# Precision survey stopped.");
+//if(debug_file) fprintf(debug_file, "stop precision survey:%d\n", why); //plugh
+   sprintf(log_text, "# Precision survey stopped.  why:%d", why);
    write_log_comment(1);
 
    show_fixes = 0;
@@ -11391,7 +20354,7 @@ void stop_precision_survey()
    set_rcvr_mode(RCVR_MODE_HOLD);     // overdetermined clock mode
    if(lla_file) { //!!!! kludge - add a extra entry so external processor program works correctly
       fprintf(lla_file, "# time filler kludge\n");
-      fprintf(lla_file, "%-6ld %d %13.8lf  %13.8lf  %8.3lf\n", 
+      fprintf(lla_file, "%-6ld %d %13.8f  %13.8f  %8.3f\n", 
       tow+60L, 0, lat*RAD_TO_DEG, lon*RAD_TO_DEG, alt);
    }
 
@@ -11415,13 +20378,14 @@ double d_lat, d_lon, d_alt;
 
    // see if surveyed position error is small enough
    if((sqrt(d_lat*d_lat + d_lon*d_lon) <= 1.0) && (DABS(d_alt) < ALT_THRESH)) {
-      save_segment(7, 10);          // yes,  save the position in EEPROM
+      save_segment(7, 10);      // yes,  save the position in EEPROM
       check_precise_posn = 0;   // we are done
       log_saved_posn(-1);
-      if(SCREEN_WIDTH > 800) lla_header("Precise survey complete    ", WHITE);
-      else                   lla_header("Survey complete            ", WHITE);
+      if(SCREEN_WIDTH > NARROW_SCREEN) lla_header("Precise survey complete    ", WHITE);
+      else                             lla_header("Survey complete            ", WHITE);
       close_lla_file(1);
-      survey_done = 1;
+      precise_survey_done = 1;
+      trimble_save = 0;
    }
    else { // try single point survey again
       start_self_survey(0x00, 2);
@@ -11435,24 +20399,36 @@ void save_precise_posn(int quick_save)
    // !!!! resolution_SMT does not update lla values during survey, can't do precise save
    if(lla_file) {
       fprintf(lla_file, "### save_precise_position(%d)\n", quick_save);
-      fprintf(lla_file, "### precise lla:%.9lf %.9lf %.3lf\n", precise_lat*180.0/PI, precise_lon*180.0/PI, precise_alt);
+      fprintf(lla_file, "### precise lla:%.9f %.9f %.3f\n", precise_lat*180.0/PI, precise_lon*180.0/PI, precise_alt);
+      fprintf(lla_file, "### precise lat:%s\n", dms_fmt(precise_lat*180.0/PI));
+      fprintf(lla_file, "### precise lon:%s\n", dms_fmt(precise_lon*180.0/PI));
+
+      lla_to_ecef(precise_lat,precise_lon,precise_alt);
+      fprintf(lla_file, "### precise ecef x:%.5f y:%.5f z:%.5f\n", ecef_x, ecef_y, ecef_z);
    }
 
+// medsurv
    if((res_t && (res_t != RES_T))) quick_save = 1;
    else if(rcvr_type != TSIP_RCVR) quick_save = 1;
 
    if((quick_save >= 0) || (1 && (float_error(precise_lat) < LAT_THRESH) && (float_error(precise_lon) < LON_THRESH))) {
-      stop_self_survey();  // abort standard survey
+      stop_self_survey(2);  // abort standard survey
       check_precise_posn = 0;
       set_lla(precise_lat, precise_lon, precise_alt);
-      save_segment(7, 11);     // save the position in EEPROM
-      log_saved_posn(quick_save);
-      sprintf(log_text, "# Saved precise position directly");
-      write_log_comment(1);
-      if(SCREEN_WIDTH > 800) lla_header("Precise survey complete  ", WHITE);
-      else                   lla_header("Survey complete  ", WHITE);
+
+      if(NO_EEPROM_CMDS) ;
+      else {
+         save_segment(7, 11);     // save the position in EEPROM
+         log_saved_posn(quick_save);
+         sprintf(log_text, "# Saved precise position directly");
+         if(lla_file) fprintf(lla_file, "%s\n", log_text);
+         write_log_comment(1);
+         if(SCREEN_WIDTH > NARROW_SCREEN) lla_header("Precise survey complete  ", WHITE);
+         else                             lla_header("Survey complete  ", WHITE);
+      }
       close_lla_file(2);
-      survey_done = 1;
+      precise_survey_done = 1;
+      trimble_save = 0;
    }
    else {  // single/double precision difference is too big, do single point surveys until we get close
       set_survey_params(1, 0, 1L);  // config for single fix survey, don't save position
@@ -11465,11 +20441,12 @@ void save_precise_posn(int quick_save)
       update_azel = 1;
       if(WIDE_SCREEN == 0) {
          shared_plot = 1; 
-         all_adevs = 0;
+         if(rcvr_type == TICC_RCVR) all_adevs = ALL_CHANS;
+         else                       all_adevs = SINGLE_ADEVS;
       }
       config_screen(42);
-      if(SCREEN_WIDTH > 800) lla_header("Saving precise position  ", YELLOW);
-      else                   lla_header("Saving position    ", YELLOW);
+      if(SCREEN_WIDTH > NARROW_SCREEN) lla_header("Saving precise position  ", YELLOW);
+      else                             lla_header("Saving position    ", YELLOW);
       refresh_page();
    }
 }
@@ -11493,10 +20470,12 @@ float flat, flon, falt;
          precise_lat = lat_sum / (double)precision_samples;
          precise_lon = lon_sum / (double)precision_samples;
          precise_alt = alt_sum / (double)precision_samples;
+         have_precise_lla = 1;
          ref_lat = precise_lat;
          ref_lon = precise_lon;
          ref_alt = precise_alt;
          cos_factor = cos(ref_lat);
+         if(cos_factor == 0.0) cos_factor = 0.001;
 
          flat = (float) precise_lat;
          flon = (float) precise_lon;
@@ -11510,87 +20489,373 @@ float flat, flon, falt;
    }
 //if(lla_file) {
 //   fprintf(lla_file, "### abort_precise_survey(%d): cpp:%d  ps:%d  samples:%d\n", why, check_precise_posn, precision_survey, precision_samples);
-//   fprintf(lla_file, "### lla:%.9lf %.9lf %.9lf\n", lat*180.0/PI,lon*180.0/PI,alt);
+//   fprintf(lla_file, "### lla:%.9f %.9f %.9f\n", lat*180.0/PI,lon*180.0/PI,alt);
 //}
 }
+
+//
+//
+//  Lat/lon/alt scattergram stuff
+//
+//
+
+#define TIDE_UNITS    "mm"
+#define TIDE_LLA_SPAN 15.0
+
+double mouse_lat, mouse_lon;
+double ref_lat_span, ref_lon_span;
+
+int find_mouse_lla()
+{
+int map_r;
+int x,y;
+
+   // set mouse_lat and mouse_lon variables to the lat/lon in the scattergram
+   // where the mouse cursor is located.  Returns true is mouse values are
+   // valid.
+
+   mouse_lat = mouse_lon = 0.0;
+   if(autoscale_lla == 0) return 0;
+   if(have_valid_lla == 0) return 0;
+   
+   map_r = LLA_SIZE / 2;
+   if(mouse_x < LLA_X-map_r) return 0;
+   if(mouse_x > LLA_X+map_r) return 0;
+   if(mouse_y < LLA_Y-map_r) return 0;
+   if(mouse_y > LLA_Y+map_r) return 0;
+
+   x = mouse_x - LLA_X;
+   y = LLA_Y - mouse_y;
+
+   if(cos_factor == 0.0) cos_factor = 0.001;
+   mouse_lat = (ref_lat*RAD_TO_DEG) + ( (((double) y) / (double) LLA_SIZE) * ref_lat_span ); 
+   mouse_lon = (ref_lon*RAD_TO_DEG) + ( (((double) x) / (double) LLA_SIZE) * (ref_lon_span / cos_factor));
+   return 1;
+}
+
+void label_lla_header()
+{
+int moused;
+char s[SLEN];
+
+   // draw the lat/lon scattergram label
+
+   sprintf(s, "%s/div", angle_units);
+   moused = 0;
+   if(autoscale_lla && have_valid_lla) {
+      strupr(s);
+      moused = find_mouse_lla();
+   }
+
+if(autoscale_lla && show_debug_info) sprintf(debug_text5, "lla span: %.9f  ref:%.9f %.9f", LLA_SPAN,  ref_lat*RAD_TO_DEG,ref_lon*RAD_TO_DEG);  //llascale
+   if(zoom_screen && (zoom_screen != 'L')) ;
+   else if(text_mode || (SCREEN_WIDTH > NARROW_SCREEN)) {
+      if(check_precise_posn) sprintf(out, "Saving precise position  ");
+      else if(show_fixes) {
+         if(rcvr_type == TIDE_RCVR)  sprintf(out, "Earth tide (%.1f %s/div from):   ", (TIDE_LLA_SPAN), TIDE_UNITS);   // ckckck
+         else if(show_tides) sprintf(out, "Earth tide (%.1f %s/div from):   ", (TIDE_LLA_SPAN), TIDE_UNITS);   // ckckckck
+         else if(moused) sprintf(out, "Mouse lat/lon:               ");
+         else if(rcvr_mode == 4)     sprintf(out, "3D Fixes (%d %s from):     ", ((int)LLA_SPAN), s);
+         else if(rcvr_mode == 3)     sprintf(out, "2D Fixes (%d %s from):     ", ((int)LLA_SPAN), s);
+         else if(rcvr_mode == 0)     sprintf(out, "2D/3D Fixes (%d %s from):  ", ((int)LLA_SPAN), s);
+         else if(configed_mode == 5) sprintf(out, "Mode %d Fixes (%d %s from):", configed_mode, ((int)LLA_SPAN), s);
+         else                        sprintf(out, "Mode %d fixes (%d %s from):", rcvr_mode, ((int)LLA_SPAN), s);
+      }
+      else if(reading_lla)           sprintf(out, "Read LLA (%d %s from):     ", ((int)LLA_SPAN), s);
+      else if((lla_file == 0) && lla_msg[0]) sprintf(out, "%s", lla_msg);
+      else                           sprintf(out, "Surveying (%d %s from):    ", ((int)LLA_SPAN), s);
+   }
+   else {
+      if(check_precise_posn) sprintf(out, "Saving position    ");
+      else if((lla_file == 0) && lla_msg[0]) sprintf(out, "%s", lla_msg);
+      else                   sprintf(out, "%d %s from: ", ((int)LLA_SPAN), s);
+   }
+
+   lla_header(out, YELLOW);
+}
+
+void show_mouse_lla()
+{
+int xx;
+
+   // label the lat/lon scattergram
+
+   if(text_mode && first_key) return;
+   if(plot_lla == 0) return;
+
+   xx = LLA_COL/TEXT_WIDTH+1;
+   if(SCREEN_WIDTH > (NARROW_SCREEN+X11_MARGIN)) xx += 5;
+   else                                          xx -= 2;
+
+   if(find_mouse_lla()) {
+      label_lla_header();
+      format_lla(mouse_lat*DEG_TO_RAD,mouse_lon*DEG_TO_RAD,ref_alt, (LLA_ROW+LLA_SIZE)/TEXT_HEIGHT+1, xx, 0);
+   }
+   else {
+      label_lla_header();
+      format_lla(ref_lat,ref_lon,ref_alt, (LLA_ROW+LLA_SIZE)/TEXT_HEIGHT+1, xx, 0);
+   }
+}
+
+double calc_lla_span(int force_show)
+{
+double lat_dist, lon_dist;
+double max_dist;
+static int last_sec = (-99);
+
+   // return the maximum span distance of lat or lon in meters or feet
+
+if(0) {
+   if(lat == 0.0) return LLA_SPAN;
+   if(lon == 0.0) return LLA_SPAN;
+   if(min_q_lat == 0.0) return LLA_SPAN;
+   if(min_q_lon == 0.0) return LLA_SPAN;
+   if(max_q_lat == 0.0) return LLA_SPAN;
+   if(max_q_lon == 0.0) return LLA_SPAN;
+}
+
+   lat_dist = greatcircle(min_q_lat,lon, max_q_lat,lon) * DEG_TO_RAD * 1000.0;  // lat span in meters
+   lon_dist = greatcircle(lat,min_q_lon, lat,max_q_lon) * DEG_TO_RAD * 1000.0;  // lon span in meters
+   lat_dist = fabs(lat_dist);
+   lon_dist = fabs(lon_dist);
+
+   max_dist = lat_dist;
+   if(lon_dist > max_dist) max_dist = lon_dist;  // max span dist of lat/lon
+   if(angle_units) {
+      if(angle_units[0] == 'f') max_dist *= FEET_PER_METER;
+      else if(angle_units[0] == 'l') max_dist *= LG_PER_METER;  // linguini per meter
+   }
+   max_dist /= ((double) LLA_DIVISIONS / 2.0);  // scale to LLA plot size
+   max_dist = (double) (int) (max_dist+1.0);    // round up to next integer
+
+   if(force_show || (last_sec != pri_seconds)) {  // rate limit the screen updates
+      last_sec = pri_seconds;
+if(autoscale_lla && show_debug_info) {
+   sprintf(debug_text, "lat_d: %.9f  lon_d:%.9f  span:%.9f  %s/div", lat_dist,lon_dist,max_dist, alt_scale); //llascale
+   sprintf(debug_text2, "lat:%.9f %.9f (%.9f)   lon:%.9f %.9f (%.9f)", min_q_lat,max_q_lat,max_q_lat-min_q_lat,  min_q_lon,max_q_lon,max_q_lon-min_q_lon); //llascale
+}
+      show_mouse_lla();
+   }
+   return max_dist;
+}
+
+void change_lla_scale()
+{
+double lw;
+double radius;
+
+   // re-scale the lat/lon scattergram if the lat/lon span changes
+
+   LLA_SPAN = calc_lla_span(1);  // meters or feet per division
+   user_set_ref_lla = 2;
+   ref_lat = ((min_q_lat + max_q_lat) / 2.0) * DEG_TO_RAD;
+   ref_lon = ((min_q_lon + max_q_lon) / 2.0) * DEG_TO_RAD;
+   ref_alt = alt;
+
+   ref_lat_span = (max_q_lat - min_q_lat);  // in degrees
+   ref_lon_span = (max_q_lon - min_q_lon);
+
+   cos_factor = cos(ref_lat);
+   if(cos_factor == 0.0) cos_factor = 0.001;
+   lw = ref_lon_span = ((double)LLA_SPAN * (double) LLA_DIVISIONS);  // scattergram width in meters or feet
+   if(angle_units) {
+      if(angle_units[0] == 'f') lw /= FEET_PER_METER;  // lw now in meters
+      else if(angle_units[0] == 'l') lw /= LG_PER_METER;  // lw now in meters
+   }
+
+   radius = (2.0*PI*earth_radius(0.0,ref_alt)*1000.0);    // divided by earth circumference in meters
+   if(radius > 0.0) ref_lon_span /= radius;
+   else ref_lon_span = 0.0;
+   ref_lon_span *= 360.0;  // scattergram width in degrees
+if(show_debug_info) sprintf(debug_text3, "lla_span:%f  lla_divs:%d  lw:%.9f  ref_lon_span: %.9f degrees", LLA_SPAN,LLA_DIVISIONS,lw,ref_lon_span);  //llascale
+   ref_lat_span = ref_lon_span;
+if(show_debug_info) {
+   sprintf(debug_text4, "new span,divs %d,%.2f:  last:%.2f  ref:%.9f %.9f  dist:%.9f %.9f",   //llascale
+   LLA_DIVISIONS, LLA_SPAN, last_lla_span, ref_lat*RAD_TO_DEG,ref_lon*RAD_TO_DEG, ref_lat_span,ref_lon_span);
+}
+   last_lla_span = LLA_SPAN * LLA_THRESH;  //llascale
+}
+
 
 void plot_lla_point(int draw, int color)
 {
 double x,y;
 double xi, yi;
+double half_span;
+double old_lat, old_lon, old_alt;
+double old_ref_lat, old_ref_lon, old_ref_alt;
+double old_span, old_scale, old_cos;
+double span;
 
+   // add a point to the lat/lon scattergram plot
 
    if(draw) {
-      if(text_mode || (first_key && (SCREEN_HEIGHT < 600))) return;
+      if(text_mode || (first_key && (SCREEN_HEIGHT < SHORT_SCREEN))) return;
       if(zoom_screen && (zoom_screen != 'L')) return; 
       if(0 && all_adevs && (WIDE_SCREEN == 0)) return;
-      if((SCREEN_HEIGHT < 600) && (shared_plot == 0)) return;
+      if((SCREEN_HEIGHT < SHORT_SCREEN) && (shared_plot == 0)) return;
    }
 
-   y = (ref_lat - lat) * RAD_TO_DEG / ANGLE_SCALE;
+   old_lat = lat;
+   old_lon = lon;
+   old_alt = alt;
+   old_ref_lat = ref_lat;
+   old_ref_lon = ref_lon;
+   old_ref_alt = ref_alt;
+   old_span = LLA_SPAN;
+   old_scale = ANGLE_SCALE;
+   old_cos = cos_factor;
+
+   if((rcvr_type == TIDE_RCVR) || show_tides) { // ckckck adjust scale factors for showing lat/lon earth tides
+      LLA_SPAN = TIDE_LLA_SPAN;    // !!!!! 10? 15?
+      ANGLE_SCALE = 1.0;
+      cos_factor = 1.0;
+      lat = 0.0 - (lat_tide / RAD_TO_DEG);
+      lon = 0.0 - (lon_tide / RAD_TO_DEG);
+      alt = alt_tide;
+      ref_lat = 0.0;
+      ref_lon = 0.0;
+      tide_scatter = 1;
+   }
+   else if(1 && ((lat == 0.0) || (lon == 0.0))) {  // ignore likely invald location
+      goto no_lla;
+   }
+   else {
+      if(1 && autoscale_lla && have_valid_lla) {
+         span = calc_lla_span(0);
+         if(((lla_points < 2) && (span != last_lla_span)) || (span > last_lla_span)) {  // the plot scale has changed
+//          autoscale_lla = 0;  // toggle autoscale off
+//          change_lla_scale();
+
+            autoscale_lla = 1;        // toggle autoscale back on
+            change_lla_scale();
+
+            if(in_rebuild_lla) ;      //llascale - prevent recursion with rebuild_lla_plot()
+            else rebuild_lla_plot(0);
+            need_redraw = 4321;
+
+            old_ref_lat = ref_lat;
+            old_ref_lon = ref_lon;
+            old_ref_alt = alt;
+            old_cos = cos_factor;
+            old_span = LLA_SPAN;
+            user_set_ref_lla = 3;
+         }
+      }
+      tide_scatter = 0;
+   }
+
+
+   y = (ref_lat - lat) * RAD_TO_DEG / ANGLE_SCALE;   // x,y = meters (or feet) from center
    x = ((lon - ref_lon) * RAD_TO_DEG / ANGLE_SCALE) * cos_factor;
 
-   if(y > (LLA_SPAN*(double)LLA_DIVISIONS/2.0))    y = (LLA_SPAN*(double)LLA_DIVISIONS/2.0);
-   if(y < (-(LLA_SPAN*(double)LLA_DIVISIONS/2.0))) y = (-(LLA_SPAN*(double)LLA_DIVISIONS/2.0));
+   half_span = (LLA_SPAN*(double)LLA_DIVISIONS/2.0); // meters each side of center
+   if(half_span == 0.0) return;
 
-   if(x > (LLA_SPAN*(double)LLA_DIVISIONS/2.0))    x = (LLA_SPAN*(double)LLA_DIVISIONS/2.0);
-   if(x < (-(LLA_SPAN*(double)LLA_DIVISIONS/2.0))) x = (-(LLA_SPAN*(double)LLA_DIVISIONS/2.0));
+   if(x > half_span) x = half_span;
+   if(x < (-half_span)) x = (-half_span);
 
-   yi = (y * (double)lla_width / 2.0 / (LLA_SPAN*(double)LLA_DIVISIONS/2.0));
-   xi = (x * (double)lla_width / 2.0 / (LLA_SPAN*(double)LLA_DIVISIONS/2.0));
-   if(draw) dot(LLA_X+(int)xi, LLA_Y+(int)yi, color);
+   if(y > half_span) y = half_span;
+   if(y < (-half_span)) y = (-half_span);
+
+   yi = (y * ((double)lla_width / 2.0)) / half_span;
+   xi = (x * ((double)lla_width / 2.0)) / half_span;
+   lla_xi = LLA_X + (int) xi;
+   lla_yi = LLA_Y + (int) yi;
+   if(draw) dot(lla_xi, lla_yi, color);
 
 #ifdef BUFFER_LLA
-
    // save lla point in the buffer so we can redraw the screen later
    ++lla_points;
-   color = (lla_points / 3600);
-   color = (color % 15) + 1;
+   color = (lla_points / (60*60));
+   color = (color % 12) + 3;
 
    xi += ((double) lla_width/2.0);
    yi += ((double) lla_width/2.0);
 
    xi = ((double) xi * (double) MAX_LLA_SIZE / (double) lla_width);
    yi = ((double) yi * (double) MAX_LLA_SIZE / (double) lla_width);
-// if((zoom_screen != 'L') && (xi >= 0) && (xi < MAX_LLA_SIZE) && (yi >= 0) && (yi < MAX_LLA_SIZE)) { // zzzzzzz
    if((xi >= 0.0) && (xi < (double) MAX_LLA_SIZE) && (yi >= 0.0) && (yi < (double) MAX_LLA_SIZE)) {
       lla_data[(int)xi][(int)yi] = (u08) color;
    }
 #endif
+
+   no_lla:
+   lat = old_lat;
+   lon = old_lon;
+   alt = old_alt;
+   ref_lat = old_ref_lat;
+   ref_lon = old_ref_lon;
+   ref_alt = old_ref_alt;
+   LLA_SPAN = old_span;
+   ANGLE_SCALE = old_scale;
+   cos_factor = old_cos;
 }
+
 
 void rebuild_lla_plot(int draw)
 {
 struct PLOT_Q q;
-double old_lat, old_lon;
+double old_lat, old_lon, old_alt;
+double old_lat_tide, old_lon_tide, old_alt_tide;
 long i;
 long count;
 int color;
 
-   // rebuilt the lla scattergram image from the plot queue data
+   // rebuild the LLA scattergram image from the plot queue data
 
    old_lat = lat;
    old_lon = lon;
+   old_alt = alt;
+   old_lat_tide = lat_tide;
+   old_lon_tide = lon_tide;
+   old_alt_tide = alt_tide;
 
-   lla_points = 0;
+   plot_lla_axes(10);    // erase the old scattergram
+   #ifdef BUFFER_LLA
+      clear_lla_points(1);
+   #endif
    count = 0;
+
    i = plot_q_out;   // dumping the full queue
    while(i != plot_q_in) {  // rebuilt the scattergram from plot queue lat/lon data
       q = get_plot_q(i);
 
-      lat = q.data[ONE] * DEG_TO_RAD;
-      lon = q.data[TWO] * DEG_TO_RAD;
-      color = lla_points / 3600L;
-      color %= 14;
-      plot_lla_point(draw, color);
+      lat = (double) q.data[ONE] * DEG_TO_RAD;
+      lon = (double) q.data[TWO] * DEG_TO_RAD;
+      alt = (double) q.data[THREE];
+
+      lat_tide = (double) q.data[ELEVEN];
+      lon_tide = (double) q.data[TWELVE];
+      alt_tide = (double) q.data[THIRTEEN];
+ 
+      color = lla_points / (60L*60L);
+      color %= 12;
+      in_rebuild_lla = 1;   // prevent recursion with plot_lla_point()
+      plot_lla_point(draw, color+3); 
+      in_rebuild_lla = 0;
+
+      if(0 && (count == 0)) {  // !!!! this does not work = draw X at start of scattergram data
+         dot(lla_xi+1,lla_yi+1, color+3);
+         dot(lla_xi+2,lla_yi+2, color+3);
+         dot(lla_xi+1,lla_yi-1, color+3);
+         dot(lla_xi+2,lla_yi-2, color+3);
+         dot(lla_xi-1,lla_yi+1, color+3);
+         dot(lla_xi-2,lla_yi+2, color+3);
+         dot(lla_xi-1,lla_yi-1, color+3);
+         dot(lla_xi-2,lla_yi-2, color+3);
+      }
 
       if(++i >= plot_q_size) i = 0;
       if(++count >= plot_q_size) break;
    }
 
-
    lat = old_lat;
    lon = old_lon;
+   alt = old_alt;
+   lat_tide = old_lat_tide;
+   lon_tide = old_lon_tide;
+   alt_tide = old_alt_tide;
 }
 
 void lla_header(char *s, int color)
@@ -11599,16 +20864,18 @@ int xx;
 int yy;
 
    // label the lat/lon/alt data block
+
    if(text_mode) {
       yy = MOUSE_ROW-1;
       xx = MOUSE_COL;
    }
    else {
-      xx = LLA_COL/TEXT_WIDTH+1;
+      xx = (LLA_COL/TEXT_WIDTH)+1;
       yy = (LLA_ROW+LLA_SIZE)/TEXT_HEIGHT+0;
-      if(SCREEN_WIDTH > 800) xx += 5;
-      else                   xx -= 2;
+      if(SCREEN_WIDTH > (NARROW_SCREEN+X11_MARGIN)) xx += 5;
+      else                                          xx -= 2;
    }
+
    vidstr(yy, xx, color, s);
    strcpy(lla_msg, s);
 }
@@ -11619,41 +20886,55 @@ void redraw_lla_points()
 {
 int x, y;
 int xs, ys;
+int xx,yy;
 
    // redraw splatter plot from the saved data points
-//   if(zoom_screen == 'L') return;
 
    for(x=0; x<MAX_LLA_SIZE; x++) {
       xs = (int) ((float) x * (float) lla_width / (float) MAX_LLA_SIZE);
+      if((xs < 0) || (xs >= MAX_LLA_SIZE)) continue;
+
       for(y=0; y<MAX_LLA_SIZE; y++) {
          ys = (int) ((float) y * (float) lla_width / (float) MAX_LLA_SIZE);
+         if((ys < 0) || (ys >= MAX_LLA_SIZE)) continue;
          if(lla_data[x][y]) {
-            dot(LLA_X+xs-(lla_width/2),LLA_Y+ys-(lla_width/2), lla_data[x][y]);
+            xx = LLA_X+xs-(lla_width/2);
+            yy = LLA_Y+ys-(lla_width/2);
+            if(xx < 0) continue;
+            if(yy < 0) continue;
+            if(xx >= SCREEN_WIDTH) continue;
+            if(yy >= SCREEN_HEIGHT) continue;
+            dot(xx,yy, lla_data[x][y]);
          }
       }
    }
 }
 
-void clear_lla_points()
+void clear_lla_points(int force_clear)
 {
 int x, y;
 
    // clear splatter plot data buffer
-   if(zoom_screen == 'L') return;
 
-   for(x=0; x<=MAX_LLA_SIZE; x++) {
-      for(y=0; y<=MAX_LLA_SIZE; y++) {
+   if(force_clear) ;    // llascale
+   else if(zoom_screen == 'L') return;
+
+   for(x=0; x<MAX_LLA_SIZE; x++) {
+      for(y=0; y<MAX_LLA_SIZE; y++) {
          lla_data[x][y] = 0;
       }
    }
 
-   ref_lat = lat;
-   ref_lon = lon;
-   ref_alt = alt;
+   if(user_set_ref_lla == 0) {
+      ref_lat = lat;
+      ref_lon = lon;
+      ref_alt = alt;
+   }
    cos_factor = cos(ref_lat);
+   if(cos_factor == 0.0) cos_factor = 0.001;
    lla_points = 0;
 }
-#endif
+#endif  // BUFFER_LLA
 
 
 void plot_lla_axes(int why)
@@ -11662,40 +20943,23 @@ int x,y;
 int xx,yy;
 int color;
 
-   if(plot_lla == 0) return;
-   if(text_mode || (first_key && (SCREEN_HEIGHT < 600))) return;
-   if(zoom_screen && (zoom_screen != 'L')) return;
-   if((SCREEN_HEIGHT < 600) && (shared_plot == 0)) return;
-   if(all_adevs && (WIDE_SCREEN == 0)) {
-//    if(shared_plot == 0) return;
-   }
+   // draw the lat/lon scattergram grid and label it
 
+   lla_showing = 0;
+   if(plot_lla == 0) return;
+   if(text_mode || (first_key && (SCREEN_HEIGHT < SHORT_SCREEN))) return;
+if(first_key && shared_plot && (shared_item & SHARE_LLA)) return;
+   if(zoom_screen && (zoom_screen != 'L')) return;
+
+   lla_showing = 1;
    erase_lla();
 
-   if(text_mode || (SCREEN_WIDTH > 800)) {
-      if(check_precise_posn) sprintf(out, "Saving precise position  ");
-      else if(show_fixes) {
-         if     (rcvr_mode == 4)     sprintf(out, "3D Fixes (%d %s/div from):     ", ((int)LLA_SPAN), angle_units);
-         else if(rcvr_mode == 3)     sprintf(out, "2D Fixes (%d %s/div from):     ", ((int)LLA_SPAN), angle_units);
-         else if(rcvr_mode == 0)     sprintf(out, "2D/3D Fixes (%d %s/div from):  ", ((int)LLA_SPAN), angle_units);
-         else if(configed_mode == 5) sprintf(out, "Mode %d Fixes (%d %s/div from):", configed_mode, ((int)LLA_SPAN), angle_units);
-         else                        sprintf(out, "Mode %d fixes (%d %s/div from):", rcvr_mode, ((int)LLA_SPAN), angle_units);
-      }
-      else if(reading_lla)           sprintf(out, "Read LLA (%d %s/div from):     ", ((int)LLA_SPAN), angle_units);
-      else if((lla_file == 0) && lla_msg[0]) sprintf(out, "%s", lla_msg);
-      else                           sprintf(out, "Surveying (%d %s/div from):    ", ((int)LLA_SPAN), angle_units);
-   }
-   else {
-      if(check_precise_posn) sprintf(out, "Saving position    ");
-      else if((lla_file == 0) && lla_msg[0]) sprintf(out, "%s", lla_msg);
-      else                   sprintf(out, "%d %s/div from: ", ((int)LLA_SPAN), angle_units);
-   }
-   lla_header(out, YELLOW);
+   label_lla_header();
    if(text_mode) return;  // plot area is in use for help/warning message
 
    x = LLA_X - LLA_SIZE/2 + LLA_MARGIN;
    y = LLA_Y - LLA_SIZE/2 + LLA_MARGIN;
-   if(LLA_X >= PLOT_ROW) shared_item = 'L';
+   if(LLA_ROW >= PLOT_ROW) shared_item = SHARE_LLA;
 
    for(yy=y; yy<=y+lla_step*LLA_DIVISIONS; yy+=lla_step) {  // horizontals
      color = GREY;
@@ -11739,9 +21003,10 @@ int color;
    dot(xx-5, yy+0, WHITE);
 
    xx = LLA_COL/TEXT_WIDTH+1;
-   if(SCREEN_WIDTH > 800) xx += 5;
-   else                   xx -= 2;
-   format_lla(ref_lat,ref_lon,ref_alt, (LLA_ROW+LLA_SIZE)/TEXT_HEIGHT+1, xx);
+   if(SCREEN_WIDTH > (NARROW_SCREEN+X11_MARGIN)) xx += 5;
+   else                                          xx -= 2;
+
+   show_mouse_lla();
 
    #ifdef BUFFER_LLA
       redraw_lla_points();
@@ -11754,6 +21019,7 @@ void calc_precise_lla()
 u08 have_lla;
 
    // calculate simple average of all surveyed points
+
    have_lla = 0;
    if(precision_samples) {
       xlat = lat_sum / (double)precision_samples;
@@ -11762,18 +21028,21 @@ u08 have_lla;
       precise_lat = xlat;
       precise_lon = xlon;
       precise_alt = xalt;
+      have_precise_lla = 2;
       ref_lat = precise_lat;
       ref_lon = precise_lon;
       ref_alt = precise_alt;
       cos_factor = cos(ref_lat);
+      if(cos_factor == 0.0) cos_factor = 0.001;
+      lla_to_ecef(xlat,xlon,xalt);
 
       xlat *= RAD_TO_DEG;
       xlon *= RAD_TO_DEG;
       if(lla_file) {
-         fprintf(lla_file, "# Simple average of %.0lf points:\n", (double)precision_samples);
-         fprintf(lla_file, "#   lat=%14.8lf  %.8lf\n",  xlat, (xlat-LAT_REF)/ANGLE_SCALE);
-         fprintf(lla_file, "#   lon=%14.8lf  %.8lf\n",  xlon, (xlon-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat));
-         fprintf(lla_file, "#   alt=%14.8lf  %.8lf\n",  xalt, (xalt-ALT_REF)*FEET_PER_METER);
+         fprintf(lla_file, "# Simple average of %.0f points:\n", (double)precision_samples);
+         fprintf(lla_file, "#   lat:%14.10f  %.10f  ecef_x:%.5f  dms:%s\n",  xlat, (xlat-LAT_REF)/ANGLE_SCALE, ecef_x, dms_fmt(xlat));
+         fprintf(lla_file, "#   lon:%14.10f  %.10f  ecef_y:%.5f  dms:%s\n",  xlon, (xlon-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat), ecef_y, dms_fmt(xlon));
+         fprintf(lla_file, "#   alt:%14.10f  %.10f  ecef_z:%.5f\n",  xalt, (xalt-ALT_REF), ecef_z);
          fprintf(lla_file, "#\n");
       }
       have_lla |= 0x01;
@@ -11788,19 +21057,22 @@ u08 have_lla;
       precise_lat = xlat;
       precise_lon = xlon;
       precise_alt = xalt;
+      have_precise_lla = 3;
       ref_lat = xlat;
       ref_lon = xlon;
       ref_alt = xalt;
       cos_factor = cos(ref_lat);
+      if(cos_factor == 0.0) cos_factor = 0.001;
+      lla_to_ecef(xlat,xlon,xalt);
 
       xlat *= RAD_TO_DEG;
       xlon *= RAD_TO_DEG;
       if(lla_file) {
-         fprintf(lla_file, "# REF: %.8lf  %.8lf  %.8lf  cos=%.8lf\n", LAT_REF, LON_REF, ALT_REF, COS_FACTOR(xlat));
-         fprintf(lla_file, "# Average of %.0lf 24 hour medians:\n", best_count);
-         fprintf(lla_file, "#   lat=%14.8lf  %.8lf\n",  xlat, (xlat-LAT_REF)/ANGLE_SCALE);
-         fprintf(lla_file, "#   lon=%14.8lf  %.8lf\n",  xlon, (xlon-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat));
-         fprintf(lla_file, "#   alt=%14.8lf  %.8lf\n",  xalt, (xalt-ALT_REF)*FEET_PER_METER);
+         fprintf(lla_file, "# REF: %.10f  %.10f  %.10f  cos=%.10f\n", LAT_REF, LON_REF, ALT_REF, COS_FACTOR(xlat));
+         fprintf(lla_file, "# Average of %.0f 24 hour medians:\n", best_count);
+         fprintf(lla_file, "#   lat:%14.10f  %.10f  ecef_x:%.5f  dms:%s\n",  xlat, (xlat-LAT_REF)/ANGLE_SCALE, ecef_x, dms_fmt(xlat));
+         fprintf(lla_file, "#   lon:%14.10f  %.10f  ecef_y:%.5f  dms:%s\n",  xlon, (xlon-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat), ecef_y, dms_fmt(xlon));
+         fprintf(lla_file, "#   alt:%14.10f  %.10f  ecef_z:%.5f\n",  xalt, (xalt-ALT_REF), ecef_z);
       }
       have_lla |= 0x02;
    }
@@ -11834,6 +21106,31 @@ int i;
 
    bins_filled += 1;
    return bins_filled;
+}
+
+
+void show_precise_info(int flag)
+{
+int i;
+double xlat,xlon,xalt;
+
+   if(debug_lla) {
+      for(i=flag; i<hour_lats; i++) {
+         xlat = lat_hr_bins[i];
+         xlon = lon_hr_bins[i];
+         xalt = alt_hr_bins[i];
+
+         xlat *= RAD_TO_DEG;
+         xlon *= RAD_TO_DEG;
+         if(lla_file) {
+            fprintf(lla_file, "#\n");
+            fprintf(lla_file, "# Hour %2d: lat:%14.9f  %.9f\n",  i+1, xlat, (xlat-LAT_REF)/ANGLE_SCALE);
+            fprintf(lla_file, "# Hour %2d: lon:%14.9f  %.9f\n",  i+1, xlon, (xlon-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat));
+            fprintf(lla_file, "# Hour %2d: alt:%14.9f  %.9f\n",  i+1, xalt, (xalt-ALT_REF)*FEET_PER_METER);
+            fprintf(lla_file, "#\n");
+         }
+      }
+   }
 }
 
 
@@ -11872,22 +21169,7 @@ int interval;
          hour_alts = add_to_bin(alt_bins[interval+i], alt_hr_bins, hour_alts);
       }
 
-      if(debug_lla) {
-         for(i=0; i<hour_lats; i++) {
-            xlat = lat_hr_bins[i];
-            xlon = lon_hr_bins[i];
-            xalt = alt_hr_bins[i];
-
-            xlat *= RAD_TO_DEG;
-            xlon *= RAD_TO_DEG;
-            if(lla_file) {
-               fprintf(lla_file, "# Hour %d: lat=%14.8lf  %.8lf\n",  i, xlat, (xlat-LAT_REF)/ANGLE_SCALE);
-               fprintf(lla_file, "# Hour %d: lon=%14.8lf  %.8lf\n",  i, xlon, (xlon-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat));
-               fprintf(lla_file, "# Hour %d: alt=%14.8lf  %.8lf\n",  i, xalt, (xalt-ALT_REF)*FEET_PER_METER);
-               fprintf(lla_file, "#\n");
-            }
-         }
-      }
+      show_precise_info(0);
 
       // calculate the weighted median of the 24 hour lat/lon/alt data
       interp = (double) hour_lats * LAT_HR_TURN;
@@ -11897,7 +21179,7 @@ int interval;
          xlat += lat_hr_bins[i];
          minute_lats = add_to_bin(xlat, lat_min_bins, minute_lats);
          best_lat += xlat;
-         if(lla_file) fprintf(lla_file, "# BEST %d: lat=%14.8lf  %.8lf\n",  i, xlat*RAD_TO_DEG, (xlat*RAD_TO_DEG-LAT_REF)/ANGLE_SCALE);
+         if(lla_file) fprintf(lla_file, "# BEST %d: lat:%14.9f  %.9f\n",  i, xlat*RAD_TO_DEG, (xlat*RAD_TO_DEG-LAT_REF)/ANGLE_SCALE);
       }
 
       interp = (double) hour_lons * LON_HR_TURN;
@@ -11907,7 +21189,7 @@ int interval;
          xlon += lon_hr_bins[i];
          minute_lons = add_to_bin(xlon, lon_min_bins, minute_lons);
          best_lon += xlon;
-         if(lla_file) fprintf(lla_file, "# BEST %d: lon=%14.8lf  %.8lf\n",  i, xlon*RAD_TO_DEG, (xlon*RAD_TO_DEG-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat*RAD_TO_DEG));
+         if(lla_file) fprintf(lla_file, "# BEST %d: lon:%14.9f  %.9f\n",  i, xlon*RAD_TO_DEG, (xlon*RAD_TO_DEG-LON_REF)/ANGLE_SCALE*COS_FACTOR(xlat*RAD_TO_DEG));
       }
 
       interp = (double) hour_alts * ALT_HR_TURN;
@@ -11917,7 +21199,7 @@ int interval;
          xalt += alt_hr_bins[i];
          minute_alts = add_to_bin(xalt, alt_min_bins, minute_alts);
          best_alt += xalt;
-         if(lla_file) fprintf(lla_file, "# BEST %d: alt=%14.8lf  %.8lf\n",  i, xalt,  (xalt-ALT_REF)*FEET_PER_METER);
+         if(lla_file) fprintf(lla_file, "# BEST %d: alt:%14.9f  %.9f\n",  i, xalt,  (xalt-ALT_REF)*FEET_PER_METER);
       }
       if(lla_file) fprintf(lla_file, "#\n");
 
@@ -11958,38 +21240,49 @@ int fault;
    }
 
    minute_lats = minute_lons = minute_alts = 0;
-   while(hour_tow <= survey_tow) hour_tow += 60L*60L;
+   while(hour_tow <= survey_tow) {
+      hour_tow += 60L*60L;
+   }
+//if(debug_file) fprintf(debug_file, "anal_mins surv_tow:%d  hour_tow:%d  hr_lats:%d  sbc:%d  psh:%d\n", survey_tow,hour_tow,hour_lats,SURVEY_BIN_COUNT,PRECISE_SURVEY_HOURS);  //plugh
 
    if((fault == 0) && (hour_lats < SURVEY_BIN_COUNT)) {
       lat_hr_bins[hour_lats++] = xlat;
       lon_hr_bins[hour_lons++] = xlon;
       alt_hr_bins[hour_alts++] = xalt;
-      if(hour_lats >= PRECISE_SURVEY_HOURS) return 1;  // precise survey is complete
+      if(hour_lats >= PRECISE_SURVEY_HOURS) {  // precise survey is complete
+//if(debug_file) fprintf(debug_file, "hour_lats:%d  psh:%d\n", hour_lats, PRECISE_SURVEY_HOURS);  //plugh
+         return 3;
+      }
 
       if(erase_every_hour) {  // clear screen to prepare for the next hour of data
          if(precision_samples) {  // calculate new center point of plot based upon sample average
             precise_lat = lat_sum / precision_samples;
             precise_lon = lon_sum / precision_samples;
             precise_alt = alt_sum / precision_samples;
+            have_precise_lla = 4;
          }
          else {   // or based upon last hour's median point
             precise_lat = xlat;
             precise_lon = xlon;
             precise_alt = xalt;
+            have_precise_lla = 5;
          }
          ref_lat = precise_lat;
          ref_lon = precise_lon;
          ref_alt = precise_alt;
          cos_factor = cos(ref_lat);
+         if(cos_factor == 0.0) cos_factor = 0.001;
 
          need_redraw = 1103;
       }
 
       if(!zoom_screen) {
-         sprintf(out, "hr  %2d: %.8lf %.8lf %.3lf     ", 
+         sprintf(out, "hr  %2d: %.8f %.8f %.3f     ", 
             hour_lats, xlat*RAD_TO_DEG, xlon*RAD_TO_DEG,xalt);
-         vidstr(MOUSE_ROW+2, MOUSE_COL, SURVEY_COLOR, out);
+         vidstr(MOUSE_ROW-2, MOUSE_COL, SURVEY_COLOR, out);  //plugh +2
       }
+
+      show_precise_info(hour_lats-1);
    }
 
    return 0;
@@ -12032,17 +21325,22 @@ int fault;
       minute_lons = add_to_bin(xlon, lon_min_bins, minute_lons);
       minute_alts = add_to_bin(xalt, alt_min_bins, minute_alts);
       if(!zoom_screen) {
-         sprintf(out, "min %2d: %.8lf %.8lf %.3lf     ", minute_lats, xlat*RAD_TO_DEG, xlon*RAD_TO_DEG, xalt);
-         vidstr(MOUSE_ROW+1, MOUSE_COL, SURVEY_COLOR, out);
+         sprintf(out, "min %2d: %.8f %.8f %.3f     ", minute_lats, xlat*RAD_TO_DEG, xlon*RAD_TO_DEG, xalt);  //plugh +1
+         vidstr(MOUSE_ROW-1, MOUSE_COL, SURVEY_COLOR, out);
       }
    }
 
    // prepare for the next minute
    second_lats = second_lons = second_alts = 0;
-   while(minute_tow <= survey_tow) minute_tow += 60L;
+   while(minute_tow <= survey_tow) {
+      minute_tow += 60L;
+   }
+//if(debug_file) fprintf(debug_file, "anal_secs surv_tow:%d  minute_tow:%d  hr_tow:%d  psh:%d\n", survey_tow,minute_tow,hour_tow, PRECISE_SURVEY_HOURS);  //plugh
 
    if(survey_tow >= hour_tow) {  // we have 60 minutes of data
-      return analyze_minutes();
+      i = analyze_minutes();
+//if(debug_file) fprintf(debug_file, "analyze_minutes: %d  surv_mins:%d  psh:%d\n", i, survey_minutes, PRECISE_SURVEY_HOURS); //plugh
+      return i;
    }
 
    return 0;
@@ -12050,27 +21348,35 @@ int fault;
 
 int add_survey_point()
 {
-   if(gps_status != 0) return 0;
+int i;
+
+   if(gps_status != GPS_FIXES) return 0;
 
    lat_sum += lat;
    lon_sum += lon;
    alt_sum += alt;
    ++precision_samples;
 //++survey_tow; //"###
-//if(precision_samples > do_survey) return 1;  //!!! debug statement
+//if(precision_samples > do_median_survey) return 1;  //!!! debug statement
 
    second_lats = add_to_bin(lat, lat_bins, second_lats);
    second_lons = add_to_bin(lon, lon_bins, second_lons);
    second_alts = add_to_bin(alt, alt_bins, second_alts);
    if(!zoom_screen) {
-      sprintf(out, "sec %2d: %.8lf %.8lf %.3lf     ", second_lats, lat*RAD_TO_DEG, lon*RAD_TO_DEG, alt);
+      sprintf(out, "sec %2d: %.8f %.8f %.3f     ", second_lats, lat*RAD_TO_DEG, lon*RAD_TO_DEG, alt);
       vidstr(MOUSE_ROW+0, MOUSE_COL, SURVEY_COLOR, out);
    }
 
-   while(survey_tow < start_tow) survey_tow += (7L*24L*60L*60L);
+   while(survey_tow < start_tow) {
+      survey_tow += (7L*24L*60L*60L);
+   }
+//if(debug_file) fprintf(debug_file, "asp surv_tow:%d  start_tow:%d  min_tow:%d  psh:%d\n", survey_tow,start_tow,minute_tow, PRECISE_SURVEY_HOURS);  //plugh
+
    if(survey_tow >= minute_tow) {  // we have 60 seconds of data
       ++survey_minutes;
-      return analyze_seconds();
+      i = analyze_seconds();
+//if(debug_file) fprintf(debug_file, "analyze_seconds: %d  surv_mins:%d  psh:%d\n", i, survey_minutes, PRECISE_SURVEY_HOURS); //plugh
+      return i;
    }
 
    return 0;
@@ -12080,24 +21386,26 @@ void update_precise_survey()
 {
 int color;
 int plotted;
+int i;
 
    plotted = 0;
-   color = precision_samples / 3600L;
-   color %= 14;
+   color = precision_samples / (60L*60L);
+   color %= 12;
 
    if(precision_survey || check_precise_posn || show_fixes) {  // plot the points
-      if((gps_status == 0) && plot_lla) {  // plot data
-         plot_lla_point(1, color+1);
+      if((gps_status == GPS_FIXES) && plot_lla) {  // plot data
+         plot_lla_point(1, color+3);
          plotted = 1;
       }
    }
    if(plotted == 0) { // just add point to lla map buffer
-      plot_lla_point(0, color+1);
+      plot_lla_point(0, color+3);
    }
 
    if(precision_survey) {
-      if(add_survey_point()) {     // precision survey has completed
-         stop_precision_survey();  // stop doing the precison survey
+      i = add_survey_point();
+      if(i) {                      // precision survey has completed
+         stop_precision_survey(1); // stop doing the precison survey
          analyze_hours();          // analyze the hourly data
          calc_precise_lla();       // figure up where we are
       }
@@ -12111,9 +21419,475 @@ int plotted;
 
 //
 //
+//   MTIE stuff - Maximum Time Interval Error
+//
+//
+
+struct MTIE_VALS {
+   double *min_vals;
+   double *max_vals;
+};
+
+struct MTIE_TAU {
+   struct MTIE_VALS *vals;
+};
+
+int pow2[MAX_ADEV_BINS+1];                           // powers of 2
+double mtie[MAX_MTIE_CHANS][MAX_ADEV_BINS+1];        // calculated MTIE values for each channel
+double *mtie_buf[MAX_MTIE_CHANS];                    // incomming TIE values
+int mtie_q_count[MAX_MTIE_CHANS];                    // number incomming of TIE values saved
+int mtie_intervals[MAX_MTIE_CHANS][MAX_ADEV_BINS+1]; // number of intervals acquired for each tau
+
+double mtie_max[MAX_MTIE_CHANS];
+double mtie_min[MAX_MTIE_CHANS];
+double mtie0[MAX_MTIE_CHANS];
+
+struct MTIE_TAU *mtie_taus[MAX_MTIE_CHANS];
+
+int max_mtie_samples;        // max number of samples we will process (a power of 2)
+int mtie_kmax;               // max number of taus we will process
+int mtie_q_in;
+int mtie_q_out;
+
+
+void free_mtie_data(int id)
+{
+int i;
+
+   if(id < 0) return;
+   if(id > MAX_MTIE_CHANS) return;
+   if(mtie_taus[id] == 0) return;
+
+   for(i=0; i<mtie_kmax; i++) {
+      if(mtie_taus[id][i].vals) {
+         if(mtie_taus[id][i].vals->min_vals) free(mtie_taus[id][i].vals->min_vals);
+         if(mtie_taus[id][i].vals->max_vals) free(mtie_taus[id][i].vals->max_vals);
+      }
+   }
+
+   for(i=0; i<mtie_kmax; i++) {
+      if(mtie_taus[id][i].vals) {
+         free(mtie_taus[id][i].vals);
+      }
+   }
+
+   free(mtie_taus[id]);
+   mtie_taus[id] = 0;
+
+   if(mtie_buf[id]) {
+      free(mtie_buf[id]);
+      mtie_buf[id] = 0;
+   }
+
+   mtie_q_count[id] = 0;
+   mtie_q_in = mtie_q_out = 0;
+}
+
+
+int alloc_mtie_data(int id, int mtie_size)
+{
+int tau;
+int i;
+
+   // alloc mtie tau array, initialize it, and return number of bins
+   if(id < 0) return (-10);
+   if(id > MAX_MTIE_CHANS) return (-11);
+
+   free_mtie_data(id); // free old info
+
+   tau = 1;
+   for(i=0; i<32; i++) {    // calculate powers of 2 table
+      pow2[i] = tau;
+      tau *= 2;
+      mtie_intervals[id][i] = 0;   // init MTIE results table
+      mtie[id][i] = (-BIG_NUM);  // init MTIE results table
+      mtie0[id] = (-BIG_NUM);
+      mtie_max[id] = (-BIG_NUM);
+      mtie_min[id] = (BIG_NUM);
+   }
+
+   tau = 1;
+   mtie_kmax = 0;
+   while(1) { // calculate mtie bin count
+      if(tau > mtie_size) break;
+if(0 && debug_file) fprintf(debug_file, "MTIE_TAU %d: %d\n", mtie_kmax, tau);
+      tau *= 2;
+      ++mtie_kmax;
+   }
+   max_mtie_samples = tau/2;
+if(0 && debug_file) fprintf(debug_file, "MAX_MTIE_SAMPLES: %d\n", max_mtie_samples);
+
+   mtie_buf[id] = (double *) calloc(max_mtie_samples, sizeof(double));
+   if(mtie_buf[id] == 0) {
+      sprintf(out, "Could not allocate MTIE data buffer");
+      error_exit(50, out);
+      return 0;
+   }
+
+   if(mtie_kmax) {  // allocate mtie bins
+      mtie_taus[id] = (struct MTIE_TAU *) calloc(mtie_kmax, sizeof(struct MTIE_TAU));
+   }
+   if(mtie_taus[id] == 0) {
+      sprintf(out, "Could not allocate MTIE data arrays");
+      error_exit(50, out);
+      return 0;
+   }
+
+   tau = 1;
+   i = 0;
+   while(i < mtie_kmax) { // allocate and initialize mtie bins
+//    mtie_taus[id][i].tau = tau;
+if(0 && debug_file) fprintf(debug_file, "MTIE_TAU[%d] %d\n", i, tau);
+//    mtie_taus[id][i].val = 0.0;
+      mtie_taus[id][i].vals = (struct MTIE_VALS *) calloc(mtie_kmax, sizeof(struct MTIE_VALS));
+      if(mtie_taus[id][i].vals == 0) {
+         sprintf(out, "Could not allocate MTIE value arrays");
+         error_exit(50, out);
+         return -1;
+      }
+
+      mtie_taus[id][i].vals->min_vals = (double *) calloc(max_mtie_samples, sizeof(double));
+      if(mtie_taus[id][i].vals->min_vals == 0) {
+         sprintf(out, "Could not allocate MTIE min value arrays");
+         error_exit(50, out);
+         return (-2);
+      }
+
+      mtie_taus[id][i].vals->max_vals = (double *) calloc(max_mtie_samples, sizeof(double));
+      if(mtie_taus[id][i].vals->max_vals == 0) {
+         sprintf(out, "Could not allocate MTIE max value arrays");
+         error_exit(50, out);
+         return (-2);
+      }
+
+      tau *= 2;
+      ++i;
+   }
+
+   return mtie_kmax;
+}
+
+void alloc_mtie(int why)
+{
+   alloc_mtie_data(CHA_MTIE, adev_q_size);
+   alloc_mtie_data(CHB_MTIE, adev_q_size);
+   alloc_mtie_data(CHC_MTIE, adev_q_size);
+   alloc_mtie_data(CHD_MTIE, adev_q_size);
+   mtie_allocated = 1;
+}
+
+void free_mtie()
+{
+   free_mtie_data(CHA_MTIE);
+   free_mtie_data(CHB_MTIE);
+   free_mtie_data(CHC_MTIE);
+   free_mtie_data(CHD_MTIE);
+   mtie_allocated = 0;
+}
+
+
+#define MAX(a,b) (((a) > (b)) ? (a):(b))
+#define MIN(a,b) (((a) < (b)) ? (a):(b))
+
+double mtie_phase(int id, int ndx)
+{
+   // get a value from the MTIE data buffer
+   if(id < 0) return 0.0;
+   if(id > MAX_MTIE_CHANS) return 0.0;
+
+   if(ndx < 0) return 0.0;
+   if(ndx >= max_mtie_samples) return 0.0;
+
+   return mtie_buf[id][ndx];
+}
+
+void save_mtie_phase(int id, double val)
+{
+   // put a value into the MTIE data buffer
+
+   if(id < 0) return;
+   if(id > MAX_MTIE_CHANS) return;
+   if(mtie_q_count[id] >= max_mtie_samples) return;
+
+   mtie_buf[id][mtie_q_count[id]] = val;
+   ++mtie_q_count[id];
+}
+
+
+void add_mtie_point(int id, double val)
+{
+int i;
+int j;
+int k;
+int p;
+int kidx;
+int imax;
+struct MTIE_VALS *v;
+struct MTIE_VALS *vm;
+double x;
+//double t0;
+
+   if(id < 0) return;
+   if(id > MAX_MTIE_CHANS) return;
+
+   if(mtie_taus[id] == 0) alloc_mtie(20);   // mtie memory not allocated
+   else if(mtie_buf[id] == 0) alloc_mtie(30);
+   if(mtie_taus[id] == 0) return;   // mtie memory not allocated
+   if(mtie_buf[id] == 0) return;
+
+//t0 = GetMsecs();
+   if((mtie_q_count[id] == 0) && (val == 0.0)) return;  // if first data point is 0.0, it is probably bogus
+   save_mtie_phase(id, val);  // save new data point in the MTIE data buffer
+
+   mtie0[id] = MAX(val, mtie0[id]);   // !!!! need ID
+   if(mtie_q_count[id] > 1) {
+      mtie_max[id] = MAX(val-mtie_phase(id, mtie_q_count[id]-2), mtie_max[id]);
+      mtie_min[id] = MIN(val-mtie_phase(id, mtie_q_count[id]-2), mtie_min[id]);
+//    mtie_max[id] = MAX(val, mtie_max[id]);
+//    mtie_min[id] = MIN(val, mtie_min[id]);
+   }
+   mtie[id][0] = MAX(fabs(mtie_max[id]), fabs(mtie_min[id]));
+   mtie_intervals[id][0] = mtie_q_count[id];
+
+   for(kidx=0; kidx<mtie_kmax; kidx++) {
+      k = kidx + 1;
+      imax = mtie_q_count[id] - pow2[k] + 1;
+      v = mtie_taus[id][kidx].vals;
+      if(1) {  // fast "stop after buffer full mode"
+         j = mtie_intervals[id][kidx+1] - 2;
+         if(j < 0) j = 0;
+      }
+      else {  // much slower "circular buffer mode"
+         j = 0;
+      }
+
+      for(i=j; i<imax; i++) {
+         if(k <= 1) {
+            v->max_vals[i] = MAX(mtie_phase(id, i), mtie_phase(id, i+1));
+            v->min_vals[i] = MIN(mtie_phase(id, i), mtie_phase(id, i+1));
+         }
+         else {
+            vm = mtie_taus[id][kidx-1].vals;
+            p = pow2[k-1];
+
+            v->max_vals[i] = MAX(vm->max_vals[i],
+                                 vm->max_vals[i+p]);
+
+            v->min_vals[i] = MIN(vm->min_vals[i],
+                                 vm->min_vals[i+p]);
+         }
+
+         mtie_intervals[id][kidx+1] = i;
+         x = v->max_vals[i] - v->min_vals[i];
+
+         if(x > mtie[id][kidx+1]) mtie[id][kidx+1] = x;  // save current mtie value
+      }
+   }
+//t0 = GetMsecs() - t0;
+//sprintf(debug_text, "mtie_q_count %d: kmax:%d  %.12f  msecs:%f\n", mtie_q_count[id], mtie_kmax, val, t0);
+}
+
+
+void dump_mtie(int id, FILE *file)
+{
+int i;
+char *s;
+
+   if(id < 0) return;
+   if(id > MAX_MTIE_CHANS) return;
+   if(file == 0) return;
+
+   if(mtie_q_count[id] == 0) return;
+
+   if     (id == 0) s = "chA";
+   else if(id == 1) s = "chB";
+   else if(id == 2) s = "chC";
+   else if(id == 3) s = "chD";
+   else             s = "???";
+   
+   fprintf(file, "TIE values for %s.  intervals:%d\n", s, mtie_q_count[id]);
+   for(i=0; i<mtie_q_count[id]; i++) {
+fprintf(file, "i:%-6d tie(ns):%.12f\n", i, mtie_phase(id, i));
+   }
+   fprintf(file, "\n");
+//   fprintf(file, "mtie_min:%.12f  mtie_max:%.12f  mtie0: %.12f\n", mtie_min[id], mtie_max[id], mtie0[id]);
+   fprintf(file, "\n");
+
+   fprintf(file, "tau: %-6d   mtie(ns):%.12f   intervals:%d\n", pow2[0], mtie[id][0], mtie_q_count[id]);
+
+   for(i=0; i<mtie_kmax; i++) {
+      if(mtie[id][i+1] == (-BIG_NUM)) continue;
+      fprintf(file, "tau: %-6d   mtie(ns):%.12f   intervals:%d\n", pow2[i+1], mtie[id][i+1], mtie_intervals[id][i+1]);
+   }
+   fprintf(file, "\n\n\n");
+}
+
+
+int fetch_mtie_info(int id, struct ADEV_INFO *bins)
+{
+int i;
+int count;
+double val;
+double period;
+double max_val, min_val;
+
+   // copy MTIE info into an ADEV_INFO type array for display
+
+   max_val = (-(BIG_NUM));
+   min_val = (BIG_NUM);
+
+   bins->adev_type = PPS_ADEV;
+   for(i=0; i<32; i++) {
+      bins->adev_taus[i] = (float) 0;
+      bins->adev_on[i] = (long) 0;
+      bins->adev_bins[i] = (float) 0;
+      bins->bin_count = 0;
+      bins->adev_min = (float) min_val;
+      bins->adev_max = (float) max_val;
+   }
+
+   if(id < 0) return 0;
+   if(id > MAX_MTIE_CHANS) return 0;
+
+   period = 1.0;
+   if(id == CHA_MTIE) {
+      bins->adev_type = A_MTIE;   //PPS_ADEV;
+      period = pps_adev_period;
+   }
+   else if(id == CHB_MTIE) {
+      bins->adev_type = B_MTIE;   //OSC_ADEV;
+      period = osc_adev_period;
+   }
+   else if(id == CHC_MTIE) {
+      bins->adev_type = C_MTIE;   //CHC_ADEV;
+      period = chc_adev_period;
+   }
+   else if(id == CHD_MTIE) {
+      bins->adev_type = D_MTIE;   //CHD_ADEV;
+      period = chd_adev_period;
+   }
+   else return 0;
+
+   count = 0;
+   for(i=0; i<32; i++) {
+      if(mtie[id][i] == (-BIG_NUM)) break;
+      val = (float) (mtie[id][i] / 1.0E9);
+if((i == 0) && (mtie[id][0] > mtie[id][1])) val = (float) (mtie[id][1] / 1.0E9); 
+
+      ++count;
+      bins->bin_count = count;
+      bins->adev_taus[i] = ((float) pow2[i]) * (float) period;
+      bins->adev_on[i] = mtie_intervals[id][i];
+if(bins->adev_on[i] == 0) bins->adev_on[i] = 1;
+      bins->adev_bins[i] = (float) val;
+      if(val > max_val) max_val = val;
+      if(val < min_val) min_val = val;
+   }
+   bins->adev_min = (float) min_val;
+   bins->adev_max = (float) max_val;
+
+   return count;
+}
+
+void scan_mtie_bins(int id)
+{
+int i;
+double val;
+
+   // find min/max values in the MTIE data
+
+   if(id < 0) return;
+   if(id > MAX_MTIE_CHANS) return;
+
+   for(i=first_show_bin; i<32; i++) {  // !!!!! should start at
+      if(mtie[id][i] == (-BIG_NUM)) continue;
+      val = (mtie[id][i] / 1.0E9);
+
+      if(val > global_adev_max) global_adev_max = val;
+      if(val < global_adev_min) global_adev_min = val;
+   }
+}
+
+
+
+
+//
+//
 //   Allan deviation stuff
 //
 //
+
+
+int adevs_active(int check_enable)
+{
+int i;
+static int last_ticc_i = 0;
+
+   // NEW_RCVR
+
+   // return true if we might have adevs to display
+   //   0x01 : pps_offset available
+   //   0x02 : osc_offset available
+   //   0x04 : TICC channel C available
+   //   0x08 : TICC channel D available
+   //   0x80 : flags that bits 0x01 and 0x02 are guessed
+
+   if(no_adev_flag) return 0;
+
+   if(check_enable) {
+      if     (pps_adev_period > 0.0) ;        // aaaallll
+      else if(osc_adev_period > 0.0) ;
+      else if(chc_adev_period > 0.0) ;
+      else if(chd_adev_period > 0.0) ;
+      else if(adev_period <= 0.0) {
+         return 0;
+      }
+   }
+
+   if(jitter_adev) return 0x03;
+
+   i = 0;
+   if(rcvr_type == TICC_RCVR) {
+      if(have_pps_offset) i |= 0x01;
+      if(have_osc_offset) i |= 0x02;
+      if(have_chc_offset) i |= 0x04;
+      if(have_chd_offset) i |= 0x08;
+      if(mtie_q_count[CHA_MTIE]) i |= 0x01;
+      if(mtie_q_count[CHB_MTIE]) i |= 0x02;
+      if(mtie_q_count[CHC_MTIE]) i |= 0x04;
+      if(mtie_q_count[CHD_MTIE]) i |= 0x08;
+      if(sim_file && (i == 0)) return last_ticc_i;
+      last_ticc_i = i;
+      return i;
+   }
+   else if(TICC_USED) {
+      if(ticc_mode == 'I') return 0x01;   // time interval
+      if(ticc_mode == 'F') return 0x01;   // frequency counter
+      return 0x03;   // aaaacccc
+   }
+   else {
+      if(luxor) return 0;
+      if(NO_ADEV_INFO) return 0;
+   }
+
+   if(rcvr_type == PRS_RCVR) ;   // SRO_RCVR?  LPFRS_RCVR  SA35_RCVR?
+   else if(GPSDO) ;
+   else if(!TIMING_RCVR) return 0;
+///   else if(TIMING_RCVR) return 0;
+
+   if(rcvr_type == BRANDY_RCVR) {
+      if(have_pps_offset) return 0x01;
+      else                return 0x01;
+   }
+
+   if(have_pps_offset && have_osc_offset) return 0x03;
+   else if(have_pps_offset) return 0x01;
+   else if(have_osc_offset) return 0x02;
+
+   return 0x83;
+}
+
+
 #ifdef ADEV_STUFF
 
 //
@@ -12122,48 +21896,65 @@ int plotted;
 // several unique alternatives that produce cleaner-looking plots.
 //
 
-long next_tau(long tau, int bins)
+void calc_adev_display_size()
+{
+   adev_bottom_row  = PLOT_TEXT_ROW - 1;
+   adev_bottom_row -= (TEXT_Y_MARGIN+TEXT_HEIGHT-1)/TEXT_HEIGHT;
+   if(extra_plots) adev_bottom_row -= 2;
+   if(all_adevs && (adev_bottom_row >= MOUSE_ROW+1)) adev_bottom_row = MOUSE_ROW+1; // mmmmmm 
+
+   if(all_adevs) adev_bottom_row = MOUSE_ROW+1;
+   else          adev_bottom_row = MOUSE_ROW+2+1;  // mmmmmm
+}
+
+long next_tau(long tau, int bin_scale)
 {
 long pow10;
 long n;
 
-    switch (bins) {
+    switch (bin_scale) {
        case 0 :    // all tau (not practical)
            return tau + 1;
 
        case 1 :    // one per decade
            return tau * 10;
 
-       case 2 :    // one per octave
+       case 2 :    // one per octave  (1-2-4-8-16...)
            return tau * 2;
 
        case 3 :    // 3 dB
        case 4 :    // 1-2-4 decade
        case 5 :    // 1-2-5 decade
+       case 8 :    // 1-2-4-8 decade
        case 10 :   // ten per decade
+           space_bins:
            pow10 = 1;
-           while(tau >= 10) {
+           while(tau >= 10) {  // reduce the decade
                pow10 *= 10;
                tau /= 10;
            }
 
-           if(bins == 3) {
-               return ((tau == 3) ? 10 : 3) * pow10;
+           if(bin_scale == 3) {
+               if(tau == 3) return 10 * pow10;
+               else         return 3 * pow10;
            }
-           if((bins == 4) && (tau == 4)) {
+           if((bin_scale == 4) && (tau == 4)) {
                return 10 * pow10;
            }
-           if((bins == 5) && (tau == 2)) {
+           if((bin_scale == 5) && (tau == 2)) {
                return 5 * pow10;
            }
-           if(bins == 10) {
+           if((bin_scale == 8) && (tau == 8)) {
+               return 10 * pow10;
+           }
+           if(bin_scale == 10) {
                return (tau + 1) * pow10;
            }
            return tau * 2 * pow10;
 
        case 29 :    // 29 nice round numbers per decade
            pow10 = 1;
-           while(tau > 100) {
+           while(tau > 100) {  // reduce the decade
                pow10 *= 10;
                tau /= 10;
            }
@@ -12181,14 +21972,18 @@ long n;
                return (tau + 10) * pow10;
            }
 
-       default :   // logarithmically evenly spaced divisions
-           n = (long) (log10((double) tau) * (double)bins + 0.5) + 1;
-           n = (long) pow(10.0, (double)n / (double)bins);
+       case 99 :   // logarithmically evenly spaced divisions
+           n = (long) (log10((double) tau) * (double)bin_scale + 0.5) + 1;
+           n = (long) pow(10.0, (double)n / (double)bin_scale);
            return (n > tau) ? n : tau + 1;
+
+       default : 
+          bin_scale = 5;    // 1-2-5 sequence
+          goto space_bins;
     }
 }
 
-void reset_incr_bins(struct BIN *bins)
+void reset_incr_bins(struct BIN *bins, double period)
 {
 int b;
 S32 m;
@@ -12197,7 +21992,7 @@ struct BIN *B;
    if(bins == 0) return;
 
    m = 1L;
-   for(b=0; b<n_bins; b++) {  // flush adev bin data
+   for(b=0; b<MAX_ADEV_BINS; b++) {  // flush adev bin data
       B = &bins[b];
       if(B == 0) continue;
 
@@ -12205,7 +22000,7 @@ struct BIN *B;
       B->n     = 0;
       B->sum   = 0.0;
       B->value = 0.0;
-      B->tau   = ((double) m) * adev_period;
+      B->tau   = ((double) m) * period;
       B->accum = 0.0;
       B->i     = 0;
       B->j     = 0;
@@ -12215,20 +22010,52 @@ struct BIN *B;
    }
 }
 
+void reset_pps_bins()
+{
+   pps_adev_q_overflow = 0.0;
+   reset_incr_bins(&pps_adev_bins[0], pps_adev_period);
+   reset_incr_bins(&pps_hdev_bins[0], pps_adev_period);
+   reset_incr_bins(&pps_mdev_bins[0], pps_adev_period);
+   reset_incr_bins(&pps_tdev_bins[0], pps_adev_period);
+}
+
+void reset_osc_bins()
+{
+   osc_adev_q_overflow = 0.0;
+   reset_incr_bins(&osc_adev_bins[0], osc_adev_period);
+   reset_incr_bins(&osc_hdev_bins[0], osc_adev_period);
+   reset_incr_bins(&osc_mdev_bins[0], osc_adev_period);
+   reset_incr_bins(&osc_tdev_bins[0], osc_adev_period);
+}
+
+void reset_chc_bins()
+{
+   chc_adev_q_overflow = 0.0;
+   reset_incr_bins(&chc_adev_bins[0], chc_adev_period);
+   reset_incr_bins(&chc_hdev_bins[0], chc_adev_period);
+   reset_incr_bins(&chc_mdev_bins[0], chc_adev_period);
+   reset_incr_bins(&chc_tdev_bins[0], chc_adev_period);
+}
+
+void reset_chd_bins()
+{
+   chd_adev_q_overflow = 0.0;
+   reset_incr_bins(&chd_adev_bins[0], chd_adev_period);
+   reset_incr_bins(&chd_hdev_bins[0], chd_adev_period);
+   reset_incr_bins(&chd_mdev_bins[0], chd_adev_period);
+   reset_incr_bins(&chd_tdev_bins[0], chd_adev_period);
+}
+
 void reset_adev_bins()
 {
-   adev_q_overflow = 0.0;
-
    // reset the incremental adev bins
-   reset_incr_bins(&pps_adev_bins[0]);
-   reset_incr_bins(&osc_adev_bins[0]);
-   reset_incr_bins(&pps_hdev_bins[0]);
-   reset_incr_bins(&osc_hdev_bins[0]);
-   reset_incr_bins(&pps_mdev_bins[0]);
-   reset_incr_bins(&osc_mdev_bins[0]);
+   reset_pps_bins();
+   reset_osc_bins();
+   reset_chc_bins();
+   reset_chd_bins();
 
-   // This code works for 1-2-5 adev decades.  Should be generalized to
-   // work with any bin density.
+   // !!!!! This code works for 1-2-5 adev decades.  Should be generalized to
+   //       work with any bin density. !!!!!!    aaaahhhh
    if     (adev_q_size <= 10L)       max_adev_rows = 2;
    else if(adev_q_size <= 20L)       max_adev_rows = 3;
    else if(adev_q_size <= 40L)       max_adev_rows = 4;
@@ -12251,13 +22078,16 @@ void reset_adev_bins()
    else if(adev_q_size <= 20000000L) max_adev_rows = 21;
    else if(adev_q_size <= 40000000L) max_adev_rows = 22;
    else                              max_adev_rows = 23;
+
+   calc_adev_display_size();
 }
 
 float adev_decade(float val)
 {
 float decade;
 
-    for(decade=1.0E-0F; decade>=1.0E-19F; decade/=10.0F) {
+    // convert an ADEV value to the decade it is in
+    for(decade=1.0F; decade>=1.0E-19F; decade/=10.0F) {
        if(val > decade) break;
     }
     return decade*10.0F;
@@ -12266,11 +22096,19 @@ float decade;
 
 float scale_adev(float val)
 {
+double check;
+double mant;
+double expo;
+double v;
+
    // convert adev value into an decade_exponent.mantissa value
    // Warning: due to subtle rounding/truncation issues,  change
    //          anything in this routine at your own risk...
-   if(val > 1.0e-0F) {
+if(ATYPE == A_MTIE) return val;
+
+   if(val > 1.0e0F) {
       val = (float) (0.0F);
+      return val;
    }
    else if(val > 1.0e-1F) {
       val = (float) ((-1.0F) + (val/1.0e-0F));
@@ -12329,9 +22167,169 @@ float scale_adev(float val)
    else if(val > 1.0e-19F) {
       val = (float) ((-19.0F) + (val/1.0e-18F));
    }
-   else val = (float) (-20.0F);
+   else if(val > 1.0e-20F) {
+      val = (float) ((-20.0F) + (val/1.0e-19F));
+   }
+   else if(val > 1.0e-21F) {
+      val = (float) ((-21.0F) + (val/1.0e-20F));
+   }
+   else if(val > 1.0e-22F) {
+      val = (float) ((-22.0F) + (val/1.0e-21F));
+   }
+   else if(val > 1.0e-23F) {
+      val = (float) ((-23.0F) + (val/1.0e-22F));
+   }
+   else if(val > 1.0e-24F) {
+      val = (float) ((-24.0F) + (val/1.0e-23F));
+   }
+   else if(val > 1.0e-25F) {
+      val = (float) ((-25.0F) + (val/1.0e-24F));
+   }
+   else if(val > 1.0e-26F) {
+      val = (float) ((-26.0F) + (val/1.0e-25F));
+   }
+   else if(val > 1.0e-27F) {
+      val = (float) ((-27.0F) + (val/1.0e-26F));
+   }
+   else if(val > 1.0e-28F) {
+      val = (float) ((-28.0F) + (val/1.0e-27F));
+   }
+   else if(val > 1.0e-29F) {
+      val = (float) ((-29.0F) + (val/1.0e-28F));
+   }
+   else val = (float) (-30.0F);
 
    return val;
+
+   // this code has the rounding issues mentioned above...
+   check = 1.0e-0;
+   mant = (-1.0);
+   expo = 1.0e+1;
+
+   v = val;
+   while(mant > (-30.0)) {
+      if(v > check) {
+         v = (mant + (val/expo));
+         return (float) v;
+      }
+      check /= 10.0;
+      mant -= 1.0;
+      expo /= 10.0;
+   }
+
+   return (float) (-30.0);
+}
+
+
+void label_adev_grid(int top)
+{
+int row, col;
+int row_step;
+int top_row;
+int i,j;
+int k;
+double val;
+double range;
+double steps;
+int adev_top_row;   // calculate where the adev decades are in the plot area
+int vert_scale;
+int vert_ofs;
+long m;
+
+   if(all_adevs == SINGLE_ADEVS) {
+      if(plot_adev_data == 0) return;   // no adevs on screen, don't label the plots
+   }
+   if(plot_adev_data == 0) return;   // no adevs on screen, don't label the plots
+
+   graphics_coords = 1;
+
+   m = 1L;
+   for(i=0; i<first_show_bin; i++) {  // find tau of the first displayed bin
+      if(ATYPE == A_MTIE) m *= 2;
+      else                m = next_tau(m, bin_scale);
+   }
+
+   i = k = 0;
+   adev_decades_shown = 0;
+   for(col=0; col<PLOT_WIDTH; col+=HORIZ_MAJOR) {  // aaaaaapppppp
+//      sprintf(out, "%ld", m);
+      sprintf(out, "%g", adev_period * (double) m);
+
+      if(col == 0) j = 0;
+      else         j = (strlen(out)*TEXT_WIDTH) / 2;
+
+      if((col-j) > (PLOT_WIDTH-(HORIZ_MAJOR*2))) break;
+      else if((HORIZ_MAJOR < (6*TEXT_WIDTH)) && (k != 0)) ;
+      else {
+         vidstr(PLOT_ROW+2, 1+PLOT_COL+col-j, ADEV_LABEL_COLOR, out); // xyzzy
+      }
+      ++adev_decades_shown;
+
+      k = (k + 1) % 3;
+      if(ATYPE == A_MTIE) m *= 2;
+      else                m = next_tau(m, bin_scale);
+      if(m > 100000) break;
+   }
+
+   range = 0.0;
+   val = 1.0;
+   for(i=0; i<20; i++) {  // find decade value of the largest xDEV value
+      if(global_adev_max >= val) break;
+      val /= 10.0;
+   }
+   val *= 10.0;
+
+   top_row = PLOT_ROW; // top;
+   vert_scale = (PLOT_HEIGHT / (VERT_MAJOR*2)) * (VERT_MAJOR*2);  // two major divisions per decade
+   vert_ofs = (PLOT_HEIGHT - vert_scale) / 2;
+   if(((PLOT_HEIGHT / (VERT_MAJOR*2)) & 0x01) == 0x00) {  // align adevs to cyan dotted lines
+      vert_ofs += VERT_MAJOR;
+   }
+   adev_top_row = PLOT_ROW + vert_ofs;
+   if(adev_top_row && (adev_top_row > top_row)) top_row = adev_top_row;
+//sprintf(debug_text, "plot:%d  top:%d  hmajor:%d  verts:%d  atr:%d  gam:%g  val:%g", PLOT_ROW, top, HORIZ_MAJOR, PLOT_HEIGHT/VERT_MAJOR, adev_top_row, global_adev_max, val);
+
+   row_step = VERT_MAJOR;
+   if(SCREEN_HEIGHT > SHORT_SCREEN) {
+      row_step *= 2;
+   }
+   else if(zoom_screen == 'P') {  // aaaahhhh
+      row_step *= 2;
+   }
+   adev_decade_height = (double) row_step;
+
+   if(ATYPE == A_MTIE) {  // calculate vertical scale
+      steps = 0.0;
+      for(row=top_row; row<SCREEN_HEIGHT; row+=row_step) {
+         steps += 1.0;
+      }
+      val = global_adev_max * MTIE_SCALE;
+      range = val - (global_adev_min / MTIE_SCALE);
+      if(steps) range /= steps;
+   //sprintf(debug_text, "steps:%g", steps);
+   }
+
+   for(row=top_row; row<SCREEN_HEIGHT; row+=row_step) {
+      if(ATYPE == A_MTIE) {
+         sprintf(out, "%.3g", val);   // aaahhh %le
+         val -= range;
+      }
+      else {
+         sprintf(out, "%g", val);   // aaahhh %le
+         val /= 10.0;
+      }
+
+      i = (strlen(out)+1) * TEXT_WIDTH;
+      if((row == top_row) && (PLOT_ROW == adev_top_row)) {
+         vidstr(row+2, PLOT_COL+PLOT_WIDTH-i, ADEV_LABEL_COLOR, out);
+      }
+      else {
+         vidstr(row-TEXT_HEIGHT/2, PLOT_COL+PLOT_WIDTH-i, ADEV_LABEL_COLOR, out);
+      }
+   }
+
+   bottom_adev_decade = (float) val;
+   graphics_coords = 0;
 }
 
 
@@ -12339,123 +22337,484 @@ void adev_mouse()
 {
 u08 old_disable_kbd;
 
+// return;    // this routine breaks "keep_adevs_fresh"  unless timer_serve is set when calling get_mouse_info()
+
    // keep mouse lively during long periods of thinking
-   if((++adev_mouse_time & 0x3FFF) != 0x0000) return;
+   if((++adev_mouse_time & 0xFFFF) != 0x0000) return;
+
    update_pwm();
    if(mouse_shown == 0) return;
 
    old_disable_kbd = disable_kbd;
    if(kbd_flag) disable_kbd = 2; // (so that do_kbd() won't do anything when it's called by WM_CHAR during get_pending_gps())
 
+   ++timer_serve;
    get_mouse_info();
+   --timer_serve;
 
    disable_kbd = old_disable_kbd;
 }
 
-void do_incr_adevs()
+
+void do_incr_pps_adevs()
 {
-   // update each of the adev bins with the latest queue data
+   // update each of the PPS adev bins with the latest queue data
    incr_adev(PPS_ADEV, &pps_adev_bins[0]);
-   incr_adev(OSC_ADEV, &osc_adev_bins[0]);
-
    incr_hdev(PPS_HDEV, &pps_hdev_bins[0]);
-   incr_hdev(OSC_HDEV, &osc_hdev_bins[0]);
-
    incr_mdev(PPS_MDEV, &pps_mdev_bins[0]);
-   incr_mdev(OSC_MDEV, &osc_mdev_bins[0]);
+   incr_tdev(PPS_TDEV, &pps_tdev_bins[0]);
 }
 
-void reload_adev_info()
+void do_incr_osc_adevs()
 {
-   // recalculate all the adevs from scratch
-   reset_adev_bins();  // reset the bins
-   do_incr_adevs();    // recalculate all the adevs from the queued data
+   // update each of the OSC adev bins with the latest queue data
+   incr_adev(OSC_ADEV, &osc_adev_bins[0]);
+   incr_hdev(OSC_HDEV, &osc_hdev_bins[0]);
+   incr_mdev(OSC_MDEV, &osc_mdev_bins[0]);
+   incr_tdev(OSC_TDEV, &osc_tdev_bins[0]);
 }
 
-void incr_overflow()
+void do_incr_chc_adevs()
+{
+   // update each of the CHC adev bins with the latest queue data
+   incr_adev(CHC_ADEV, &chc_adev_bins[0]);
+   incr_hdev(CHC_HDEV, &chc_hdev_bins[0]);
+   incr_mdev(CHC_MDEV, &chc_mdev_bins[0]);
+   incr_tdev(CHC_TDEV, &chc_tdev_bins[0]);
+}
+
+void do_incr_chd_adevs()
+{
+   // update each of the CHD adev bins with the latest queue data
+   incr_adev(CHD_ADEV, &chd_adev_bins[0]);
+   incr_hdev(CHD_HDEV, &chd_hdev_bins[0]);
+   incr_mdev(CHD_MDEV, &chd_mdev_bins[0]);
+   incr_tdev(CHD_TDEV, &chd_tdev_bins[0]);
+}
+
+void recalc_adev_info()
+{
+double msec, msec2;
+msec = GetMsecs();
+   // recalculate all the adevs from scratch
+   reset_adev_bins();    // reset the bins
+
+   extend_com_timeout(ADEV_TIMEOUT); // aaaahhhh
+   do_incr_pps_adevs();  // recalculate all the adevs from the queued data
+   do_incr_osc_adevs();
+   do_incr_chc_adevs();
+   do_incr_chd_adevs();
+msec2 = GetMsecs();        // aaaahhhh
+//sprintf(debug_text2, "recalc adev msecs:%f %f %f", msec,msec2,msec2-msec);
+}
+
+void incr_pps_overflow()
 {
 int b;
 
-   // tweek bin data counts when the adev queue is full
-   adev_q_overflow += 1.0;
+   // tweek bin data counts when the PPS/chA adev queue is full
+   pps_adev_q_overflow += 1.0;
 
    for(b=0; b<n_bins; b++) {  
-      pps_adev_bins[b].n--;
+      pps_adev_bins[b].n--; 
       pps_adev_bins[b].j--;
-      osc_adev_bins[b].n--;
-      osc_adev_bins[b].j--;
-
       pps_hdev_bins[b].n--;
       pps_hdev_bins[b].j--;
-      osc_hdev_bins[b].n--;
-      osc_hdev_bins[b].j--;
-
       pps_mdev_bins[b].n--;
       pps_mdev_bins[b].j--;
-      osc_mdev_bins[b].n--;
-      osc_mdev_bins[b].j--;
+      pps_tdev_bins[b].n--;
+      pps_tdev_bins[b].j--;
    }
 }
 
-void add_adev_point(double osc_offset, double pps_offset)
+void incr_osc_overflow()
 {
-struct ADEV_Q q;
+int b;
 
-   if((subtract_base_value == 1) && (adev_q_count == 0)) {
-      pps_base_value = pps_offset;
-      osc_base_value = osc_offset;
+   // tweek bin data counts when the OSC/chB adev queue is full
+   osc_adev_q_overflow += 1.0;
+
+   for(b=0; b<n_bins; b++) {  
+      osc_adev_bins[b].n--;
+      osc_adev_bins[b].j--;
+      osc_hdev_bins[b].n--;
+      osc_hdev_bins[b].j--;
+      osc_mdev_bins[b].n--;
+      osc_mdev_bins[b].j--;
+      osc_tdev_bins[b].n--;
+      osc_tdev_bins[b].j--;
+   }
+}
+
+void incr_chc_overflow()
+{
+int b;
+
+   // tweek bin data counts when the chC adev queue is full
+   chc_adev_q_overflow += 1.0;
+
+   for(b=0; b<n_bins; b++) {  
+      chc_adev_bins[b].n--;
+      chc_adev_bins[b].j--;
+      chc_hdev_bins[b].n--;
+      chc_hdev_bins[b].j--;
+      chc_mdev_bins[b].n--;
+      chc_mdev_bins[b].j--;
+      chc_tdev_bins[b].n--;
+      chc_tdev_bins[b].j--;
+   }
+}
+
+void incr_chd_overflow()
+{
+int b;
+
+   // tweek bin data counts when the chD adev queue is full
+   chd_adev_q_overflow += 1.0;
+
+   for(b=0; b<n_bins; b++) {  
+      chd_adev_bins[b].n--;
+      chd_adev_bins[b].j--;
+      chd_hdev_bins[b].n--;
+      chd_hdev_bins[b].j--;
+      chd_mdev_bins[b].n--;
+      chd_mdev_bins[b].j--;
+      chd_tdev_bins[b].n--;
+      chd_tdev_bins[b].j--;
+   }
+}
+
+void calc_resids(int plot, double resid_val, double period)
+{
+double x,y;
+
+   if(plot < 0) return;
+   if(plot >= (NUM_PLOTS+DERIVED_PLOTS)) return;
+
+   resid[plot].resid_count += 1.0;
+   y = resid_val;
+   x = resid[plot].resid_count * period;
+
+   resid[plot].sum_x  += x;
+   resid[plot].sum_y  += y;
+   resid[plot].sum_xx += (x*x);
+   resid[plot].sum_yy += (y*y);
+   resid[plot].sum_xy += (x*y);
+//   resid[plot].a0 = 
+}
+
+
+void add_pps_adev_point(double val, int phase)
+{
+   if(pps_adev_period <= 0.0) return;
+   if(adev_q_allocated == 0) {
+      alloc_adev();
    }
 
-   q.pps = (OFS_SIZE) (pps_offset - pps_base_value);   // place data into adev queue
-   q.osc = (OFS_SIZE) (osc_offset - osc_base_value);
-   if(adev_q) put_adev_q(adev_q_in, q);
+if(rcvr_type == BRANDY_RCVR) phase = 1;  // receiver outputs phase instead of time for the pps_offset
+if(rcvr_type == RFTG_RCVR) phase = 1;
+   if(phase) pps_phase = val;
+   else      pps_phase += val;  // convert time interval to phase
 
-   if(++adev_q_in >= adev_q_size) {  // queue has wrapped
-      adev_q_in = 0;
+   if(pps_adev_q_count == 0) {
+      pps_resid = 0.0;
+      pps_adev_jd0 = jd_utc;
+   }
+   else pps_resid = (pps_phase - last_pps_resid);
+   last_pps_resid = pps_phase;
+
+   calc_resids(PPS, pps_phase, pps_adev_period);
+
+//sprintf(debug_text, "phase:%.12f  last:%.12f  diff:%.12f %.12f", pps_phase,last_pps_phase, (pps_phase-last_pps_phase), (pps_phase-last_pps_phase)/1.0E9);
+
+   if((have_pps_base == 0) && (subtract_base_value == 1) && (pps_adev_q_count <= 1)) {  // aaaaa
+      pps_base_value = pps_phase;
+      have_pps_base = 1;
    }
 
-   if(adev_q_in == adev_q_out) {  // queue is full
-      ++adev_q_out;               // drop oldest entry from the queue
-      incr_overflow();            // tweek counts in the adev bins
+   if(pps_adev_q) {
+      pps_adev_q[pps_adev_q_in] = (OFS_SIZE) (pps_phase - pps_base_value);
+   }
+
+   if(++pps_adev_q_in >= adev_q_size) {  // queue has wrapped
+      pps_adev_q_in = 0;
+   }
+
+   if(pps_adev_q_in == pps_adev_q_out) {  // queue is full
+      ++pps_adev_q_out;           // drop oldest entry from the queue
+      pps_adev_q_overflow += 1.0;
+      incr_pps_overflow();        // tweek counts in the adev bins
 
       // Once the adev queue fills up,  the adev results begin to get stale
       // because the incremental adevs are based upon all the points seen in
       // the past.  To keep the adev numbers fresh, we preiodically reset
       // the incremental adev bins.  This causes the adevs to be
       // recalculated from just the values stored in the queue.
-      if(keep_adevs_fresh && (adev_q_overflow > adev_q_size)) {
-         reset_adev_bins();              
+      if(pps_adev_q_overflow >= adev_q_size) {  // !!!! wrap >= was >0
+         if(keep_adevs_fresh) {
+            reset_pps_bins();              
+            adev_freshened = 1;
+         }
       }
    }
-   else ++adev_q_count;   // keep count of number of entries in the adev queue
-   if(adev_q_out >= adev_q_size) adev_q_out = 0;
+   else ++pps_adev_q_count;   // keep count of number of entries in the adev queue
+   if(pps_adev_q_out >= adev_q_size) pps_adev_q_out = 0;
 
    // incrementally update the adev bin values with the new data point
-   do_incr_adevs();
+   do_incr_pps_adevs();    // recalculate all the adevs from the queued data
+
+   if(adev_freshened) {
+      show_adev_info(1);
+      adev_freshened = 0;
+   }
+}
+
+void add_osc_adev_point(double val, int phase)
+{
+   if(osc_adev_period <= 0.0) return;
+   if(adev_q_allocated == 0) {
+      alloc_adev();
+   }
+
+   if(phase) osc_phase = val;
+   else      osc_phase += val;  // convert time interval to phase
+
+   if(osc_adev_q_count == 0) {
+      osc_resid = 0.0;
+      osc_adev_jd0 = jd_utc;
+   }
+   else osc_resid = ((val) - last_osc_resid);
+   last_osc_resid = val;
+
+   calc_resids(OSC, osc_phase, osc_adev_period);
+
+   if((have_osc_base == 0) && (subtract_base_value == 1) && (osc_adev_q_count <= 1)) {  // aaaaa
+      osc_base_value = osc_phase;
+      have_osc_base = 1;
+   }
+
+   if(osc_adev_q) osc_adev_q[osc_adev_q_in] = (OFS_SIZE) (osc_phase - osc_base_value);
+
+   if(++osc_adev_q_in >= adev_q_size) {  // queue has wrapped
+      osc_adev_q_in = 0;
+   }
+
+   if(osc_adev_q_in == osc_adev_q_out) {  // queue is full
+      ++osc_adev_q_out;               // drop oldest entry from the queue
+      osc_adev_q_overflow += 1.0;
+      incr_osc_overflow();        // tweek counts in the adev bins
+
+      // Once the adev queue fills up,  the adev results begin to get stale
+      // because the incremental adevs are based upon all the points seen in
+      // the past.  To keep the adev numbers fresh, we preiodically reset
+      // the incremental adev bins.  This causes the adevs to be
+      // recalculated from just the values stored in the queue.
+      if(osc_adev_q_overflow >= adev_q_size) {  // !!!! wrap >= was >0 
+         if(keep_adevs_fresh) {
+            reset_osc_bins();              
+            adev_freshened = 1;
+         }
+      }
+   }
+   else ++osc_adev_q_count;   // keep count of number of entries in the adev queue
+   if(osc_adev_q_out >= adev_q_size) osc_adev_q_out = 0;
+
+   // incrementally update the adev bin values with the new data point
+   do_incr_osc_adevs();    // recalculate all the adevs from the queued data
+
+   if(adev_freshened) {
+      show_adev_info(2);
+      adev_freshened = 0;
+   }
+}
+
+void add_chc_adev_point(double val, int phase)
+{
+   if(chc_adev_period <= 0.0) return;
+   if(adev_q_allocated == 0) {
+      alloc_adev();
+   }
+
+   if(phase) chc_phase = val;
+   else      chc_phase += val;  // convert time interval to phase
+
+   if(chc_adev_q_count == 0) {
+      chc_resid = 0.0;
+      chc_adev_jd0 = jd_utc;
+   }
+   else chc_resid = (float) ((val-last_chc_resid));
+   last_chc_resid = val;
+
+   calc_resids(CHC, chc_phase, chc_adev_period);
+
+   if((have_chc_base == 0) && (subtract_base_value == 1) && (chc_adev_q_count <= 1)) {  // aaaaa
+      chc_base_value = chc_phase;
+      have_chc_base = 1;
+   }
+
+   if(chc_adev_q) chc_adev_q[chc_adev_q_in] = (OFS_SIZE) (chc_phase - chc_base_value);
+
+   if(++chc_adev_q_in >= adev_q_size) {  // queue has wrapped
+      chc_adev_q_in = 0;
+   }
+
+   if(chc_adev_q_in == chc_adev_q_out) {  // queue is full
+      ++chc_adev_q_out;               // drop oldest entry from the queue
+      chc_adev_q_overflow += 1.0;
+      incr_chc_overflow();        // tweek counts in the adev bins
+
+      // Once the adev queue fills up,  the adev results begin to get stale
+      // because the incremental adevs are based upon all the points seen in
+      // the past.  To keep the adev numbers fresh, we preiodically reset
+      // the incremental adev bins.  This causes the adevs to be
+      // recalculated from just the values stored in the queue.
+      if(chc_adev_q_overflow >= adev_q_size) {  // !!!! wrap >= was >0 
+         if(keep_adevs_fresh) {
+            reset_chc_bins();              
+            adev_freshened = 1;
+         }
+      }
+   }
+   else ++chc_adev_q_count;   // keep count of number of entries in the adev queue
+   if(chc_adev_q_out >= adev_q_size) chc_adev_q_out = 0;
+
+   // incrementally update the adev bin values with the new data point
+   do_incr_chc_adevs();    // recalculate all the adevs from the queued data
+
+   if(adev_freshened) {
+      show_adev_info(3);
+      adev_freshened = 0;
+   }
+}
+
+void add_chd_adev_point(double val, int phase)
+{
+   if(chd_adev_period <= 0.0) return;
+   if(adev_q_allocated == 0) {
+      alloc_adev();
+   }
+
+   if(phase) chd_phase = val;
+   else      chd_phase += val;  // convert time interval to phase
+
+   if(chd_adev_q_count == 0) {
+      chd_resid = 0.0;
+      chd_adev_jd0 = jd_utc;
+   }
+   else chd_resid = (float) ((val-last_chd_resid));
+   last_chd_resid = val;
+
+   calc_resids(CHD, chd_phase, chd_adev_period);
+
+   if((have_chd_base == 0) && (subtract_base_value == 1) && (chd_adev_q_count <= 1)) {  // aaaaa
+      chd_base_value = chd_phase;
+      have_chd_base = 1;
+   }
+
+   if(chd_adev_q) chd_adev_q[chd_adev_q_in] = (OFS_SIZE) (chd_phase - chd_base_value);
+
+   if(++chd_adev_q_in >= adev_q_size) {  // queue has wrapped
+      chd_adev_q_in = 0;
+   }
+
+   if(chd_adev_q_in == chd_adev_q_out) {  // queue is full
+      ++chd_adev_q_out;               // drop oldest entry from the queue
+      chd_adev_q_overflow += 1.0;
+      incr_chd_overflow();        // tweek counts in the adev bins
+
+      // Once the adev queue fills up,  the adev results begin to get stale
+      // because the incremental adevs are based upon all the points seen in
+      // the past.  To keep the adev numbers fresh, we preiodically reset
+      // the incremental adev bins.  This causes the adevs to be
+      // recalculated from just the values stored in the queue.
+      if(chd_adev_q_overflow >= adev_q_size) {  // !!!! wrap >= was >0 
+         if(keep_adevs_fresh) {
+            reset_chd_bins();              
+            adev_freshened = 1;
+         }
+      }
+   }
+   else ++chd_adev_q_count;   // keep count of number of entries in the adev queue
+   if(chd_adev_q_out >= adev_q_size) chd_adev_q_out = 0;
+
+   // incrementally update the adev bin values with the new data point
+   do_incr_chd_adevs();    // recalculate all the adevs from the queued data
+
+   if(adev_freshened) {
+      show_adev_info(4);
+      adev_freshened = 0;
+   }
+}
+
+
+void add_adev_point(double osc_phase, double pps_phase, double chc_phase, double chd_phase)
+{
+   if(adev_period <= 0) return;
+   if(adev_q_allocated == 0) {
+      alloc_adev();
+   }
+
+   add_pps_adev_point(pps_phase, 0);
+   add_osc_adev_point(osc_phase, 0);
+   add_chc_adev_point(chc_phase, 0);
+   add_chd_adev_point(chd_phase, 0);
+   return;
 }
 
 
 double get_adev_point(u08 id, long i)
 {
-struct ADEV_Q q;
 double val;
 #define INTERVAL ((OFS_SIZE) 0.0)  //1.0
 
-   if(adev_q == 0) return 0.0;
+   if(adev_q_allocated == 0) return 0.0;
 
-   i = adev_q_out + i;
-   if(i >= adev_q_size) i -= adev_q_size;
+   id /= NUM_ADEV_TYPES;
 
-   q = get_adev_q(i);
-
-   if(id & 0x01) {   // return PPS value
-      if(luxor) val = INTERVAL + (((double)q.pps+pps_base_value));
-      else      val = INTERVAL + (1.0e-9 * ((double)q.pps+pps_base_value));
+   val = 0;
+   if(id == PPS_ID) {   // return PPS value
+      i = pps_adev_q_out + i;
+//      if(i >= adev_q_size) i -= adev_q_size;
+      while(i >= adev_q_size) i -= adev_q_size;
+      if(i < 0) return 0.0;
+      if(pps_adev_q == 0) return 0.0;
+      val = pps_adev_q[i];
+      if(luxor) val = INTERVAL + (val+pps_base_value);
+      else      val = INTERVAL + (1.0e-9 * (val+pps_base_value));
    }
-   else {            // return OSC value
-      if(luxor) val = INTERVAL + (((double)q.osc+osc_base_value));
-      else      val = INTERVAL + ((100.0 * 1.0e-9) * ((double)q.osc+osc_base_value));
+   else if(id == CHC_ID) {   // return CHC value
+      i = chc_adev_q_out + i;
+//      if(i >= adev_q_size) i -= adev_q_size;
+      while(i >= adev_q_size) i -= adev_q_size;
+      if(i < 0) return 0.0;
+      if(chc_adev_q == 0) return 0.0;
+      val = chc_adev_q[i];
+      if(luxor) val = INTERVAL + (val+chc_base_value);
+      else      val = INTERVAL + (1.0e-9 * (val+chc_base_value));
    }
+   else if(id == CHD_ID) {   // return CHD value
+      i = chd_adev_q_out + i;
+//      if(i >= adev_q_size) i -= adev_q_size;
+      while(i >= adev_q_size) i -= adev_q_size;
+      if(i < 0) return 0.0;
+      if(chd_adev_q == 0) return 0.0;
+      val = chd_adev_q[i];
+      if(luxor) val = INTERVAL + (val+chd_base_value);
+      else      val = INTERVAL + (1.0e-9 * (val+chd_base_value));
+   }
+   else {      // return OSC value
+      i = osc_adev_q_out + i;
+//      if(i >= adev_q_size) i -= adev_q_size;
+      while(i >= adev_q_size) i -= adev_q_size;
+      if(i < 0) return 0.0;
+      if(osc_adev_q == 0) return 0.0;
+      val = osc_adev_q[i];
+      if(luxor) val = INTERVAL + (val+osc_base_value);
+      else if(TICC_USED) val = INTERVAL + (1.0e-9 * (val+osc_base_value));
+      else if(0) val = INTERVAL + (1.0e-9 * (val+osc_base_value));  // aaattttt
+      else val = INTERVAL + ((100.0 * 1.0e-9) * (val+osc_base_value));
+   }
+
    return val;
 }
 
@@ -12471,6 +22830,14 @@ S32 t1,t2;
 struct BIN *B;
 double v;
 int vis_bins;
+long adev_q_count;
+double adev_q_overflow;
+
+   if     (id == PPS_ADEV) { adev_q_count = pps_adev_q_count; adev_q_overflow = pps_adev_q_overflow; }
+   else if(id == OSC_ADEV) { adev_q_count = osc_adev_q_count; adev_q_overflow = osc_adev_q_overflow; } 
+   else if(id == CHC_ADEV) { adev_q_count = chc_adev_q_count; adev_q_overflow = chc_adev_q_overflow; } 
+   else if(id == CHD_ADEV) { adev_q_count = chd_adev_q_count; adev_q_overflow = chd_adev_q_overflow; } 
+   else return;
 
    vis_bins = 0;
 
@@ -12481,8 +22848,8 @@ int vis_bins;
       t1 = B->m;
       t2 = t1 + t1;
 
-//    if((B->n+t2) >= adev_q_count) break;
-      if((B->n+t2) > adev_q_count) break;
+      if((B->n+t2) >= adev_q_count) break;
+//tvb if((B->n+t2) > adev_q_count) break;
 
       while((B->n+t2) < adev_q_count) {
          v =  get_adev_point(id, B->n+t2);
@@ -12495,8 +22862,10 @@ int vis_bins;
       }
 
       if(B->n >= min_points_per_bin) {
-         B->value = sqrt(B->sum / (2.0 * ((double) B->n + adev_q_overflow))) / B->tau;
-         ++vis_bins;
+         if(B->n && B->tau) {
+            B->value = sqrt(B->sum / (2.0 * ((double) B->n + adev_q_overflow))) / B->tau;
+            ++vis_bins;
+         }
       }
    }
 
@@ -12510,6 +22879,14 @@ S32 t1,t2,t3;
 struct BIN *B;
 double v;
 int vis_bins;
+long adev_q_count;
+double adev_q_overflow;
+
+   if     (id == PPS_HDEV) { adev_q_count = pps_adev_q_count; adev_q_overflow = pps_adev_q_overflow; }
+   else if(id == OSC_HDEV) { adev_q_count = osc_adev_q_count; adev_q_overflow = osc_adev_q_overflow; }
+   else if(id == CHC_HDEV) { adev_q_count = chc_adev_q_count; adev_q_overflow = chc_adev_q_overflow; }
+   else if(id == CHD_HDEV) { adev_q_count = chd_adev_q_count; adev_q_overflow = chd_adev_q_overflow; }
+   else return;
 
    vis_bins = 0;
 
@@ -12521,8 +22898,7 @@ int vis_bins;
       t2 = t1 + t1;
       t3 = t1 + t1 + t1;
 
-//    if((B->n+t3) >= adev_q_count) break;
-      if((B->n+t3) > adev_q_count) break;
+      if((B->n+t3) >= adev_q_count) break;
 
       while((B->n+t3) < adev_q_count) {
          v =  get_adev_point(id, B->n+t3);
@@ -12536,8 +22912,10 @@ int vis_bins;
       }
 
       if(B->n >= min_points_per_bin) {
-         B->value = sqrt(B->sum / (6.0 * ((double) B->n + adev_q_overflow))) / B->tau;
-         ++vis_bins;
+         if(B->n && B->tau) {
+            B->value = sqrt(B->sum / (6.0 * ((double) B->n + adev_q_overflow))) / B->tau;
+            ++vis_bins;
+         }
       }
    }
 
@@ -12551,6 +22929,14 @@ S32 t1,t2,t3;
 struct BIN *B;
 double divisor;
 int vis_bins;
+long adev_q_count;
+double adev_q_overflow;
+
+   if     (id == PPS_MDEV) { adev_q_count = pps_adev_q_count; adev_q_overflow = pps_adev_q_overflow; }
+   else if(id == OSC_MDEV) { adev_q_count = osc_adev_q_count; adev_q_overflow = osc_adev_q_overflow; }
+   else if(id == CHC_MDEV) { adev_q_count = chc_adev_q_count; adev_q_overflow = chc_adev_q_overflow; }
+   else if(id == CHD_MDEV) { adev_q_count = chd_adev_q_count; adev_q_overflow = chd_adev_q_overflow; }
+   else return;
 
    vis_bins = 0;
 
@@ -12605,6 +22991,76 @@ int vis_bins;
    if(vis_bins > max_adev_rows) max_adev_rows = vis_bins;
 }
 
+void incr_tdev(u08 id, struct BIN *bins)
+{
+S32 b;
+S32 t1,t2,t3;
+struct BIN *B;
+double divisor;
+int vis_bins;
+long adev_q_count;
+double adev_q_overflow;
+
+   if     (id == PPS_TDEV) { adev_q_count = pps_adev_q_count; adev_q_overflow = pps_adev_q_overflow; }
+   else if(id == OSC_TDEV) { adev_q_count = osc_adev_q_count; adev_q_overflow = osc_adev_q_overflow; }
+   else if(id == CHC_TDEV) { adev_q_count = chc_adev_q_count; adev_q_overflow = chc_adev_q_overflow; }
+   else if(id == CHD_TDEV) { adev_q_count = chd_adev_q_count; adev_q_overflow = chd_adev_q_overflow; }
+   else return;
+
+   vis_bins = 0;
+
+   for(b=0; b<n_bins; b++) {
+      B = &bins[b];
+      if(B->n < 0) break;
+      if(B->j < 0) break;
+      if(B->i < 0) break;
+
+      t1 = B->m;
+      t2 = t1 + t1;
+      t3 = t1 + t1 + t1;
+
+//    if((B->j+t3) >= adev_q_count) break;
+      if((B->j+t3) > adev_q_count) break;
+
+      while(((B->i+t2) < adev_q_count) && (B->i < t1)) {
+         B->accum += get_adev_point(id, B->i+t2);
+         B->accum -= get_adev_point(id, B->i+t1) * 2.0;
+         B->accum += get_adev_point(id, B->i);
+         B->i++;
+         adev_mouse();
+      }
+
+      if(B->init == 0) {
+         B->sum += (B->accum * B->accum);
+         B->n++;
+         B->init = 1;
+      }
+
+      while((B->j+t3) < adev_q_count) {
+         B->accum += get_adev_point(id, B->j+t3);
+         B->accum -= get_adev_point(id, B->j+t2) * 3.0;
+         B->accum += get_adev_point(id, B->j+t1) * 3.0;
+         B->accum -= get_adev_point(id, B->j);
+
+         B->sum += (B->accum * B->accum);
+         B->j++;
+         B->n++;
+         adev_mouse();
+      }
+
+      if(B->n >= min_points_per_bin) {
+         divisor = (double) B->m * B->tau;
+         if(divisor != 0.0) {
+            B->value = sqrt(B->sum / (2.0 * ((double) B->n + adev_q_overflow))) / divisor;
+            B->value = B->value * B->tau / SQRT3;
+         }
+         ++vis_bins;
+      }
+   }
+
+   if(vis_bins > max_adev_rows) max_adev_rows = vis_bins;
+}
+
 int fetch_adev_info(u08 dev_id, struct ADEV_INFO *bins)
 {
 double adev;
@@ -12614,15 +23070,31 @@ struct BIN *table;
 
     if     (dev_id == PPS_ADEV) table = &pps_adev_bins[0];
     else if(dev_id == OSC_ADEV) table = &osc_adev_bins[0];
+    else if(dev_id == CHC_ADEV) table = &chc_adev_bins[0];
+    else if(dev_id == CHD_ADEV) table = &chd_adev_bins[0];
+
     else if(dev_id == PPS_HDEV) table = &pps_hdev_bins[0];
     else if(dev_id == OSC_HDEV) table = &osc_hdev_bins[0];
+    else if(dev_id == CHC_HDEV) table = &chc_hdev_bins[0];
+    else if(dev_id == CHD_HDEV) table = &chd_hdev_bins[0];
+
     else if(dev_id == PPS_MDEV) table = &pps_mdev_bins[0];
     else if(dev_id == OSC_MDEV) table = &osc_mdev_bins[0];
-    else if(dev_id == PPS_TDEV) table = &pps_mdev_bins[0];
-    else if(dev_id == OSC_TDEV) table = &osc_mdev_bins[0];
+    else if(dev_id == CHC_MDEV) table = &chc_mdev_bins[0];
+    else if(dev_id == CHD_MDEV) table = &chd_mdev_bins[0];
+
+    else if(dev_id == PPS_TDEV) table = &pps_tdev_bins[0];
+    else if(dev_id == OSC_TDEV) table = &osc_tdev_bins[0];
+    else if(dev_id == CHC_TDEV) table = &chc_tdev_bins[0];
+    else if(dev_id == CHD_TDEV) table = &chd_tdev_bins[0];
+
+    else if(dev_id == A_MTIE) return fetch_mtie_info(CHA_MTIE, bins);
+    else if(dev_id == B_MTIE) return fetch_mtie_info(CHB_MTIE, bins);
+    else if(dev_id == C_MTIE) return fetch_mtie_info(CHC_MTIE, bins);
+    else if(dev_id == D_MTIE) return fetch_mtie_info(CHD_MTIE, bins);
     else {
-        sprintf(out, "Bad dev_id in calc_adevs: %d\n", dev_id);
-        error_exit(92, out);
+       sprintf(out, "Bad dev_id in calc_adevs: %d\n", dev_id);
+       error_exit(92, out);
     }
 
     bins->adev_min = 1.0e29F;
@@ -12633,16 +23105,22 @@ struct BIN *table;
     // convert data from the incremental adev bins into the
     // old style adev tables (so we don't have to mess with changing
     // all that old well-debugged display code).
-    while(bins->bin_count < ADEVS) {
+    while(bins->bin_count < MAX_ADEV_BINS) {
         on = table[bins->bin_count].n;
-        if(on < min_points_per_bin) break;
+        if(on < min_points_per_bin) {
+           if(1) {  // zap unused entries   // aaaahhhh
+              bins->adev_on[bins->bin_count] = 0;
+              bins->adev_taus[bins->bin_count] = (float) 0.0;
+              bins->adev_bins[bins->bin_count] = (float) 0.0;
+           }
+////bins->bin_count += 1;
+////continue;
+           break;
+        }
 
         tau = (double) table[bins->bin_count].tau;
 
         adev = table[bins->bin_count].value;
-        if((dev_id == PPS_TDEV) || (dev_id == OSC_TDEV)) {
-           adev = adev * tau / SQRT3;
-        }
 
         bins->adev_on[bins->bin_count] = on;
         bins->adev_taus[bins->bin_count] = (float) tau;
@@ -12659,7 +23137,8 @@ struct BIN *table;
 
     bins->adev_max = adev_decade(bins->adev_max);
 
-    // !!! force tidy ADEV graph scale factors
+    // !!!!!! force tidy ADEV graph scale factors
+    // aaaahhhh - we need to do this better... what if one VERT_MAJOR per decade
     if((PLOT_HEIGHT/VERT_MAJOR) <= 6) {  // three decades (/VS - makes for a cramped plot) 
        bins->adev_min = bins->adev_max * 1.0e-6F;
     }
@@ -12681,6 +23160,39 @@ struct BIN *table;
     else if((PLOT_HEIGHT/VERT_MAJOR) <= 18) {  // nine decades
        bins->adev_min = bins->adev_max * 1.0e-9F;
     }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 20) {  // ten decades
+       bins->adev_min = bins->adev_max * 1.0e-10F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 22) {  // eleven decades
+       bins->adev_min = bins->adev_max * 1.0e-11F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 24) {  // twelve decades
+       bins->adev_min = bins->adev_max * 1.0e-12F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 26) {  // 13 decades
+       bins->adev_min = bins->adev_max * 1.0e-13F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 28) {  // 14 decades
+       bins->adev_min = bins->adev_max * 1.0e-14F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 30) {  // 15 decades
+       bins->adev_min = bins->adev_max * 1.0e-15F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 32) {  // 16 decades
+       bins->adev_min = bins->adev_max * 1.0e-16F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 34) {  // 17 decades
+       bins->adev_min = bins->adev_max * 1.0e-17F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 36) {  // 18 decades
+       bins->adev_min = bins->adev_max * 1.0e-18F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 38) {  // 19 decades
+       bins->adev_min = bins->adev_max * 1.0e-19F;
+    }
+    else if((PLOT_HEIGHT/VERT_MAJOR) <= 40) {  // 20 decades
+       bins->adev_min = bins->adev_max * 1.0e-20F;
+    }
     else { // ten decades?
        bins->adev_min = bins->adev_max * 1.0e-10F;
     }
@@ -12694,54 +23206,150 @@ struct BIN *table;
 }
 
 
-void reload_adev_queue()
+void reload_adev_queue(int reset_phase)
 {
 long i;
 long counter;
-long val;
+long max_count;
 struct PLOT_Q q;
 int dump_size;
+int have_cha_tie, have_chb_tie, have_chc_tie, have_chd_tie;
+double cha_tie, chb_tie, chc_tie, chd_tie;
+int have_cha_ofs, have_chb_ofs, have_chc_ofs, have_chd_ofs;
+double cha_ofs, chb_ofs, chc_ofs, chd_ofs;
+double old_cha_ofs, old_chb_ofs, old_chc_ofs, old_chd_ofs;
+double cha_tick, chb_tick, chc_tick, chd_tick;
+OFS_SIZE old_pps_offset, old_osc_offset;
+int old_have_pps_offset, old_have_osc_offset;
+long pcount;
 
-   reset_queues(0x01);   // clear the adev queue
+   have_cha_tie = have_chb_tie = have_chc_tie = have_chd_tie = 0;
+   have_cha_ofs = have_chb_ofs = have_chc_ofs = have_chd_ofs = 0;
 
-   pause_data = 1;
+   old_have_pps_offset = have_pps_offset;  // receiver derived adev related values
+   old_have_osc_offset = have_osc_offset;
+
+   if(reset_phase) dont_reset_phase = 0;
+   else            dont_reset_phase = 1;
+   if(rcvr_type == TICC_RCVR) {
+      if(mtie_q_count[CHA_MTIE]) have_cha_tie = 1;
+      if(mtie_q_count[CHB_MTIE]) have_chb_tie = 1;
+      if(mtie_q_count[CHC_MTIE]) have_chc_tie = 1;
+      if(mtie_q_count[CHD_MTIE]) have_chd_tie = 1;
+      reset_queues(RESET_MTIE_Q, 1101);
+   }
+
+   if(pps_adev_q_count) have_cha_ofs = 1;
+   if(osc_adev_q_count) have_chb_ofs = 1;
+   if(chc_adev_q_count) have_chc_ofs = 1;
+   if(chd_adev_q_count) have_chd_ofs = 1;
+
+
+   reset_queues(RESET_ADEV_Q, 1102);   // clear the adev queue
+   dont_reset_phase = 0;
+////   pause_data = 1;
+
+   max_count = view_interval * (long) PLOT_WIDTH;
+   max_count /= (long) plot_mag;
    counter = 0;
 
    dump_size = 'p';
-   if(dump_size == 'p') i = plot_q_col0;  // dumping the plot area's data
-   else                 i = plot_q_out;   // dumping the full queue
+   if(dump_size == 'p') i = plot_q_col0;  // reloading from the displayed plot area
+   else                 i = plot_q_out;   // reloading from the full queue
 
-   while(i != plot_q_in) {
+   if(queue_interval == 0) return;
+
+   cha_tick = pps_adev_period; //  / (double) queue_interval;
+   chb_tick = osc_adev_period; //  / (double) queue_interval;
+   chc_tick = chc_adev_period; //  / (double) queue_interval;
+   chd_tick = chd_adev_period; //  / (double) queue_interval;
+
+   pcount = plot_q_size;
+   while(pcount) {
+      --pcount;
       q = get_plot_q(i);
 
-      if(queue_interval) {
-         pps_offset = q.data[PPS] / (OFS_SIZE) queue_interval;
-         osc_offset = q.data[OSC] / (OFS_SIZE) queue_interval;
-      }
-      else {
-         pps_offset = 0.0;
-         osc_offset = 0.0;
-      }
-      add_adev_point(osc_offset, pps_offset);
+      old_cha_ofs = pps_phase;
+      old_chb_ofs = osc_phase;
+      old_chc_ofs = chc_phase;
+      old_chd_ofs = chd_phase;
+      old_osc_offset = osc_offset;
+      old_pps_offset = pps_offset;
 
-      if((++counter & 0xFFF) == 0x0000) {   // keep serial data from overruning
-         get_pending_gps();  //!!!! possible recursion
+      cha_ofs = cha_tie = 0.0;
+      chb_ofs = chb_tie = 0.0;
+      chc_ofs = chc_tie = 0.0;
+      chd_ofs = chd_tie = 0.0;
+
+      if(queue_interval) {
+         cha_ofs = cha_tie = (OFS_SIZE) q.data[PPS] / (OFS_SIZE) queue_interval;
+         chb_ofs = chb_tie = (OFS_SIZE) q.data[OSC] / (OFS_SIZE) queue_interval;
+         chc_ofs = chc_tie = (OFS_SIZE) q.data[CHC] / (OFS_SIZE) queue_interval;
+         chd_ofs = chd_tie = (OFS_SIZE) q.data[CHD] / (OFS_SIZE) queue_interval;
       }
-      if((counter % 1000L) == 1L) {
+
+      if(rcvr_type == TICC_RCVR) {  // MTIE data
+         --cha_tick;
+         --chb_tick;
+         --chc_tick;
+         --chd_tick;
+
+         if(have_cha_tie && (cha_tick <= 0.0)) add_mtie_point(CHA_MTIE, cha_tie); 
+         if(have_chb_tie && (chb_tick <= 0.0)) add_mtie_point(CHB_MTIE, chb_tie); 
+         if(have_chc_tie && (chc_tick <= 0.0)) add_mtie_point(CHC_MTIE, chc_tie); 
+         if(have_chd_tie && (chd_tick <= 0.0)) add_mtie_point(CHD_MTIE, chd_tie);
+
+         cha_ofs = (OFS_SIZE) q.data[ONE] / (OFS_SIZE) queue_interval;
+         chb_ofs = (OFS_SIZE) q.data[TWO] / (OFS_SIZE) queue_interval;
+         chc_ofs = (OFS_SIZE) q.data[THREE] / (OFS_SIZE) queue_interval;
+         chd_ofs = (OFS_SIZE) q.data[FOUR] / (OFS_SIZE) queue_interval;
+
+         if(have_cha_ofs && (cha_tick <= 0.0)) add_pps_adev_point(cha_ofs, 1);   // adev values
+         if(have_chb_ofs && (chb_tick <= 0.0)) add_osc_adev_point(chb_ofs, 1); 
+         if(have_chc_ofs && (chc_tick <= 0.0)) add_chc_adev_point(chc_ofs, 1); 
+         if(have_chd_ofs && (chd_tick <= 0.0)) add_chd_adev_point(chd_ofs, 1);  
+
+         if(cha_tick <= 0.0) cha_tick = pps_adev_period; // / (double) queue_interval;
+         if(cha_tick <= 0.0) chb_tick = osc_adev_period; // / (double) queue_interval;
+         if(cha_tick <= 0.0) chc_tick = chc_adev_period; // / (double) queue_interval;
+         if(cha_tick <= 0.0) chd_tick = chd_adev_period; // / (double) queue_interval;
+      }
+      else {  // adevs from receiver data or external TICC
+         pps_offset = cha_ofs;
+         osc_offset = chb_ofs;
+         have_pps_offset = have_cha_ofs;
+         have_osc_offset = have_chb_ofs;
+
+         add_rcvr_adev_point(1);
+
+         pps_offset = old_pps_offset;
+         osc_offset = old_osc_offset;
+         have_pps_offset = old_have_pps_offset;
+         have_osc_offset = old_have_osc_offset;
+      }
+
+      ++counter;
+      if((counter % LOG_GPS_CHECK) == 0) {   // keep serial data from overruning
+         get_pending_gps(30);  //!!!! possible recursion
+      }
+//    if((counter % 1000L) == 1L) {
+      if((counter % LOG_SCREEN_RFSH) == 1L) {
          sprintf(out, "Line %ld", counter-1L);
          vidstr(PLOT_TEXT_ROW+4+2, PLOT_TEXT_COL, PROMPT_COLOR, out);
          refresh_page();
       }
 
-      if(dump_size == 'p') {
-         val = view_interval * (long) PLOT_WIDTH;
-         val /= (long) plot_mag;
-         if(counter >= val) break;
+      if(dump_size == 'p') {  // reloading from the displayed plot area
+         if(counter >= max_count) break;
       }
-      if(++i >= plot_q_size) i = 0;
+      if(++i >= plot_q_size) i = 0;  // queue pointer wrapped
    }
 
-   force_adev_redraw();
+   if(rcvr_type == TICC_RCVR) {
+      find_global_max();
+   }
+
+   force_adev_redraw(11);
    redraw_screen();
 }
 
@@ -12749,149 +23357,287 @@ int dump_size;
 //   Allan deviation table output and plotting stuff
 //
 
-void show_adev_table(struct ADEV_INFO *bins, int adev_row, int adev_col, u08 color)
+int fperiod(double period)
+{
+   // returns true if period is not an integer
+   if(((double) (int) period) != period) return 1;
+   return 0;
+}
+
+int show_adev_table(struct ADEV_INFO *bins, int adev_row, int adev_col, u08 color, int why)
 {
 int i;
+int id;
 char *d;
 char *t;
-int adev_bottom_row;
+long adev_q_count;
+char c;
+int count;
+char adev_id[32];
+int mask;
+double tau;
+double period;
+char pstring[128];
+
+   left_adev_col = adev_col;
 
    if(text_mode) {
-      if(first_key) return;
-      if(all_adevs == 0) return;     // no room on screen to do this
+      if(first_key) return 0;
+      if(all_adevs == SINGLE_ADEVS) return 0;     // no room on screen to do this
    }
-   if(zoom_screen) return;
-   if(bins->bin_count <= 0) return;              // nothing to show
-   if(adev_row >= ((PLOT_TEXT_ROW) - 1)) return; // table starts in plot area
-   if(adev_period <= 0.0F) return;
-   if(adevs_active(1) == 0) return;
+   if(zoom_screen) return 0;
+   if(bins->bin_count <= 0) return 0;              // nothing to show
+   if(adevs_active(1) == 0) return 0;
+   if((SCREEN_WIDTH < NARROW_SCREEN) && (all_adevs == SINGLE_ADEVS)) {  // no room for ADEV tables
+      return 0;
+   }
+   if(osc_params && (rcvr_type == TICC_RCVR)) return 0;
+
+   mask = 0xFFFF;
+   period = adev_period;
+   if     (bins->adev_type == PPS_ADEV) { t = "ADEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; mask = DISPLAY_ADEV; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_ADEV) { t = "ADEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; mask = DISPLAY_ADEV; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_ADEV) { t = "ADEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; mask = DISPLAY_ADEV; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_ADEV) { t = "ADEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; mask = DISPLAY_ADEV; period = chd_adev_period; } 
+
+   else if(bins->adev_type == PPS_HDEV) { t = "HDEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; mask = DISPLAY_HDEV; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_HDEV) { t = "HDEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; mask = DISPLAY_HDEV; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_HDEV) { t = "HDEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; mask = DISPLAY_HDEV; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_HDEV) { t = "HDEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; mask = DISPLAY_HDEV; period = chd_adev_period; } 
+
+   else if(bins->adev_type == PPS_MDEV) { t = "MDEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; mask = DISPLAY_MDEV; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_MDEV) { t = "MDEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; mask = DISPLAY_MDEV; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_MDEV) { t = "MDEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; mask = DISPLAY_MDEV; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_MDEV) { t = "MDEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; mask = DISPLAY_MDEV; period = chd_adev_period; } 
+
+   else if(bins->adev_type == PPS_TDEV) { t = "TDEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; mask = DISPLAY_TDEV; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_TDEV) { t = "TDEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; mask = DISPLAY_TDEV; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_TDEV) { t = "TDEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; mask = DISPLAY_TDEV; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_TDEV) { t = "TDEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; mask = DISPLAY_TDEV; period = chd_adev_period; } 
+
+   else if(bins->adev_type == A_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHA_MTIE][0]; mask = DISPLAY_MTIE; period = pps_adev_period; } 
+   else if(bins->adev_type == B_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHB_MTIE][0]; mask = DISPLAY_MTIE; period = osc_adev_period; } 
+   else if(bins->adev_type == C_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHC_MTIE][0]; mask = DISPLAY_MTIE; period = chc_adev_period; } 
+   else if(bins->adev_type == D_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHD_MTIE][0]; mask = DISPLAY_MTIE; period = chd_adev_period; } 
+   else { t="????"; adev_q_count = 0; }
+   if(period <= 0.0) return 0;      // aaaapppp other periods 
    
    if(SCREEN_WIDTH < ADEV_AZEL_THRESH) {  // no room for both a map and adev tables
-      if(all_adevs == 0) {
-         if(shared_plot) {
-            if(plot_watch && (plot_azel || plot_signals)) return;
-            if(plot_azel && plot_signals) return;
+      if(all_adevs == SINGLE_ADEVS) {
+         if(plot_watch) {
+            if(shared_plot && (shared_item & SHARE_WATCH)) ;
+            else return 0;
          }
-         else {  // adev table area may be in use by something else
-            if(plot_azel)    return;
-            if(plot_signals) return;
-            if(plot_watch)   return;
+         if(plot_azel) {
+            if(shared_plot && (shared_item & SHARE_MAP)) ;
+            else return 0;
          }
-         if(precision_survey) return;
-         if(check_precise_posn) return;
-         if(show_fixes) return;
-         if(survey_done) return;
+         if(plot_signals) {
+            if(shared_plot && (shared_item & SHARE_SIGNALS)) ;
+            else return 0;
+         }
+         if(plot_lla) {
+            if(shared_plot && (shared_item & SHARE_LLA)) ;
+            else return 0;
+         }
+
+         if(precision_survey) return 0;
+         if(check_precise_posn) return 0;
+         if(precise_survey_done) return 0;
+         if(show_fixes) return 0;
       }
    }
 
-   if((bins->adev_bins[0] == 0.0) && (bins->adev_bins[1] == 0.0)) return;
+   if((bins->adev_bins[0] == 0.0) && (bins->adev_bins[1] == 0.0)) return 0;
 
-   adev_bottom_row  = PLOT_TEXT_ROW - 1;
-   adev_bottom_row -= (TEXT_Y_MARGIN+TEXT_HEIGHT-1)/TEXT_HEIGHT;
-   if(extra_plots) adev_bottom_row -= 2;
+   calc_adev_display_size();
+      
+   id = bins->adev_type / NUM_ADEV_TYPES;
 
-   if(bins->adev_type & 0x01) {
-      if(jitter_adev) d = "Msg jit"; //"PPS";
-      else            d = plot[PPS].plot_id; //"PPS";
+   if(id == CHD_ID) {
+      d = "chD";
+   }
+   else if(id == CHC_ID) {
+      d = "chC";
+   }
+   else if(id == PPS_ID) {
+      if(jitter_adev)    d = "Msg jit"; //"PPS";
+      else if(TICC_USED) d = "chA";
+      else               d = plot[PPS].plot_id; //"PPS";
    }
    else {
-      if(jitter_adev) d = "Msg ofs"; //"OSC";
-      else            d = plot[OSC].plot_id; //"OSC";
+      if(jitter_adev)    d = "Msg ofs"; //"OSC";
+      else if(TICC_USED) d = "chB";
+      else               d = plot[OSC].plot_id; //"OSC";
    }
 
-   if     (bins->adev_type == OSC_ADEV) t = "ADEV";
-   else if(bins->adev_type == PPS_ADEV) t = "ADEV";
-   else if(bins->adev_type == OSC_MDEV) t = "MDEV";
-   else if(bins->adev_type == PPS_MDEV) t = "MDEV";
-   else if(bins->adev_type == OSC_HDEV) t = "HDEV";
-   else if(bins->adev_type == PPS_HDEV) t = "HDEV";
-   else if(bins->adev_type == OSC_TDEV) t = "TDEV";
-   else if(bins->adev_type == PPS_TDEV) t = "TDEV";
-   else t="????";
+if(ATYPE == A_MTIE) {
+// if((mask & adev_display_mask) == 0) return 0;
+}
+
+   strcpy(adev_id, t);
+   if(TICC_USED == 0) strlwr(adev_id);  // show bogo-adevs in lower case
+   else if(ticc_type == LARS_TICC) strlwr(adev_id);
 
    blank_underscore = 1; // '_' char is used for formatting columns,  convert to blank
 
-   if((SCREEN_WIDTH < 800) && (all_adevs == 0)) {  // no room for ADEV tables
+   if(all_adevs && (rcvr_type == TICC_RCVR)) {
+      vidstr(adev_row,adev_col, WHITE, "                       ");
    }
-   else if(all_adevs || (SCREEN_WIDTH < MEDIUM_WIDTH)) {  // 800x600 - short version of tables
-      sprintf(out, "%s %s: %lu pts", d, t, adev_q_count+(long) adev_q_overflow);
-      vidstr(adev_row, adev_col, color, out);
-      adevs_shown = strlen(out)+2;
 
-      for(i=0; i<bins->bin_count; i++) {
+   if(last_was_adev) c = UP_DOWN_CHAR;  // show adev scrolling is active
+   else              c = ':';           // show plot scrolling is active
+
+//sprintf(debug_text3, "%s  lwa:%d(%d)  fsb:%d  mbs:%d  atr:%d  aps:%d  abr:%d  aar:%d  bc:%d", 
+//t, last_was_adev,lwa, first_show_bin, max_bins_shown, adev_table_rows, adev_page_size, adev_bottom_row, all_adev_row, bins->bin_count);
+
+if(0) {  // try to fix mystery bug where adev display starts at the wrong bin
+   for(i=0; i<bins->bin_count; i++) {
+      if(bins->adev_taus[i] == 0) {  // we should never see a bin with tau=0
+         first_show_bin = 0;
+         break;
+      }
+   }
+}
+
+   count = 0;
+   if(all_adevs || (SCREEN_WIDTH < MEDIUM_WIDTH)) {  // 800x600 - short version of tables
+      left_adev_col = adev_col;
+       sprintf(out, "%s %s%c %lu pts", d, adev_id,c, adev_q_count);
+///   sprintf(out, "%s %s%c %lu pts bc:%d", d, adev_id,c, adev_q_count,bins->bin_count);
+      vidstr(adev_row, left_adev_col, color, &blanks[TEXT_COLS-max_adev_width]);
+      vidstr(adev_row, left_adev_col, color, out);
+      adevs_shown = strlen(out);
+      if(bins->bin_count > max_bins_shown) max_bins_shown = bins->bin_count;
+
+      for(i=first_show_bin; i<bins->bin_count; i++) {
          ++adev_row;
-         if(adev_row >= adev_bottom_row) {
-            blank_underscore = 0;
-            return;
+         if(all_adevs && (left_adev_col < INFO_COL)) {
+            if(adev_row > (MOUSE_ROW+0)) break;  // mmmmmm
+         }
+         else if(adev_row > (MOUSE_ROW+1)) break;  // mmmmmm
+
+         if(max_adev_width > 5) {  // erase the old data
+//          fill_rectangle (left_adev_col*TEXT_WIDTH+TEXT_X_MARGIN,adev_row*TEXT_HEIGHT+TEXT_Y_MARGIN, (max_adev_width)*TEXT_WIDTH,TEXT_HEIGHT, RED);
+            erase_rectangle(left_adev_col*TEXT_WIDTH+TEXT_X_MARGIN,adev_row*TEXT_HEIGHT+TEXT_Y_MARGIN, (max_adev_width)*TEXT_WIDTH,TEXT_HEIGHT);
+         }
+         if(++count >= adev_table_rows) break;
+         if(ATYPE == A_MTIE) {
+            if(bins->adev_on[i] < 0.0) break;
+         }
+         else if(bins->adev_on[i] <= 0.0) break;
+
+         tau = bins->adev_taus[i];
+         strcpy(pstring, "??????");
+
+         if(fperiod(period)) {  // non-integer period
+            if     (tau < 100.0)    sprintf(pstring, "%6.3f", tau);
+            else if(tau < 1000.0)   sprintf(pstring, "%6.2f", tau);
+            else if(tau < 10000.0)  sprintf(pstring, "%6.1f", tau);
+            else                    sprintf(pstring, "%6.0f", tau);
+         }
+         else {
+            sprintf(pstring, "%6ld", (long) tau);
          }
 
          if(all_adevs && (SCREEN_WIDTH >= MEDIUM_WIDTH) && (text_mode == 0)) {
-            if(adev_period < 1.0F) sprintf(out, "%.3f t %.4le (n=%ld)", bins->adev_taus[i], bins->adev_bins[i], bins->adev_on[i]);
-            else sprintf(out, "%6ld t %.4le (n=%ld)", (long) bins->adev_taus[i], bins->adev_bins[i], bins->adev_on[i]);
-         }
-         else {
-            if(1 || (SCREEN_WIDTH < 800)) {
-               if(adev_period < 1.0F) sprintf(out, "%.3ft %.3le", bins->adev_taus[i], bins->adev_bins[i]);
-               else sprintf(out, "%6ldt %.3le", (long) bins->adev_taus[i], bins->adev_bins[i]);
+            if(tau >= 1000000.0) {
+               sprintf(out, "%st %.4le (n=%ld)", pstring, bins->adev_bins[i], bins->adev_on[i]);
             }
             else {
-               if(adev_period < 1.0F) sprintf(out, "%.3f t %.3le", bins->adev_taus[i], bins->adev_bins[i]);
-               else sprintf(out, "%6ld t %.3le", (long) bins->adev_taus[i], bins->adev_bins[i]);
+               sprintf(out, "%s t %.4le (n=%ld)", pstring, bins->adev_bins[i], bins->adev_on[i]);
             }
+            adevs_shown = strlen(out);
          }
-         adevs_shown = strlen(out)+2;
-         vidstr(adev_row, adev_col, color, out);
-      }
-
-      while(i++ < max_adev_rows) {  // erase the rest of the table area
-         ++adev_row;
-         if(adev_row >= adev_bottom_row) {
-            blank_underscore = 0;
-            return;
+         else {
+            if(1 || (SCREEN_WIDTH < NARROW_SCREEN)) {
+               sprintf(out, "%st %.3le", pstring, bins->adev_bins[i]);
+            }
+            else {
+               sprintf(out, "%s t %.3le", pstring, bins->adev_bins[i]);
+            }
+            adevs_shown = strlen(out);
+            adevs_shown += 6;  // make sure view info erases
          }
+         vidstr(adev_row, left_adev_col, color, out);
 
-         if(small_font == 1) vidstr(adev_row, adev_col, color, &blanks[TEXT_COLS-32]);
-         else                vidstr(adev_row, adev_col, color, &blanks[TEXT_COLS-20]);
+         if(adevs_shown > max_adev_width) max_adev_width = adevs_shown+1;
       }
    }
-   else {
-      sprintf(out, "%s %s over %lu points", d, t, adev_q_count+(long) adev_q_overflow);
+   else {   // long version of tables will fit
+      left_adev_col = adev_col+4;
+      sprintf(out, "%s %s%c for %lu points", d, adev_id,c, adev_q_count);
+///   sprintf(out, "%s %s%c %lu pts bc::%d", d, adev_id,c, adev_q_count,bins->bin_count);
+      vidstr(adev_row, adev_col, color, &blanks[TEXT_COLS-max_adev_width]);
       vidstr(adev_row, adev_col+7, color, out);
       adevs_shown = 7 + 5 + strlen(out) + 2;
-
-      for(i=0; i<bins->bin_count; i++) {  // draw the adev table entries
-         ++adev_row;
-         if(adev_row >= adev_bottom_row) {
-            blank_underscore = 0;
-            return;
-         }
-
-         if(small_font == 1) vidstr(adev_row, adev_col+4, color, &blanks[TEXT_COLS-64]);
-         else                vidstr(adev_row, adev_col+4, color, &blanks[TEXT_COLS-36]);
-
-         if(adev_period < 1.0F) sprintf(out, "%.4f tau  %.3le (n=%ld)", bins->adev_taus[i], bins->adev_bins[i], bins->adev_on[i]);
-         else sprintf(out, "%8ld tau  %.4le (n=%ld)", (long) bins->adev_taus[i], bins->adev_bins[i], bins->adev_on[i]);
-         vidstr(adev_row, adev_col+4, color, out);
-         adevs_shown = 4 + strlen(out) + 2;
+      adevs_shown = strlen(out);
+      if(bins->bin_count > max_bins_shown) {
+         max_bins_shown = bins->bin_count;
       }
 
-      while(i++ < max_adev_rows) {  // erase the rest of the table area
+      for(i=first_show_bin; i<bins->bin_count; i++) {  // draw the adev table entries
          ++adev_row;
-         if(adev_row >= adev_bottom_row) {
-            blank_underscore = 0;
-            return;
+         if(all_adevs && (left_adev_col < INFO_COL)) {
+            if(adev_row > (MOUSE_ROW+0)) break;  // mmmmmm
          }
-         if(small_font == 1) vidstr(adev_row, adev_col+4, color, &blanks[TEXT_COLS-64]);
-         else                vidstr(adev_row, adev_col+4, color, &blanks[TEXT_COLS-36]);
+         else if(adev_row > (MOUSE_ROW+1)) break;  // mmmmmm
+
+         if(max_adev_width > 5) {   // erase the old data
+//          fill_rectangle (left_adev_col*TEXT_WIDTH+TEXT_X_MARGIN,adev_row*TEXT_HEIGHT+TEXT_Y_MARGIN, max_adev_width*TEXT_WIDTH,TEXT_HEIGHT, RED);
+            erase_rectangle(left_adev_col*TEXT_WIDTH+TEXT_X_MARGIN,adev_row*TEXT_HEIGHT+TEXT_Y_MARGIN, max_adev_width*TEXT_WIDTH,TEXT_HEIGHT);
+         }
+         if(++count >= adev_table_rows) break;
+         if(ATYPE == A_MTIE) {
+            if(bins->adev_on[i] < 0.0) break;
+         }
+         else if(bins->adev_on[i] <= 0.0) break;
+
+         tau = bins->adev_taus[i];
+         strcpy(pstring, "????????");
+
+         if(fperiod(period)) {
+            if     (tau < 1000.0)    sprintf(pstring, "%8.4f", tau);
+            else if(tau < 10000.0)   sprintf(pstring, "%8.3f", tau);
+            else if(tau < 100000.0)  sprintf(pstring, "%8.2f", tau);
+            else if(tau < 1000000.0) sprintf(pstring, "%8.1f", tau);
+            else                     sprintf(pstring, "%8.0f", tau);
+         }
+         else {
+            sprintf(pstring, "%8ld", (long) tau);
+         }
+
+         sprintf(out, "%s tau  %.3le (n=%ld)", pstring, bins->adev_bins[i], bins->adev_on[i]);
+         vidstr(adev_row, left_adev_col, color, out);
+
+         adevs_shown = strlen(out);
+         if(adevs_shown > max_adev_width) max_adev_width = adevs_shown+1;
       }
+   }
+
+   ++adev_row;
+//sprintf(debug_text, "maw:%d  left:%d  arow:%d  bot:%d  geight:%d  mouse:%d", 
+//max_adev_width, left_adev_col, adev_row, adev_bottom_row, (adev_bottom_row-adev_row+1), MOUSE_ROW);
+   i = (adev_bottom_row-adev_row+1);       // i=number of rows to erase
+   if(all_adevs && (left_adev_col < INFO_COL)) {
+      if(adev_bottom_row >= (MOUSE_ROW+0)) {  // mmmmm would eat into plot titles
+         i -= (adev_bottom_row - (MOUSE_ROW+0));  // mmmmm adjust it so it won't
+      }
+   }
+   else if(adev_bottom_row >= (MOUSE_ROW+1)) {  // mmmmm would eat into plot titles
+      i -= (adev_bottom_row - (MOUSE_ROW+1));  // mmmmm adjust it so it won't
+   }
+   if(i > 0) {  // erase the rest of the adev table
+//    fill_rectangle(left_adev_col*TEXT_WIDTH+TEXT_X_MARGIN, adev_row*TEXT_HEIGHT+TEXT_Y_MARGIN, max_adev_width*TEXT_WIDTH,i*TEXT_HEIGHT, BLUE);
+      erase_rectangle(left_adev_col*TEXT_WIDTH+TEXT_X_MARGIN,adev_row*TEXT_HEIGHT+TEXT_Y_MARGIN, max_adev_width*TEXT_WIDTH,i*TEXT_HEIGHT);
    }
 
    blank_underscore = 0;
-   return;
+   return 1;
 }
 
 
-void plot_adev_curve(struct ADEV_INFO *bins, u08 color)
+void plot_adev_curve(struct ADEV_INFO *bins, u08 color, int mask)
 {
 int i;
 int x1, x2;
@@ -12902,20 +23648,40 @@ float adev_range;
 int vert_scale;
 int vert_ofs;
 
+double n;
+float m;
+float eb1,eb2;
+
+
    if(text_mode) return;  // no room on screen to do this
    if(rcvr_type == NO_RCVR) return;  // no room on screen to do this
-   if(zoom_screen) return;
+   if(rcvr_type == TIDE_RCVR) return;  // ckckck has no adevs to show
+
    if(first_key) return;
    if(plot_adev_data == 0) return;
    if(bins == 0) return;
 
+   if(zoom_screen == 'P') ;
+   else if(zoom_screen) return;
+
    if(bins->adev_bins[0] == 0.0) return;
 
+if((mask & adev_display_mask) == 0) return;
+
    max_scale = scale_adev(bins->adev_max);
+   if(bottom_adev_decade) min_scale = scale_adev(bottom_adev_decade);
+   else                   min_scale = scale_adev(bins->adev_min);
+if(ATYPE == A_MTIE) {  // offset plots a little from the top and bottom of the plot area
    min_scale = scale_adev(bins->adev_min);
+max_scale = (float) (global_adev_max*MTIE_SCALE);
+min_scale = (float) (global_adev_min/MTIE_SCALE);
+}
+
    adev_range = max_scale - min_scale;
    adev_range = (float) ABS(adev_range);
+//sprintf(debug_text2, "ascale min:%g  max:%g  range:%g", min_scale, max_scale, adev_range);
    if(adev_range == 0.0) return;
+
 
    // adev plots are scaled to major vertical divisions
    vert_scale = (PLOT_HEIGHT / (VERT_MAJOR*2)) * (VERT_MAJOR*2);  // two major divisions per decade
@@ -12923,32 +23689,128 @@ int vert_ofs;
    if(((PLOT_HEIGHT / (VERT_MAJOR*2)) & 0x01) == 0x00) {  // align adevs to cyan dotted lines
       vert_ofs += VERT_MAJOR;
    }
+//sprintf(plot_title, "bot:%g  max(%g):%g min(%g):%g range:%g", bottom_adev_decade, bins->adev_max,max_scale, bins->adev_min,min_scale, adev_range);
 
-   for(i=1; i<bins->bin_count; i++) {
+   for(i=first_show_bin; i<bins->bin_count; i++) {
+      x1 = (i-first_show_bin-1) * HORIZ_MAJOR;   // make sure line fits in the plot
+      x2 = (i-first_show_bin) * HORIZ_MAJOR;
+if(x1 > PLOT_WIDTH) continue; // aaaahhhh 
+if(x2 > PLOT_WIDTH) continue;
+if(x1 < 0) continue;
+if(x2 < 0) continue;
+      if(x1 < 0) x1 = 0;
+      if(x2 > PLOT_WIDTH) x2 = PLOT_WIDTH;
+
       y1 = (0.0F - scale_adev(bins->adev_bins[i-1]));
       y1 += max_scale;
       y1 /= adev_range;
-      y1 *= vert_scale;
-      y1 += (PLOT_ROW + vert_ofs);
-      if(y1 < PLOT_ROW) y1 = (float) PLOT_ROW;
-      if(y1 >= (PLOT_ROW+PLOT_HEIGHT)) y1 = (float) (PLOT_ROW+PLOT_HEIGHT);
+      y1 *= (float) vert_scale;
+      y1 += (float) (PLOT_ROW + vert_ofs);
+      if(y1 <= PLOT_ROW) y1 = (float) (PLOT_ROW+2);
+      if(y1 >= (PLOT_ROW+PLOT_HEIGHT-1)) y1 = (float) (PLOT_ROW+PLOT_HEIGHT-2);
 
-      y2 = (0.0F - scale_adev(bins->adev_bins[i]));
+      y2 = eb1 = eb2 = bins->adev_bins[i];
+      y2 = (0.0F - scale_adev(y2));
       y2 += max_scale;
       y2 /= adev_range;
-      y2 *= vert_scale;
-      y2 += (PLOT_ROW+vert_ofs);
-      if(y2 < PLOT_ROW) y2 = (float) PLOT_ROW;
-      if(y2 >= (PLOT_ROW+PLOT_HEIGHT)) y2 = (float) (PLOT_ROW+PLOT_HEIGHT);
-
-      x1 = (i-1) * HORIZ_MAJOR;   // make sure line fits in the plot
-      x2 = i * HORIZ_MAJOR;
-      if(x2 > PLOT_WIDTH) x2 = PLOT_WIDTH;
+      y2 *= (float) vert_scale;
+      y2 += (float) (PLOT_ROW+vert_ofs);
+      if(y2 <= PLOT_ROW) y2 = (float) (PLOT_ROW+2);
+      if(y2 >= (PLOT_ROW+PLOT_HEIGHT-1)) y2 = (float) (PLOT_ROW+PLOT_HEIGHT-2);
 
       if(x1 < PLOT_WIDTH) {
          line(PLOT_COL+x1, (int) y1, PLOT_COL+x2, (int) y2, color);
       }
    }
+
+   // draw error bars from last bin to first bin
+   if(show_error_bars == 0) return;  // bars disabled
+if(ATYPE == A_MTIE) return;
+
+   for(i=bins->bin_count-1; i>=first_show_bin; i--) {
+      eb1 = eb2 = bins->adev_bins[i];
+
+      x1 = (i-first_show_bin-1) * HORIZ_MAJOR;   // make sure line fits in the plot
+      x2 = (i-first_show_bin) * HORIZ_MAJOR;
+if(x1 > PLOT_WIDTH) continue;
+if(x2 > PLOT_WIDTH) continue;
+if(x1 < 0) continue;
+if(x2 < 0) continue;
+      if(x1 < 0) x1 = 0;
+      if(x2 > PLOT_WIDTH) x2 = PLOT_WIDTH;
+
+      if(1 || (x1 < PLOT_WIDTH)) {
+         m = (float) bins->adev_taus[i];
+         if(m == 0) continue;
+
+         n = (double) bins->adev_on[i];
+         n = sqrt(n/(double) m);
+         if(n == 0) continue;
+
+         eb1 -= (eb1 / (float) n);
+         eb1 = (0.0F - scale_adev(eb1));
+         eb1 += max_scale;
+         eb1 /= adev_range;
+         eb1 *= vert_scale;
+         eb1 += (PLOT_ROW+vert_ofs);
+         if(eb1< PLOT_ROW) eb1 = (float) PLOT_ROW;
+         if(eb1 >= (PLOT_ROW+PLOT_HEIGHT)) eb1 = (float) (PLOT_ROW+PLOT_HEIGHT);
+
+         eb2 += (eb2 / (float) n);
+         eb2 = (0.0F - scale_adev(eb2));
+         eb2 += max_scale;
+         eb2 /= adev_range;
+         eb2 *= vert_scale;
+         eb2 += (PLOT_ROW+vert_ofs);
+         if(eb2< PLOT_ROW) eb2 = (float) PLOT_ROW;
+         if(eb2 >= (PLOT_ROW+PLOT_HEIGHT)) eb2 = (float) (PLOT_ROW+PLOT_HEIGHT);
+
+
+         if(n < 1.0) {  // error bars are too large to be meaningful - limit size and use arrow endcaps
+            eb1 = y2 - (float) (adev_decade_height / 2.0);
+            eb2 = y2 + (float) ( adev_decade_height / 2.0);
+
+            if(eb1< PLOT_ROW) eb1 = (float) PLOT_ROW;
+            if(eb1 >= (PLOT_ROW+PLOT_HEIGHT)) eb1 = (float) (PLOT_ROW+PLOT_HEIGHT);
+
+            if(eb2< PLOT_ROW) eb2 = (float) PLOT_ROW;
+            if(eb2 >= (PLOT_ROW+PLOT_HEIGHT)) eb2 = (float) (PLOT_ROW+PLOT_HEIGHT);
+
+            line(PLOT_COL+x2,(int) eb1, PLOT_COL+x2,(int)eb2, color);
+
+            line(PLOT_COL+x2-HORIZ_MINOR/3,(int) eb1+VERT_MINOR, PLOT_COL+x2,(int)eb1, color);
+            line(PLOT_COL+x2+HORIZ_MINOR/3,(int) eb1+VERT_MINOR, PLOT_COL+x2,(int)eb1, color);
+
+            line(PLOT_COL+x2-HORIZ_MINOR/3,(int) eb2-VERT_MINOR, PLOT_COL+x2,(int)eb2, color);
+            line(PLOT_COL+x2+HORIZ_MINOR/3,(int) eb2-VERT_MINOR, PLOT_COL+x2,(int)eb2, color);
+         }
+         else if(0 || (fabs(eb2-eb1) >= (double) (VERT_MINOR*1))) { // good bars, use flat end caps
+            if(0) {  // center error bars on the adev line
+               y2 = bins->adev_bins[i];
+               y2 = (0.0F - scale_adev(y2));
+               y2 += max_scale;
+               y2 /= adev_range;
+               y2 *= (float) vert_scale;
+               y2 += (float) (PLOT_ROW+vert_ofs);
+               if(y2 < PLOT_ROW) y2 = (float) PLOT_ROW;
+               if(y2 >= (PLOT_ROW+PLOT_HEIGHT)) y2 = (float) (PLOT_ROW+PLOT_HEIGHT);
+
+               m = (float) (fabs(eb1-eb2) / 2.0);
+               eb1 = y2 - m;
+               eb2 = y2 + m;
+            }
+
+            line(PLOT_COL+x2,(int) eb1, PLOT_COL+x2,(int)eb2, color);
+
+            line(PLOT_COL+x2-HORIZ_MINOR/3,(int) eb1, PLOT_COL+x2+HORIZ_MINOR/3,(int)eb1, color);
+            line(PLOT_COL+x2-HORIZ_MINOR/3,(int) eb2, PLOT_COL+x2+HORIZ_MINOR/3,(int)eb2, color);
+         }
+         else {  // stop on last non-short error bar
+            break;
+         }
+      }
+   }
+
 }
 
 void scan_bins(struct BIN *bin)
@@ -12956,8 +23818,10 @@ void scan_bins(struct BIN *bin)
 int i;
 
    // find the min and max adev values in the specified adev bins
-   for(i=0; i<ADEVS; i++) {
-      if(bin[i].n < min_points_per_bin) break;
+// for(i=0; i<MAX_ADEV_BINS; i++) {
+   for(i=first_show_bin; i<MAX_ADEV_BINS; i++) {
+// aaaahhhh    if(bin[i].n < min_points_per_bin) break;
+      if(bin[i].n < min_points_per_bin) continue;
       if(bin[i].value == 0.0) continue;
       if(bin[i].value > global_adev_max) global_adev_max = bin[i].value;
       if(bin[i].value < global_adev_min) global_adev_min = bin[i].value;
@@ -12966,84 +23830,308 @@ int i;
 
 void find_global_max()
 {
-   // find the min and max adev values in all the adev bins
-   global_adev_max = (-1.0E29);
-   global_adev_min = (1.0E29);
+   // find the min and max adev values in all the displayed xDEV bins
 
-   scan_bins(&pps_adev_bins[0]);
-   scan_bins(&osc_adev_bins[0]);
+   global_adev_max = (-(BIG_NUM));
+   global_adev_min = (BIG_NUM);
 
-   scan_bins(&pps_hdev_bins[0]);
-   scan_bins(&osc_hdev_bins[0]);
+   if(all_adevs == SINGLE_ADEVS) {  // main screen adev display of PPS/chA and OSC/chB values
+      if(ATYPE == OSC_ADEV) {
+         if(adev_display_mask & DISPLAY_ADEV) {
+            if(adev_display_mask & DISPLAY_CHA) scan_bins(&pps_adev_bins[0]);
+            if(adev_display_mask & DISPLAY_CHB) scan_bins(&osc_adev_bins[0]);
+         }
+      }
+      else if(ATYPE == OSC_HDEV) {
+         if(adev_display_mask & DISPLAY_HDEV) {
+            if(adev_display_mask & DISPLAY_CHA) scan_bins(&pps_hdev_bins[0]);
+            if(adev_display_mask & DISPLAY_CHB) scan_bins(&osc_hdev_bins[0]);
+         }
+      }
+      else if(ATYPE == OSC_MDEV) {
+         if(adev_display_mask & DISPLAY_MDEV) {
+            if(adev_display_mask & DISPLAY_CHA) scan_bins(&pps_mdev_bins[0]);
+            if(adev_display_mask & DISPLAY_CHB) scan_bins(&osc_mdev_bins[0]);
+         }
+      }
+      else if(ATYPE == OSC_TDEV) {
+         if(adev_display_mask & DISPLAY_TDEV) {
+            if(adev_display_mask & DISPLAY_CHA) scan_bins(&pps_tdev_bins[0]);
+            if(adev_display_mask & DISPLAY_CHB) scan_bins(&osc_tdev_bins[0]);
+         }
+      }
+      else if(ATYPE == A_MTIE) { 
+         if(adev_display_mask & DISPLAY_MTIE) {
+            if(adev_display_mask & DISPLAY_CHA) scan_mtie_bins(CHA_MTIE);
+            if(adev_display_mask & DISPLAY_CHB) scan_mtie_bins(CHB_MTIE);
+         }
+      }
+   }
+   else if(all_adevs == ALL_CHANS) {  // show selected adev type for all channels
+      if(ATYPE == OSC_ADEV) {
+         if(adev_display_mask & DISPLAY_ADEV) {
+            if(adev_display_mask & DISPLAY_CHA) scan_bins(&pps_adev_bins[0]);
+            if(adev_display_mask & DISPLAY_CHB) scan_bins(&osc_adev_bins[0]);
+            if(adev_display_mask & DISPLAY_CHC) scan_bins(&chc_adev_bins[0]);
+            if(adev_display_mask & DISPLAY_CHD) scan_bins(&chd_adev_bins[0]);
+         }
+      }
+      else if(ATYPE == OSC_HDEV) {
+         if(adev_display_mask & DISPLAY_HDEV) {
+            scan_bins(&pps_hdev_bins[0]);
+            scan_bins(&osc_hdev_bins[0]);
+            scan_bins(&chc_hdev_bins[0]);
+            scan_bins(&chd_hdev_bins[0]);
+         }
+      }
+      else if(ATYPE == OSC_MDEV) {
+         if(adev_display_mask & DISPLAY_MDEV) {
+            scan_bins(&pps_mdev_bins[0]);
+            scan_bins(&osc_mdev_bins[0]);
+            scan_bins(&chc_mdev_bins[0]);
+            scan_bins(&chd_mdev_bins[0]);
+         }
+      }
+      else if(ATYPE == OSC_TDEV) {
+         if(adev_display_mask & DISPLAY_TDEV) {
+            scan_bins(&pps_tdev_bins[0]);
+            scan_bins(&osc_tdev_bins[0]);
+            scan_bins(&chc_tdev_bins[0]);
+            scan_bins(&chd_tdev_bins[0]);
+         }
+      }
+      else if(ATYPE == A_MTIE) {
+         if(adev_display_mask & DISPLAY_MTIE) {
+            if(adev_display_mask & DISPLAY_CHA) scan_mtie_bins(CHA_MTIE);
+            if(adev_display_mask & DISPLAY_CHB) scan_mtie_bins(CHB_MTIE);
+            if(adev_display_mask & DISPLAY_CHC) scan_mtie_bins(CHC_MTIE);
+            if(adev_display_mask & DISPLAY_CHD) scan_mtie_bins(CHD_MTIE);
+         }
+      }
+   }
+   else {  // show all adev types for the selected channel
+      if(all_adevs == ALL_PPS) {
+         if(adev_display_mask & DISPLAY_ADEV) scan_bins(&pps_adev_bins[0]);
+         if(adev_display_mask & DISPLAY_HDEV) scan_bins(&pps_hdev_bins[0]);
+         if(adev_display_mask & DISPLAY_MDEV) scan_bins(&pps_mdev_bins[0]);
+         if(adev_display_mask & DISPLAY_TDEV) scan_bins(&pps_tdev_bins[0]);
+      }
 
-   scan_bins(&pps_mdev_bins[0]);
-   scan_bins(&osc_mdev_bins[0]);
+      if(all_adevs == ALL_OSC) {
+         if(adev_display_mask & DISPLAY_ADEV) scan_bins(&osc_adev_bins[0]);
+         if(adev_display_mask & DISPLAY_HDEV) scan_bins(&osc_hdev_bins[0]);
+         if(adev_display_mask & DISPLAY_MDEV) scan_bins(&osc_mdev_bins[0]);
+         if(adev_display_mask & DISPLAY_TDEV) scan_bins(&osc_tdev_bins[0]);
+      }
+
+      if(all_adevs == ALL_CHC) {
+         if(adev_display_mask & DISPLAY_ADEV) scan_bins(&chc_adev_bins[0]);
+         if(adev_display_mask & DISPLAY_HDEV) scan_bins(&chc_hdev_bins[0]);
+         if(adev_display_mask & DISPLAY_MDEV) scan_bins(&chc_mdev_bins[0]);
+         if(adev_display_mask & DISPLAY_TDEV) scan_bins(&chc_tdev_bins[0]);
+      }
+
+      if(all_adevs == ALL_CHD) {
+         if(adev_display_mask & DISPLAY_ADEV) scan_bins(&chd_adev_bins[0]);
+         if(adev_display_mask & DISPLAY_HDEV) scan_bins(&chd_hdev_bins[0]);
+         if(adev_display_mask & DISPLAY_MDEV) scan_bins(&chd_mdev_bins[0]);
+         if(adev_display_mask & DISPLAY_TDEV) scan_bins(&chd_tdev_bins[0]);
+      }
+   }
+//if(global_adev_min) {
+//   sprintf(debug_text, "gamax:%g  gamin:%g  gdecades:%g", 
+//adev_decade(global_adev_max),adev_decade(global_adev_min),adev_decade(global_adev_max)/adev_decade(global_adev_min));
+//}
+///global_adev_max = 1.0E-7;
 }
 
 void show_all_adevs()
 {
 struct ADEV_INFO bins;
 COORD row,col;
+char *s;
+int i;
+int color;
+int mask;
 
    // show all adev tables on the screen at the same time
    adevs_shown = 0;
+   adev_cols_shown = 0;
    if(adevs_active(1) == 0) return;
    find_global_max();
+   mask = 0xFFFF;
 
    if(TEXT_HEIGHT <= 8) row = ALL_ROW+5;
-   else if((TEXT_HEIGHT <= 16) && (PLOT_ROW >= 576))      row = ALL_ROW+5;
-   else if((TEXT_HEIGHT <= 14) && big_plot)               row = ALL_ROW+5;
-   else if((TEXT_HEIGHT <= 12) && (SCREEN_WIDTH >= 1280)) row = ALL_ROW+5;
+   else if((TEXT_HEIGHT <= 16) && (PLOT_ROW >= 576)) row = ALL_ROW+5;
+   else if((TEXT_HEIGHT <= 14) && big_plot) row = ALL_ROW+5;
+   else if((TEXT_HEIGHT <= 12) && (SCREEN_WIDTH >= WIDE_WIDTH)) row = ALL_ROW+5;
    else if((TEXT_HEIGHT <= 14) && (SCREEN_WIDTH >= MEDIUM_WIDTH)) row = ALL_ROW+3;
    else {
       row = ALL_ROW;
 //    if(osc_params || (osc_discipline == 0)) ++row;
       if(osc_params) ++row;
    }
+
    all_adev_row = row;
+   adev_page_size = adev_table_rows = (adev_bottom_row - all_adev_row);
+   if(adev_decades_shown && (adev_decades_shown < adev_page_size)) adev_page_size = adev_decades_shown;
+//sprintf(debug_text, "arow:%d  abr:%d  aps:%d  ads:%d", ADEV_ROW, adev_bottom_row, adev_page_size, adev_decades_shown);
+
    col = 0;
-   fetch_adev_info(OSC_ADEV+all_adevs-1, &bins);
-   if(all_adevs == 1) {  // showing OSC adevs
-      show_adev_table(&bins, row, col, OSC_ADEV_COLOR);
-      if(mixed_adevs != 2) plot_adev_curve(&bins, OSC_ADEV_COLOR);
-   }
-   else {   // showing PPS adevs
-      show_adev_table(&bins, row, col, PPS_ADEV_COLOR);
-      if(mixed_adevs != 2) plot_adev_curve(&bins, PPS_ADEV_COLOR);
+
+   i = 0;
+   s = "ADEV";
+   if     (all_adevs == ALL_PPS)   { i = 0x01; s = "chA"; }
+   else if(all_adevs == ALL_OSC)   { i = 0x02; s = "chB"; }
+   else if(all_adevs == ALL_CHC)   { i = 0x04; s = "chC"; }
+   else if(all_adevs == ALL_CHD)   { i = 0x08; s = "chD"; }
+   else if(all_adevs == ALL_CHANS) { i = 0x0F; s = "TICC"; }
+
+   if(text_mode) ;
+   else if(rcvr_type == TICC_RCVR) {
+      if((i & adevs_active(1)) == 0) {
+         sprintf(out, "No %s ADEV data available   ", s);
+      }
+      else {
+         sprintf(out, "Collecting %s data          ", s);
+      }
    }
 
-   if(SCREEN_WIDTH < 800)       col = (TEXT_COLS*1)/4;
+   if(zoom_screen == 0) {
+      vidstr(row, col, RED, out);
+   }
+
+   // all_adevs == 1  -  OSC
+   // all_adevs == 2  -  PPS
+   // all_adevs == 3  -  CHC
+   // all_adevs == 4  -  CHD
+   // all_adevs == 5  -  all channels
+
+   mask = DISPLAY_ADEV;
+   if(all_adevs == ALL_OSC) {  // showing OSC adevs
+      fetch_adev_info(OSC_ADEV, &bins);
+      adev_cols_shown += show_adev_table(&bins, row, col, OSC_ADEV_COLOR, 1);
+      if(mixed_adevs != MIXED_REGULAR) {
+         if(adev_display_mask & DISPLAY_CHB) plot_adev_curve(&bins, OSC_ADEV_COLOR, mask);
+      }
+   }
+   else if(all_adevs == ALL_PPS) {   // showing PPS adevs
+      fetch_adev_info(PPS_ADEV, &bins);
+      adev_cols_shown += show_adev_table(&bins, row, col, PPS_ADEV_COLOR, 2);
+      if(mixed_adevs != MIXED_REGULAR) {
+         if(adev_display_mask & DISPLAY_CHA) plot_adev_curve(&bins, PPS_ADEV_COLOR, mask);
+      }
+   }
+   else if(all_adevs == ALL_CHC) {   // showing CHC adevs
+      fetch_adev_info(CHC_ADEV, &bins);
+      adev_cols_shown += show_adev_table(&bins, row, col, CHC_ADEV_COLOR, 3);
+      if(mixed_adevs != MIXED_REGULAR) {
+         if(adev_display_mask & DISPLAY_CHC) plot_adev_curve(&bins, CHC_ADEV_COLOR, mask);
+      }
+   }
+   else if(all_adevs == ALL_CHD) {   // showing selected adev type for all channels
+      fetch_adev_info(CHD_ADEV, &bins);
+      adev_cols_shown += show_adev_table(&bins, row, col, CHD_ADEV_COLOR, 4);
+      if(mixed_adevs != MIXED_REGULAR) {
+         if(adev_display_mask & DISPLAY_CHD) plot_adev_curve(&bins, CHD_ADEV_COLOR, mask);
+      }
+   }
+   else if(all_adevs == ALL_CHANS) {
+      if     (ATYPE == OSC_ADEV) { fetch_adev_info(PPS_ADEV, &bins); mask = DISPLAY_ADEV; }
+      else if(ATYPE == OSC_HDEV) { fetch_adev_info(PPS_HDEV, &bins); mask = DISPLAY_HDEV; } 
+      else if(ATYPE == OSC_MDEV) { fetch_adev_info(PPS_MDEV, &bins); mask = DISPLAY_MDEV; } 
+      else if(ATYPE == OSC_TDEV) { fetch_adev_info(PPS_TDEV, &bins); mask = DISPLAY_TDEV; } 
+//    else if(ATYPE == A_MTIE)   { fetch_adev_info(A_MTIE, &bins);   mask = DISPLAY_MTIE; } 
+else if(ATYPE == A_MTIE)   { fetch_adev_info(A_MTIE, &bins);   mask = DISPLAY_CHA; } 
+      adev_cols_shown += show_adev_table(&bins, row, col, PPS_ADEV_COLOR, 5);
+      if(mixed_adevs != MIXED_REGULAR) {
+         if(adev_display_mask & DISPLAY_CHA) plot_adev_curve(&bins, PPS_ADEV_COLOR, mask);
+      }
+   }
+
+   color = GREEN;
+   if(SCREEN_WIDTH < NARROW_SCREEN) col = (TEXT_COLS*1)/4;
    else if(SCREEN_WIDTH < MEDIUM_WIDTH) col += 25;
-   else                         col += 32;
-   fetch_adev_info(OSC_HDEV+all_adevs-1, &bins);
-   show_adev_table(&bins, row, col, GREEN);
-   if(mixed_adevs != 2) plot_adev_curve(&bins, GREEN);
+   else                                 col += 32;
 
-   if(SCREEN_WIDTH >= 1280) col = FILTER_COL+20;
-   else                     col = (TEXT_COLS*2)/4;
-   fetch_adev_info(OSC_MDEV+all_adevs-1, &bins);
-   show_adev_table(&bins, row, col, MAGENTA);
-   if(mixed_adevs != 2) plot_adev_curve(&bins, MAGENTA);
+   mask = DISPLAY_HDEV;
+   if     (all_adevs == ALL_OSC) fetch_adev_info(OSC_HDEV, &bins);
+   else if(all_adevs == ALL_PPS) fetch_adev_info(PPS_HDEV, &bins);
+   else if(all_adevs == ALL_CHC) fetch_adev_info(CHC_HDEV, &bins);
+   else if(all_adevs == ALL_CHD) fetch_adev_info(CHD_HDEV, &bins);
+   else if(all_adevs == ALL_CHANS) {  // channel B
+      if     (ATYPE == OSC_ADEV) { fetch_adev_info(OSC_ADEV, &bins); mask = DISPLAY_ADEV; }  
+      else if(ATYPE == OSC_HDEV) { fetch_adev_info(OSC_HDEV, &bins); mask = DISPLAY_HDEV; }  
+      else if(ATYPE == OSC_MDEV) { fetch_adev_info(OSC_MDEV, &bins); mask = DISPLAY_MDEV; }  
+      else if(ATYPE == OSC_TDEV) { fetch_adev_info(OSC_TDEV, &bins); mask = DISPLAY_TDEV; }  
+//    else if(ATYPE == A_MTIE)   { fetch_adev_info(B_MTIE, &bins);   mask = DISPLAY_MTIE; } 
+else if(ATYPE == A_MTIE)   { fetch_adev_info(B_MTIE, &bins);   mask = DISPLAY_CHB; } 
+      color = OSC_ADEV_COLOR;
+   }
+   adev_cols_shown += show_adev_table(&bins, row, col, color, 6);
+   if(mixed_adevs != MIXED_REGULAR) {
+      if(adev_display_mask & DISPLAY_CHB) plot_adev_curve(&bins, color, mask);
+   }
 
-   if(SCREEN_WIDTH >= 1280) col += 32;
-   else                     col = (TEXT_COLS*3)/4;
-   fetch_adev_info(OSC_TDEV+all_adevs-1, &bins);
-   show_adev_table(&bins, row, col, YELLOW);
-   if(mixed_adevs != 2) plot_adev_curve(&bins, YELLOW);
+   if(SCREEN_WIDTH >= WIDE_WIDTH) col = FILTER_COL+20;
+   else                           col = (TEXT_COLS*2)/4;
+   mask = DISPLAY_MDEV;
+   if     (all_adevs == ALL_OSC) fetch_adev_info(OSC_MDEV, &bins);
+   else if(all_adevs == ALL_PPS) fetch_adev_info(PPS_MDEV, &bins);
+   else if(all_adevs == ALL_CHC) fetch_adev_info(CHC_MDEV, &bins);
+   else if(all_adevs == ALL_CHD) fetch_adev_info(CHD_MDEV, &bins);
+   else if(all_adevs == ALL_CHANS) {
+      if     (ATYPE == OSC_ADEV) { fetch_adev_info(CHC_ADEV, &bins); mask = DISPLAY_ADEV; }  
+      else if(ATYPE == OSC_HDEV) { fetch_adev_info(CHC_HDEV, &bins); mask = DISPLAY_HDEV; }  
+      else if(ATYPE == OSC_MDEV) { fetch_adev_info(CHC_MDEV, &bins); mask = DISPLAY_MDEV; }  
+      else if(ATYPE == OSC_TDEV) { fetch_adev_info(CHC_TDEV, &bins); mask = DISPLAY_TDEV; }  
+//    else if(ATYPE == A_MTIE)   { fetch_adev_info(C_MTIE, &bins);   mask = DISPLAY_MTIE; } 
+      else if(ATYPE == A_MTIE)   { fetch_adev_info(C_MTIE, &bins);   mask = DISPLAY_CHC; } 
+   }
+   adev_cols_shown += show_adev_table(&bins, row, col, MAGENTA, 7);
+   if(mixed_adevs != MIXED_REGULAR) {
+      if(adev_display_mask & DISPLAY_CHC) plot_adev_curve(&bins, MAGENTA, mask);
+   }
+
+   if(SCREEN_WIDTH >= WIDE_WIDTH) col += 32;
+   else                           col = (TEXT_COLS*3)/4;
+   mask = DISPLAY_TDEV;
+   if     (all_adevs == ALL_OSC) fetch_adev_info(OSC_TDEV, &bins);
+   else if(all_adevs == ALL_PPS) fetch_adev_info(PPS_TDEV, &bins);
+   else if(all_adevs == ALL_CHC) fetch_adev_info(CHC_TDEV, &bins);
+   else if(all_adevs == ALL_CHD) fetch_adev_info(CHD_TDEV, &bins);
+   else if(all_adevs == ALL_CHANS) {
+      if     (ATYPE == OSC_ADEV) { fetch_adev_info(CHD_ADEV, &bins); mask = DISPLAY_ADEV; }  
+      else if(ATYPE == OSC_HDEV) { fetch_adev_info(CHD_HDEV, &bins); mask = DISPLAY_HDEV; }  
+      else if(ATYPE == OSC_MDEV) { fetch_adev_info(CHD_MDEV, &bins); mask = DISPLAY_MDEV; }  
+      else if(ATYPE == OSC_TDEV) { fetch_adev_info(CHD_TDEV, &bins); mask = DISPLAY_TDEV; }  
+//    else if(ATYPE == A_MTIE)   { fetch_adev_info(D_MTIE, &bins);   mask = DISPLAY_MTIE; } 
+      else if(ATYPE == A_MTIE)   { fetch_adev_info(D_MTIE, &bins);   mask = DISPLAY_CHD; } 
+   }
+   adev_cols_shown += show_adev_table(&bins, row, col, YELLOW, 8);
+
+   if(mixed_adevs != MIXED_REGULAR) {
+      if(adev_display_mask & DISPLAY_CHD) plot_adev_curve(&bins, YELLOW, mask);
+   }
 }
 
-void show_adev_info()
+void show_adev_info(int why)
 {
+int row;
+int mask;
+
    // draw the adev tables and graphs
+   adev_show_time = 0;
    adevs_shown = 0;
    if(adevs_active(1) == 0) return;
    if(luxor) return;
 
+   mask = 0xFFFF;
    if(all_adevs) {
-      if(mixed_adevs == 2) {  // show 4 adev tables, PPS and OSC curves
+      if(mixed_adevs == MIXED_REGULAR) {  // show 4 adev tables, PPS and OSC curves
          show_all_adevs();
-         plot_adev_curve(&pps_bins, PPS_ADEV_COLOR);
-         plot_adev_curve(&osc_bins, OSC_ADEV_COLOR);
+         if(adev_display_mask & DISPLAY_CHA) plot_adev_curve(&pps_bins, PPS_ADEV_COLOR, mask);
+         if(adev_display_mask & DISPLAY_CHB) plot_adev_curve(&osc_bins, OSC_ADEV_COLOR, mask);
       }
       else {  // show all 4 adev tables and matching curves
          show_all_adevs();
@@ -13051,15 +24139,49 @@ void show_adev_info()
    }
    else {  // show OSC and PPS tables and curves
       find_global_max();
-      show_adev_table(&pps_bins, ADEV_ROW+0, ADEV_COL, PPS_ADEV_COLOR);
-      plot_adev_curve(&pps_bins, PPS_ADEV_COLOR);
+      row = ADEV_ROW+0;
+      if(pps_adev_q_count && osc_adev_q_count) ;
+      else adev_page_size = adev_table_rows = (adev_bottom_row - row) - 1;
 
-      show_adev_table(&osc_bins, ADEV_ROW+max_adev_rows+1, ADEV_COL, OSC_ADEV_COLOR);
-      plot_adev_curve(&osc_bins, OSC_ADEV_COLOR);
+      if(pps_adev_q_count) {  // we have pps adevs
+         if(continuous_scroll) {
+            if     (ATYPE == OSC_ADEV) { fetch_adev_info(PPS_ADEV, &pps_bins); mask = DISPLAY_ADEV; }
+            else if(ATYPE == OSC_HDEV) { fetch_adev_info(PPS_HDEV, &pps_bins); mask = DISPLAY_HDEV; } 
+            else if(ATYPE == OSC_MDEV) { fetch_adev_info(PPS_MDEV, &pps_bins); mask = DISPLAY_MDEV; } 
+            else if(ATYPE == OSC_TDEV) { fetch_adev_info(PPS_TDEV, &pps_bins); mask = DISPLAY_TDEV; } 
+            else if(ATYPE == A_MTIE)   { fetch_adev_info(A_MTIE, &pps_bins); mask = DISPLAY_MTIE; } 
+         }
+         show_adev_table(&pps_bins, row, ADEV_COL, PPS_ADEV_COLOR, 9);
+         if(adev_display_mask & DISPLAY_CHA) plot_adev_curve(&pps_bins, PPS_ADEV_COLOR, mask);
+      }
+
+
+      if(pps_adev_q_count && osc_adev_q_count) {  // we have osc and pps adevs
+         row = (adev_bottom_row - ADEV_ROW);  // split the adev area in half adev_page_size
+         row = ADEV_ROW + (row/2);
+         adev_page_size = adev_table_rows = (adev_bottom_row - row);
+         if(adev_decades_shown && (adev_decades_shown < adev_page_size)) adev_page_size = adev_decades_shown;
+         adev_page_size &= (~1);
+         adev_table_rows &= (~1);
+      }
+//sprintf(debug_text, "arow:%d  abr:%d  aps:%d  ads:%d", ADEV_ROW, adev_bottom_row, adev_page_size, adev_decades_shown);
+
+      if(osc_adev_q_count) {  // we have osc adevs to show
+         if(continuous_scroll) {
+            if     (ATYPE == OSC_ADEV) { fetch_adev_info(OSC_ADEV, &osc_bins); mask = DISPLAY_ADEV; }  
+            else if(ATYPE == OSC_HDEV) { fetch_adev_info(OSC_HDEV, &osc_bins); mask = DISPLAY_HDEV; }  
+            else if(ATYPE == OSC_MDEV) { fetch_adev_info(OSC_MDEV, &osc_bins); mask = DISPLAY_MDEV; }  
+            else if(ATYPE == OSC_TDEV) { fetch_adev_info(OSC_TDEV, &osc_bins); mask = DISPLAY_TDEV; }  
+            else if(ATYPE == A_MTIE)   { fetch_adev_info(B_MTIE,   &osc_bins); mask = DISPLAY_MTIE; }  
+         }
+         show_adev_table(&osc_bins, row, ADEV_COL, OSC_ADEV_COLOR, 10);
+         if(adev_display_mask & DISPLAY_CHB) plot_adev_curve(&osc_bins, OSC_ADEV_COLOR, mask);
+      }
    }
+//sprintf(debug_text, "gamax:%g  gamin:%g    ", global_adev_max,global_adev_min);
 }
 
-void update_adev_display(int type)
+void update_adev_display(int type, int force)
 {
 int bin_count;
 u08 new_adev_info;
@@ -13068,50 +24190,85 @@ u08 need_new_plot;
    // redraw the adev displays if it is time to do so
    if(adevs_active(1) == 0) return;
 
+// if(type == A_MTIE) type = OSC_ADEV;
+
    new_adev_info = 0;
    need_new_plot = 0;
 
-   if(++pps_adev_time >= ADEV_DISPLAY_RATE) {
-      pps_adev_time = 0;
-      if(all_adevs) new_adev_info = 1;
+   if(osc_adev_q_count && (++osc_adev_disp >= ADEV_DISPLAY_RATE)) {
+      osc_adev_disp = 0;
+      bin_count = fetch_adev_info(type+NUM_ADEV_TYPES*0, &osc_bins);
 
-      bin_count = fetch_adev_info(type|0x01, &pps_bins);
-
-      if(bin_count > last_bin_count) {  // force redraw whenever a new bin fills
-         need_new_plot |= 0x01;
-         last_bin_count = bin_count;
-      }
-      new_adev_info |= 0x01;
-   }
-
-   if(++osc_adev_time >= ADEV_DISPLAY_RATE) {
-      osc_adev_time = 0;
-      bin_count = fetch_adev_info(type&(~1), &osc_bins);
-
-      if(bin_count > last_bin_count) {  // force redraw whenever a new bin fills
+      if(bin_count > last_osc_bin_count) {  // force redraw whenever a new bin fills
          need_new_plot |= 0x02;
-         last_bin_count = bin_count;
+         last_osc_bin_count = bin_count;
       }
       new_adev_info |= 0x02;
    }
 
-   if(need_new_plot) {
-      draw_plot(0);
+   if(pps_adev_q_count && (++pps_adev_disp >= ADEV_DISPLAY_RATE)) {
+      pps_adev_disp = 0;
+      if(all_adevs) new_adev_info = 1;
+
+      bin_count = fetch_adev_info(type+NUM_ADEV_TYPES*1, &pps_bins);
+
+      if(bin_count > last_pps_bin_count) {  // force redraw whenever a new bin fills
+         need_new_plot |= 0x01;
+         last_pps_bin_count = bin_count;
+      }
+      new_adev_info |= 0x01;
    }
 
-   if(new_adev_info) {
-      show_adev_info();
+
+   if(chc_adev_q_count && (++chc_adev_disp >= ADEV_DISPLAY_RATE)) {   // aaabbb what about chc
+      chc_adev_disp = 0;
+      bin_count = fetch_adev_info(type+NUM_ADEV_TYPES*2, &chc_bins);
+
+      if(bin_count > last_chc_bin_count) {  // force redraw whenever a new bin fills
+         need_new_plot |= 0x04;
+         last_chc_bin_count = bin_count;
+      }
+      new_adev_info |= 0x04;
+   }
+
+
+   if(chd_adev_q_count && (++chd_adev_disp >= ADEV_DISPLAY_RATE)) {   // aaabbb what about chc
+      chd_adev_disp = 0;
+      bin_count = fetch_adev_info(type+NUM_ADEV_TYPES*3, &chd_bins);
+
+      if(bin_count > last_chd_bin_count) {  // force redraw whenever a new bin fills
+         need_new_plot |= 0x08;
+         last_chd_bin_count = bin_count;
+      }
+      new_adev_info |= 0x08;
+   }
+
+   if(need_new_plot || force) {
+      draw_plot(NO_REFRESH);
+   }
+
+   if(new_adev_info || force || adev_freshened) { 
+      if(force || (continuous_scroll == 0)) {
+         show_adev_info(5);      // aaaahhhh
+      }
+      adev_freshened = 0;
    }
 }
 
-void force_adev_redraw()
+void force_adev_redraw(int why)
 {
     // force a redraw of the the adev tables and graphs
     have_time = 0;
-//  adev_time = 0;
-    pps_adev_time = ADEV_DISPLAY_RATE;
-    osc_adev_time = ADEV_DISPLAY_RATE;
-    update_adev_display(ATYPE);
+    pps_adev_disp = ADEV_DISPLAY_RATE;
+    osc_adev_disp = ADEV_DISPLAY_RATE;
+    chc_adev_disp = ADEV_DISPLAY_RATE;
+    chd_adev_disp = ADEV_DISPLAY_RATE;
+
+    max_adev_width = 0;    // recalc table sizes
+    adev_page_size = 0;
+    adev_table_rows = 0;
+
+    update_adev_display(ATYPE, 1);
 }
 
 
@@ -13120,35 +24277,69 @@ void write_log_adevs(struct ADEV_INFO *bins)
 int i;
 char *d;
 char *t;
+long adev_q_count;
+char adev_id[32];
+double period;
 
    // write an adev table to the log file
    if(log_file == 0) return;
    if(log_comments == 0) return;
 
-   if(bins->adev_type & 0x01) {
-      if(jitter_adev) d = "Mag jit"; //"PPS";
-      else            d = plot[PPS].plot_id; //"PPS";
+   i = bins->adev_type / NUM_ADEV_TYPES;
+
+   if(i == CHD_ID) {
+      d = "chD";
+   }
+   else if(i == CHC_ID) { 
+      d = "chC";
+   }
+   else if(i == PPS_ID) { 
+      if(jitter_adev)    d = "Mag jit"; //"PPS";
+      else if(TICC_USED) d = "chA";
+      else               d = plot[PPS].plot_id; //"PPS";
    }
    else {
-      if(jitter_adev) d = "Msg ofs"; //"OSC";
-      else            d = plot[OSC].plot_id; //"OSC";
+      if(jitter_adev)    d = "Msg ofs"; //"OSC";
+      else if(TICC_USED) d = "chB";
+      else               d = plot[OSC].plot_id; //"OSC";
    }
 
-   if     (bins->adev_type == OSC_ADEV) t = "ADEV";
-   else if(bins->adev_type == PPS_ADEV) t = "ADEV";
-   else if(bins->adev_type == OSC_MDEV) t = "MDEV";
-   else if(bins->adev_type == PPS_MDEV) t = "MDEV";
-   else if(bins->adev_type == OSC_HDEV) t = "HDEV";
-   else if(bins->adev_type == PPS_HDEV) t = "HDEV";
-   else if(bins->adev_type == OSC_TDEV) t = "TDEV";
-   else if(bins->adev_type == PPS_TDEV) t = "TDEV";
-   else                                 t = "?DEV";
+   period = adev_period;
+   if     (bins->adev_type == PPS_ADEV) { t = "ADEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_ADEV) { t = "ADEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_ADEV) { t = "ADEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_ADEV) { t = "ADEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; period = chd_adev_period; } 
+
+   else if(bins->adev_type == PPS_MDEV) { t = "MDEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_MDEV) { t = "MDEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_MDEV) { t = "MDEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_MDEV) { t = "MDEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; period = chd_adev_period; } 
+
+   else if(bins->adev_type == PPS_HDEV) { t = "HDEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_HDEV) { t = "HDEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_HDEV) { t = "HDEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_HDEV) { t = "HDEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; period = chd_adev_period; } 
+
+   else if(bins->adev_type == PPS_TDEV) { t = "TDEV"; adev_q_count = pps_adev_q_count+(long) pps_adev_q_overflow; period = pps_adev_period; } 
+   else if(bins->adev_type == OSC_TDEV) { t = "TDEV"; adev_q_count = osc_adev_q_count+(long) osc_adev_q_overflow; period = osc_adev_period; } 
+   else if(bins->adev_type == CHC_TDEV) { t = "TDEV"; adev_q_count = chc_adev_q_count+(long) chc_adev_q_overflow; period = chc_adev_period; } 
+   else if(bins->adev_type == CHD_TDEV) { t = "TDEV"; adev_q_count = chd_adev_q_count+(long) chd_adev_q_overflow; period = chd_adev_period; } 
+
+   else if(bins->adev_type == A_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHA_MTIE][0]; period = pps_adev_period; } 
+   else if(bins->adev_type == B_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHB_MTIE][0]; period = osc_adev_period; } 
+   else if(bins->adev_type == C_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHC_MTIE][0]; period = chc_adev_period; } 
+   else if(bins->adev_type == D_MTIE)   { t = "MTIE"; adev_q_count = mtie_intervals[CHD_MTIE][0]; period = chd_adev_period; } 
+   else { t="????"; adev_q_count = 0; }
+
+   strcpy(adev_id, t);
+   if(TICC_USED == 0) strlwr(adev_id);  // show bogo-adevs in lower case
+   else if(ticc_type == LARS_TICC) strlwr(adev_id);
 
    sprintf(log_text, "#");
    write_log_comment(1);
 
-   sprintf(log_text, "#  %s %s over %lu points - sample period=%.3f secs", 
-      d, t, adev_q_count+(long) adev_q_overflow, adev_period);
+   sprintf(log_text, "#  %s %s for %lu points - sample period=%.3f secs  - bin count:%d", 
+      d, adev_id, adev_q_count, period, bins->bin_count);   // aaaapppp other periods 
    write_log_comment(1);
 
    for(i=0; i<bins->bin_count; i++) {
@@ -13168,36 +24359,122 @@ struct ADEV_INFO bins;
 
    if(adevs_active(1) == 0) return;
 
-   if((log_stream & 0x01) && (kol > 0)) fprintf(log_file, "\n");
+   if((log_stream & LOG_HEX_STREAM) && (kol > 0)) {
+      fprintf(log_file, "\n");
+      if(log_flush_mode && log_file) fflush(log_file);
+   }
 
-   fetch_adev_info(PPS_ADEV, &bins);
-   write_log_adevs(&bins);  
+   if(adevs_active(1) & 0x01) {
+      fetch_adev_info(PPS_ADEV, &bins);
+      write_log_adevs(&bins);  
 
-   fetch_adev_info(PPS_HDEV, &bins);
-   write_log_adevs(&bins);  
+      fetch_adev_info(PPS_HDEV, &bins);
+      write_log_adevs(&bins);  
 
-   fetch_adev_info(PPS_MDEV, &bins);
-   write_log_adevs(&bins);  
+      fetch_adev_info(PPS_MDEV, &bins);
+      write_log_adevs(&bins);  
 
-   fetch_adev_info(PPS_TDEV, &bins);
-   write_log_adevs(&bins);  
+      fetch_adev_info(PPS_TDEV, &bins);
+      write_log_adevs(&bins);  
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
 
 
-   fetch_adev_info(OSC_ADEV, &bins);
-   write_log_adevs(&bins);
+   if(adevs_active(1) & 0x02) {
+      fetch_adev_info(OSC_ADEV, &bins);
+      write_log_adevs(&bins);
 
-   fetch_adev_info(OSC_HDEV, &bins);
-   write_log_adevs(&bins);
+      fetch_adev_info(OSC_HDEV, &bins);
+      write_log_adevs(&bins);
 
-   fetch_adev_info(OSC_MDEV, &bins);
-   write_log_adevs(&bins);
+      fetch_adev_info(OSC_MDEV, &bins);
+      write_log_adevs(&bins);
 
-   fetch_adev_info(OSC_TDEV, &bins);
-   write_log_adevs(&bins);
+      fetch_adev_info(OSC_TDEV, &bins);
+      write_log_adevs(&bins);
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+
+
+   if(adevs_active(1) & 0x04) {
+      fetch_adev_info(CHC_ADEV, &bins);
+      write_log_adevs(&bins);
+
+      fetch_adev_info(CHC_HDEV, &bins);
+      write_log_adevs(&bins);
+
+      fetch_adev_info(CHC_MDEV, &bins);
+      write_log_adevs(&bins);
+
+      fetch_adev_info(CHC_TDEV, &bins);
+      write_log_adevs(&bins);
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+
+
+   if(adevs_active(1) & 0x08) {
+      fetch_adev_info(CHD_ADEV, &bins);
+      write_log_adevs(&bins);
+
+      fetch_adev_info(CHD_HDEV, &bins);
+      write_log_adevs(&bins);
+
+      fetch_adev_info(CHD_MDEV, &bins);
+      write_log_adevs(&bins);
+
+      fetch_adev_info(CHD_TDEV, &bins);
+      write_log_adevs(&bins);
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+
+      sprintf(log_text, "#");
+      write_log_comment(1);
+   }
+
+   if(mtie_q_count[CHA_MTIE]) {
+      fetch_mtie_info(CHA_MTIE, &bins);
+      write_log_adevs(&bins);
+   }
+
+   if(mtie_q_count[CHB_MTIE]) {
+      fetch_mtie_info(CHB_MTIE, &bins);
+      write_log_adevs(&bins);
+   }
+
+   if(mtie_q_count[CHC_MTIE]) {
+      fetch_mtie_info(CHC_MTIE, &bins);
+      write_log_adevs(&bins);
+   }
+
+   if(mtie_q_count[CHD_MTIE]) {
+      fetch_mtie_info(CHD_MTIE, &bins);
+      write_log_adevs(&bins);
+   }
+
+//fprintf(log_file, "active:%d  qin:%d qout:%d count:%d\n", adevs_active(1), adev_q_in,adev_q_out,adev_q_count);  // aaaaaa
+//int i;
+//for(i=0; i<adev_q_count; i++) {
+//   fprintf(log_file, "%d: %.12f %.12f %.12f\n", i, adev_q[i].osc, adev_q[i].pps, adev_q[i].chc);
+//}
 }
 
 #endif // ADEV_STUFF
-
 
 #ifdef GIF_FILES
 
@@ -13756,8 +25033,186 @@ u08 ctable[(1 << BPP) * sizeof(Colour)];
 #define WAIT_STATE  1000     // state when waiting for dac to settle
 #define LOW_STATE  10000     // state when measuring with low dac setting
 
-#define OSC_TUNE_GAIN 10.0F
-#define DAC_STEP      0.005F // dac voltage step (+ and -)
+#define OSC_TUNE_GAIN 10.0
+#define DAC_STEP      0.005  // dac voltage step (+ and -)
+
+void tune_ticc()
+{
+int i;
+static int ticc_time = 0;
+static int old_ticc_mode;
+static int fudge_val = 0;
+static int cha_time2_val = 0;
+static int chb_time2_val = 0;
+unsigned port;
+
+   if(dac_dac == 0) {
+      return;
+   }
+
+   if(rcvr_type == TICC_RCVR) port = RCVR_PORT;
+   else if(ticc_port_open())  port = TICC_PORT;
+   else {
+      return;
+   }
+
+   if(dac_dac == 1) {  // setup ticc to calculate new FUDGE and TIME2 parameters
+      for(i=NUM_PLOTS+DERIVED_PLOTS-1; i>=0; i--) {
+         plot[i].show_plot = 0;
+      }
+      plot_adev_data = 0;
+      adev_decades_shown = 0;
+      plot_sat_count = 0;
+      plot[FOUR].show_plot = 1;
+      plot[FIVE].show_plot = 1;
+      plot[SIX].show_plot = 1;
+      pause_data = 0;
+
+      old_ticc_mode = ticc_mode;
+
+      sprintf(plot_title, "Restting TICC fudge factors.  Mode:%c", ticc_mode);
+      redraw_screen();
+      strcpy(edit_buffer, "0 0");
+      edit_ticc_fudge();
+
+      sprintf(plot_title, "Restting TICC TIME2 factors");
+      redraw_screen();
+      strcpy(edit_buffer, "0 0");
+      edit_ticc_time2();
+
+      sprintf(plot_title, "Setting TICC debug mode");
+      redraw_screen();
+      strcpy(edit_buffer, "D");
+      edit_ticc_mode();
+      redraw_screen();
+
+      dac_dac = 2;
+      ticc_time = 0;
+
+      fudge_val = (int) fudge_a;
+      cha_time2_val = (int) time2_a;
+      chb_time2_val = (int) time2_b;
+
+   }
+   else if(dac_dac == 2) {   // collect data
+      ++ticc_time;
+      if(ticc_time < 5) {
+         cha_time2_sum = chb_time2_sum = 0.0;
+         cha_time2_count = chb_time2_count = 0.0;
+         fudge_sum = fudge_count = 0.0;
+      }
+      else {
+if(ticc_time == 10) {   // keep plots from bouncing around
+   plot[FOUR].plot_center = (float) cha_time2_val;
+   plot[FOUR].float_center = 0;
+   plot[FIVE].plot_center = (float) chb_time2_val;
+   plot[FIVE].float_center = 0;
+   plot[SIX].plot_center = (float) fudge_val;
+   plot[SIX].float_center = 0;
+}
+         if(fudge_count) fudge_val = (int) ((fudge_sum / fudge_count)*1.0E12);
+         if(cha_time2_count) cha_time2_val = (int) ((cha_time2_sum / cha_time2_count) + 0.50);
+         if(chb_time2_count) chb_time2_val = (int) ((chb_time2_sum / chb_time2_count) + 0.50);
+      }
+
+      sprintf(plot_title, "Gathering data %d of %d secs: fudge:%d    chA TIME2:%d    chB TIME2b:%d", 
+         ticc_time,ticc_tune_time, fudge_val, cha_time2_val,chb_time2_val);
+      if(ticc_time >= ticc_tune_time) dac_dac = 3;
+   }
+   else if(dac_dac >= 3) {
+pause_data = 1;         // stop capturing queue data
+dont_reset_queues = 1;  // keep old queue data so we can review the autotune data
+      sprintf(plot_title, "Setting chA fudge to %d ps", fudge_val);
+      redraw_screen();
+      sprintf(edit_buffer, "%d 0", fudge_val);
+      edit_ticc_fudge();
+
+      sprintf(plot_title, "Setting TIME2 values to chA:%d  chB:%d", cha_time2_val,chb_time2_val);
+      redraw_screen();
+      sprintf(edit_buffer, "%d %d", cha_time2_val,chb_time2_val);
+      edit_ticc_time2();
+      
+      sprintf(plot_title, "Restoring TICC mode to %c", old_ticc_mode);
+      redraw_screen();
+      sprintf(edit_buffer, "%c", old_ticc_mode);
+      edit_ticc_mode();
+
+      dac_dac = 0;
+   }
+}
+
+void tune_x72()
+{
+int i;
+static double slope;
+#define DDS_RESET_DELAY 5
+
+   if(dac_dac == 0) {  // not tuning
+      return;
+   }
+
+   if(dac_dac == 1) {  // setup to calculate tuning word
+      for(i=NUM_PLOTS+DERIVED_PLOTS-1; i>=0; i--) {
+         plot[i].show_plot = 0;
+      }
+      plot_adev_data = 0;
+      adev_decades_shown = 0;
+      plot_sat_count = 0;
+      plot[PPS].show_plot = 1;
+      pause_data = 0;
+
+      sprintf(plot_title, "Reseting DAC tune word to 0.0E-12 and TIC to 0");
+      if(pps_enabled == 0) {  // PPS output must be enabled in order for TIC command to work
+         user_pps_enable = 1;
+         set_pps(user_pps_enable, pps_polarity,  delay_value, pps1_delay,  300.0, 4);
+      }
+      set_x72_discipline(0);
+      set_x72_dds(0.0);
+      set_x72_tic(x72_pps);
+
+      dac_dac = 2;  // now wait for TIC change to take effect
+   }
+   else if(dac_dac == 2) {   // wait for TIC set to complete
+      sprintf(plot_title, "Waiting for TIC set: %d", x72_tic_timer);
+      if(x72_tic_timer > 0) {
+         --x72_tic_timer;
+      }
+      else {  // start collecting data
+         new_x72_interval(5);
+         dac_dac = 3;
+         new_queue(RESET_PLOT_Q, 36);
+      }
+   }
+   else if(dac_dac == 3) {   // collecting data
+      if(x72_pps_interval > ticc_tune_time) {  // analyze data and set DDS word
+         dac_dac = 4;
+      }
+      else {
+         i = fix_x72_tics(x72_ival);  // fixup possible wrap near 0
+         x72_update_pps_list(i);      // add fixed up ival to pps list
+         x72_pps_stats(0);            // calculate trend line
+         slope = x72_pps_trend;
+         slope /= (double) x72_pps_interval;
+         slope /= (double) x72_osc;
+
+         sprintf(plot_title, "Gathering data: %d of %d secs.  Slope:%g", 
+            x72_pps_interval, ticc_tune_time, slope);
+      }
+   }
+   else if(dac_dac == 4) {  // set the DDS tuning word
+      sprintf(plot_title, "Setting DDS tune word to %g", last_x72_dds+slope);
+      set_x72_dds(last_x72_dds + slope);
+      set_x72_tic(x72_pps);
+      mark_q_entry[1] = plot_q_in;
+      BEEP(202);
+      redraw_screen();
+
+      dac_dac = 0;
+   }
+   else {  // should never happen
+      dac_dac = 0;
+   }
+}
 
 void calc_osc_gain()
 {
@@ -13767,21 +25222,24 @@ float el_filter;
    // dac_dac is the current gain measurement state
    if(dac_dac == 0) return;  // we are not measuring
 
-   if(dac_dac == 1) {        // initialize dac gain test
-      if(rcvr_type == SCPI_RCVR) goto tune_res_t;
-      if(rcvr_type == UCCM_RCVR) goto tune_res_t;
-      if(rcvr_type == STAR_RCVR) {
-//       user_time_constant = 500.0F;
-//       set_discipline_params(1);
-         goto tune_res_t;
-      }
+   if(rcvr_type == TICC_RCVR) {
+      tune_ticc();
+      return;
+   }
+   else if(rcvr_type == X72_RCVR) {
+      tune_x72();
+      return;
+   }
 
+   if(dac_dac == 1) {        // initialize dac gain test
       if(!GPSDO) goto tune_res_t;
+      if(!GPSDO_TUNE_OK) goto tune_res_t;
+
       #ifdef OSC_CONTROL
          disable_osc_control();
       #endif
       #ifdef PRECISE_STUFF
-         stop_precision_survey();
+         stop_precision_survey(2);
       #endif
 
       old_read_only = read_only;
@@ -13792,8 +25250,8 @@ float el_filter;
       hour_lats = 0;         // setup to determine median osc offset values
       hour_lons = 0;
       gain_voltage = dac_voltage; // initial (current) DAC voltage
-      set_discipline_mode(4);     // disable disciplining
-      set_dac_voltage(gain_voltage+(DAC_STEP*OSC_TUNE_GAIN), 1);  // bump the osc voltage up
+      set_discipline_mode(SET_DIS_MODE_DISABLE);     // disable disciplining
+      set_dac_voltage(gain_voltage+(DATA_SIZE) (DAC_STEP*OSC_TUNE_GAIN), 1);  // bump the osc voltage up
       ++dac_dac;
       sprintf(plot_title, "Determining OSC gain: initializing");
       title_type = OTHER;
@@ -13815,7 +25273,7 @@ float el_filter;
    else if(dac_dac == (HIGH_STATE+1+GAIN_AVG_TIME)) {  // prepare to measure osc with dac at low value
       sprintf(plot_title, "Determining OSC gain: stabilizing low");
       title_type = OTHER;
-      set_dac_voltage(gain_voltage-(DAC_STEP*OSC_TUNE_GAIN), 2);
+      set_dac_voltage(gain_voltage - (DATA_SIZE) (DAC_STEP*OSC_TUNE_GAIN), 2);
       dac_dac = WAIT_STATE;
    }
    else if(dac_dac <= (WAIT_STATE+STABLE_TIME)) {  // wait for things to settle down some
@@ -13851,8 +25309,8 @@ title_type = OTHER;
 
       set_discipline_params(1);       // save params into eeprom
       set_dac_voltage(gain_voltage, 3);  // restore dac voltage
-      set_discipline_mode(5);         // re-enable disciplining
-      set_discipline_mode(0);         // jam sync the pps back in line
+      set_discipline_mode(SET_DIS_MODE_ENABLE);   // re-enable disciplining
+      set_discipline_mode(SET_DIS_MODE_JAMSYNC);  // jam sync the pps back in line
       request_all_dis_params();       // display the newest settings
 
       tune_res_t:
@@ -13861,9 +25319,9 @@ title_type = OTHER;
 
       el_filter = (el_mask + (float) good_el_level()) / 2.0F;
 
-      if((res_t && (res_t != RES_T))) set_el_amu(good_el_level(), 30.0F);  // set signal level mask level in dBc  // !!!!! RES_T_360, etc?
-      else if(rcvr_type == UBX_RCVR) set_el_amu(good_el_level(), 20.0F);
-      else set_el_amu(el_filter, 1.0F);   // set signal level mask level in AMU
+      if(res_t && (res_t != RES_T))   set_el_amu(el_filter, 25.0F);  // set signal level mask level in dBc  // !!!!! RES_T_360, etc?
+      else if(rcvr_type == TSIP_RCVR) set_el_amu(el_filter, 1.0F);   // set signal level mask level in AMU
+      else                            set_el_amu(el_filter, (float) good_sig_level());
 
       redraw_screen();
       dac_dac = 0;                    // we are done dac-ing around
@@ -13907,29 +25365,29 @@ u08 a_heating;     // the current heating/cooling/holding state (only one should
 u08 a_cooling;
 u08 a_holding;
 
-float this_temperature; // the current temperature reading
-float last_temp;        // the previous temperature reading
-float delta;            // the temperature error
-float last_delta;       // the previous temperature error
-float spike_temp;       // the temperature reading before a sensor misread spike
+DATA_SIZE this_temperature; // the current temperature reading
+DATA_SIZE last_temp;        // the previous temperature reading
+DATA_SIZE delta;            // the temperature error
+DATA_SIZE last_delta;       // the previous temperature error
+DATA_SIZE spike_temp;       // the temperature reading before a sensor misread spike
 
 double heat_off_time, cool_off_time;   // when to update the pwm output
-float  heat_time, cool_time;           // how many milliseconds to heat or cool for
+DATA_SIZE heat_time, cool_time;        // how many milliseconds to heat or cool for
 
 // stuff used to analyze the raw controller response (in bang-bang mode)
 double heat_on_tick, cool_on_tick, hold_on_tick;
 double cycle_time, avg_cycle_time, ct_samples;
 double this_cycle, last_cycle;
 double fall_cycle, fall_time;
-float heat_sum, heat_ticks;
-float cool_sum, cool_ticks;
+DATA_SIZE heat_sum, heat_ticks;
+DATA_SIZE cool_sum, cool_ticks;
 
-float heat_rate, cool_rate;            // heating and cooling rate (deg/sec)
-float rate_sum, rate_count;
+DATA_SIZE heat_rate, cool_rate;            // heating and cooling rate (deg/sec)
+DATA_SIZE rate_sum, rate_count;
 
 long low_ok, high_ok;
-float HEAT_OVERSHOOT;
-float COOL_UNDERSHOOT;
+DATA_SIZE HEAT_OVERSHOOT;
+DATA_SIZE COOL_UNDERSHOOT;
 
 
 
@@ -13943,32 +25401,31 @@ unsigned init_lpt()   /* init LPT port,  return base I/O address */
 
 
 // Warren's filter info
-float PID_out;          // new filter output
-float last_PID_out;     // previous filter output
-float PID_error;        // new temperature error
-float last_PID_error;   // previous temperature error
-float last_PID_display; // previous PID filter value (for debug display)
+DATA_SIZE PID_out;          // new filter output
+DATA_SIZE last_PID_out;     // previous filter output
+DATA_SIZE PID_error;        // new temperature error
+DATA_SIZE last_PID_error;   // previous temperature error
+DATA_SIZE last_PID_display; // previous PID filter value (for debug display)
 
-float integral_step;    // integrator update factor
-float integrator;       // the current integrator value
+DATA_SIZE integral_step;    // integrator update factor
+DATA_SIZE integrator;       // the current integrator value
 
 // internally used PID filter constants (derived from user friendly ones)
-float k1;      // the proportional gain
-float k2;      // the derivitive time constant
-float k3;      // the filter time constant (scaled)
-float k4;      // the integrator time constant
-// float k5;   // note that the k5 pid param is FILTER_OFFSET
-float k6;      // load distubance test tuning param
-float k7;      // loop gain tuning param
-float k8;      // integrator reset
-#define loop_gain        0.0F // k7
+DATA_SIZE k1;      // the proportional gain
+DATA_SIZE k2;      // the derivitive time constant
+DATA_SIZE k3;      // the filter time constant (scaled)
+DATA_SIZE k4;      // the integrator time constant
+DATA_SIZE k6;      // load distubance test tuning param
+DATA_SIZE k7;      // loop gain tuning param
+DATA_SIZE k8;      // integrator reset
+#define loop_gain        0.0 // k7
 #define integrator_reset k8
 
-#define PID_UPDATE_RATE   1.0F              // how fast the PID filter is updated in seconds
-#define PWM_CYCLE_TIME    (1002.5F/2.0F)    // milliseconds
-#define MAX_PID           0.99F
+#define PID_UPDATE_RATE   1.0              // how fast the PID filter is updated in seconds
+#define PWM_CYCLE_TIME    (1002.5/2.0)    // milliseconds
+#define MAX_PID           0.99
 #define MAX_INTEGRAL      2.0               // max integrator update step
-#define SCALE_FACTOR      (1.0F+loop_gain)  // !!!! ////
+#define SCALE_FACTOR      (1.0+loop_gain)  // !!!! ////
 
 #define TUNE_CYCLES   7       // end autotune after this many waveform cycles
 int tune_cycles;
@@ -13991,22 +25448,23 @@ void calc_k_factors()
    // I_TC          -> k4   (integrator time constant)
    // FILTER_OFFSET         (temperature setpoint offset)
 
-   if(I_TC) k4 = (1.0F/I_TC) / PID_UPDATE_RATE * P_GAIN;
-   else     k4 = 0.0F;
+   if(I_TC) k4 = ((DATA_SIZE)1.0/I_TC) / (DATA_SIZE) PID_UPDATE_RATE * P_GAIN;
+   else     k4 = (DATA_SIZE) 0.0;
 
-   if(FILTER_TC > 0.0F) {
-      k3 = 1.0F - (1.0F/((FILTER_TC*PID_UPDATE_RATE)+1.0F));
-      k2 = (-1.0F * D_TC * P_GAIN) / (FILTER_TC*PID_UPDATE_RATE+1.0F) * (PID_UPDATE_RATE/SCALE_FACTOR);
+   if(FILTER_TC > 0.0) {
+      k3 = (DATA_SIZE) 1.0 - ((DATA_SIZE) 1.0/((FILTER_TC*(DATA_SIZE) PID_UPDATE_RATE)+(DATA_SIZE) 1.0));
+      k2 = ((DATA_SIZE) -1.0 * D_TC * P_GAIN) / (FILTER_TC*(DATA_SIZE) PID_UPDATE_RATE+(DATA_SIZE) 1.0) * ((DATA_SIZE) PID_UPDATE_RATE/(DATA_SIZE) SCALE_FACTOR);
    }
    else {
       k3 = FILTER_TC;
-      k2 = (-1.0F * D_TC * P_GAIN) * (PID_UPDATE_RATE/SCALE_FACTOR);
+      k2 = ((DATA_SIZE) -1.0 * D_TC * P_GAIN) * ((DATA_SIZE) PID_UPDATE_RATE/(DATA_SIZE) SCALE_FACTOR);
    }
 
-   k1 = ((P_GAIN/SCALE_FACTOR) * (1.0F-k3)) - k2;
+   k1 = ((P_GAIN/(DATA_SIZE) SCALE_FACTOR) * ((DATA_SIZE) 1.0 - k3)) - k2;
 
    if(pid_debug || bang_bang) {  // set a marker each time a PID value changes
-      if(++test_marker > 9) test_marker = 1;
+      if(++test_marker >= MAX_MARKER) test_marker = 1;
+      if(test_marker < 0) test_marker = 1;
       mark_q_entry[test_marker] = plot_q_in;
    }
 }
@@ -14098,9 +25556,10 @@ double val;
 }
 
 
-void pid_filter()
+void temp_pid_filter()
 {
-float pwm_width;
+DATA_SIZE pwm_width;
+char cmd[SLEN];
 
    #ifdef DEBUG_TEMP_CONTROL
       if(pid_debug || bang_bang) {
@@ -14128,29 +25587,33 @@ float pwm_width;
    else if((PID_out <= (-MAX_PID)) && (integral_step < 0.0)) integral_step *= (-integrator_reset);
 
    integrator += (integral_step * k4);
-   if((integrator+k6) > 1.0F) integrator = (1.0F-k6);    // integrator value is maxed out
-   else if((integrator+k6) < (-1.0F)) integrator = (-1.0F-k6);
+   if((integrator+k6) > (DATA_SIZE) 1.0) integrator = ((DATA_SIZE) 1.0 - k6);    // integrator value is maxed out
+   else if((integrator+k6) < ((DATA_SIZE) -1.0)) integrator = ((DATA_SIZE) -1.0 - k6);
 
    PID_out = (k1*PID_error) + (k2*last_PID_error) + (k3*last_PID_out);
    last_PID_out = PID_out;
-   if(PID_out > 0.0F) PID_out -= k7;   // autotune debug - manual step size
-   else               PID_out += k7;
+   if(PID_out > (DATA_SIZE) 0.0) PID_out -= k7;   // autotune debug - manual step size
+   else                          PID_out += k7;
    PID_out += (integrator + k6);
 
    // clamp the filter response
-   if(PID_out > MAX_PID) PID_out = MAX_PID;
-   else if(PID_out < (-MAX_PID)) PID_out = (-MAX_PID);
+   if(PID_out > (DATA_SIZE) MAX_PID) PID_out = (DATA_SIZE) MAX_PID;
+   else if(PID_out < (DATA_SIZE) (-MAX_PID)) PID_out = (DATA_SIZE) (-MAX_PID);
 
    // convert filter output to PWM duty cycle times
-   pwm_width = (-PID_out) * PWM_CYCLE_TIME;
-   cool_time = PWM_CYCLE_TIME + pwm_width;
-   heat_time = PWM_CYCLE_TIME - pwm_width;
+   pwm_width = (-PID_out) * (DATA_SIZE) PWM_CYCLE_TIME;
+   cool_time = (DATA_SIZE) PWM_CYCLE_TIME + pwm_width;
+   heat_time = (DATA_SIZE) PWM_CYCLE_TIME - pwm_width;
+
+//sprintf(debug_text, "width:%f  heat:%f(%d)  cool:%f(%d)", pwm_width, heat_time,(int)heat_time,cool_time, (int) cool_time);
+   sprintf(cmd, "$CTRL %04d", (int) ((pwm_width/PWM_CYCLE_TIME)*(-1000.0)));
+   send_fan_cmd(cmd);
 
    #ifdef DEBUG_TEMP_CONTROL
       if(pid_debug || bang_bang) {
          sprintf(debug_text,  "pwm=%.2f  heat:%.1f ms  cool:%.1f ms   PID(%.5f)  err(%.5f)  int=%.5f",
             pwm_width, heat_time,cool_time,  
-            PID_out,  PID_error*(-1.0F),  integrator);
+            PID_out,  PID_error*((DATA_SIZE) -1.0),  integrator);
          last_PID_display =  PID_out;
       }
    #endif
@@ -14317,7 +25780,14 @@ void filter_spikes()
 //if(KL_TUNE_STEP > 0.0F) KL_TUNE_STEP -= 0.01F;
 //else KL_TUNE_STEP = 0.0F;
 
-   this_temperature = temperature;
+   if(enviro_temp_pid || ((have_temperature == 0) && enviro_mode())) {  // receiver does not send temperature
+      this_temperature = tc1;
+      return;
+   }
+   else {  // use receiver temperature sensor
+      this_temperature = temperature;
+   }
+
    if(spike_mode == 0) {
       spike_delay = 0;
       return;  // not filtering spikes
@@ -14349,11 +25819,16 @@ void filter_spikes()
 
 void control_temp()
 {
+char cmd[SLEN];
+
    if(temp_control_on == 0) return;
 
    if((test_heat > 0.0F) || (test_cool > 0.0F)) {  // manual pwm control is in effect
       heat_time = test_heat;
       cool_time = test_cool;
+
+      sprintf(cmd, "$CTRL %04d", (int) (heat_time-cool_time));
+      send_fan_cmd(cmd);
 
       #ifdef DEBUG_TEMP_CONTROL
          if(pid_debug || bang_bang) {
@@ -14362,7 +25837,7 @@ void control_temp()
       #endif
    }
    else {   // we are doing the PID filter stuff
-      pid_filter();          // update the PID and fan speed
+      temp_pid_filter();     // update the PID and fan speed
       analyze_bang_bang();   // do autotune analysis
    }
 
@@ -14375,9 +25850,9 @@ void apply_heat(void)
       lpt_val = (lpt_val & 0xF0) | 0x09;
       outp(lpt_addr, lpt_val);
    }
-   else {          // using serial port DTR line to control temp
-      SetDtrLine(HEAT);
-      SetRtsLine(ENABLE);
+   else if(com[fan_port].com_port > 0) { // using serial port DTR line to control temp
+      SetDtrLine(fan_port, HEAT);
+      SetRtsLine(fan_port, ENABLE);
    }
 
    if(a_heating == 0) {
@@ -14387,6 +25862,7 @@ void apply_heat(void)
    a_cooling = 0;
    a_holding = 0;
    temp_dir = UP_ARROW;
+
 }
 
 void apply_cool() 
@@ -14395,9 +25871,9 @@ void apply_cool()
       lpt_val = (lpt_val & 0xF0) | 0x0A;
       outp(lpt_addr, lpt_val);
    }
-   else {
-      SetDtrLine(COOL);
-      SetRtsLine(ENABLE);
+   else if(com[fan_port].com_port > 0) { // using serial port DTR line to control temp
+      SetDtrLine(fan_port, COOL);
+      SetRtsLine(fan_port, ENABLE);
    }
 
    if(a_cooling == 0) {
@@ -14415,10 +25891,11 @@ void hold_temp()
       lpt_val = (lpt_val & 0xF0) | 0x06;
       outp(lpt_addr, lpt_val);
    }
-   else {          // we are using the serial port DTR/RTS lines to control temp
-      SetDtrLine(COOL);
-      SetRtsLine(DISABLE);
+   else if(com[fan_port].com_port > 0) { // using serial port DTR line to control temp
+      SetDtrLine(fan_port, COOL);
+      SetRtsLine(fan_port, DISABLE);
    }
+   send_fan_cmd("$HOLD");
 
    if(a_holding == 0) {
       hold_on_tick = GetMsecs(); 
@@ -14440,9 +25917,10 @@ void enable_temp_control()
       lpt_val = (lpt_val & 0x0F) | 0x90;
       outp(lpt_addr, lpt_val);
    }
-   else {   // turn on serial port temp control unit
-      SetRtsLine(ENABLE);
+   else if(com[fan_port].com_port > 0) { // using serial port lines to control temp
+      SetRtsLine(fan_port, ENABLE);
    }
+   send_fan_cmd("$INIT");
 
    low_ok = high_ok = 0;
    HEAT_OVERSHOOT = COOL_UNDERSHOOT = 0.0F;
@@ -14460,9 +25938,10 @@ void disable_temp_control()
       lpt_val = (lpt_val & 0x0F) | 0x60;
       outp(lpt_addr, lpt_val);
    }
-   else {   // using parallel port to control temp
-     SetRtsLine(DISABLE);
+   else if(com[fan_port].com_port > 0) { // using serial port to control temp
+     SetRtsLine(fan_port, DISABLE);
    }
+   send_fan_cmd("$STOP");
 
    temp_control_on = 0;
 }
@@ -14524,8 +26003,8 @@ void update_pwm(void)
 // Warren's filter info
 double osc_PID_out;          // new filter output
 double last_osc_PID_out;     // previous filter output
-double osc_PID_error;        // new temperature error
-double last_osc_PID_error;   // previous temperature error
+double osc_PID_error;        // new osc ture error
+double last_osc_PID_error;   // previous osc error
 double last_osc_PID_display; // previous PID filter value (for debug display)
 
 double osc_integral_step;    // integrator update factor
@@ -14590,7 +26069,8 @@ double f_tc;
    osc_k1 = ((OSC_P_GAIN/OSC_SCALE_FACTOR) * (1.0-osc_k3)) - osc_k2;
 
    if(osc_pid_debug && (osc_rampup == 0.0)) {  // set a marker each time a PID value changes
-      if(++test_marker > 9) test_marker = 1;
+      if(++test_marker >= MAX_MARKER) test_marker = 1;
+      if(test_marker < 0) test_marker = 1;
       mark_q_entry[test_marker] = plot_q_in;
    }
 
@@ -14605,8 +26085,8 @@ void reset_osc_pid(int kbd_cmd)
 
    osc_PID_out = 0.0;          // new filter output
    last_osc_PID_out = 0.0;     // previous filter output
-   osc_PID_error = 0.0;        // new temperature error
-   last_osc_PID_error = 0.0;   // previous temperature error
+   osc_PID_error = 0.0;        // new osc error
+   last_osc_PID_error = 0.0;   // previous osc error
    last_osc_PID_display = 0.0; // previous PID filter value (for debug display)
    osc_integral_step = 0.0;    // integrator update factor
    osc_integrator = 0.0;       // integral value
@@ -14707,8 +26187,14 @@ double osc_PID_val;
 int i;
 
    if(0 && osc_prefilter) {
-      osc_osc_q[opq_in] = osc_offset;
-      osc_pps_q[opq_in] = pps_offset;
+      if(rcvr_type == X72_RCVR) {
+         osc_osc_q[opq_in] = osc_offset;
+         osc_pps_q[opq_in] = pps_offset * 1.0E-9;
+      }
+      else {
+         osc_osc_q[opq_in] = osc_offset;
+         osc_pps_q[opq_in] = pps_offset;
+      }
       if(++opq_in >= osc_prefilter) opq_in = 0;
       if(++opq_count > osc_prefilter) opq_count = osc_prefilter;
 
@@ -14721,6 +26207,17 @@ int i;
       }
       avg_osc /= (double) pps_bin_count;
       avg_pps /= (double) pps_bin_count;
+   }
+   else if(rcvr_type == X72_RCVR) {
+      avg_osc = x72_xxx_dds(pps_offset);
+sprintf(debug_text4, "avg osc1:%g  count:%d", avg_osc, x72_dds_count);
+      avg_osc = avg_osc * (1.0 + (((double) (x72_dds_count - x72_tc_val)) / (2.0*(double) x72_tc_val)) );
+sprintf(debug_text3, "avg osc2:%g", avg_osc);
+      if(x72_dds_count) avg_osc /= x72_dds_count;
+      avg_osc /= x72_osc;
+      if(x72_dds_count < 60) avg_osc = last_x72_dds;
+sprintf(debug_text2, "avg osc3:%g", avg_osc);
+      avg_pps = pps_offset * 1.0E-9;
    }
    else {
       avg_osc = osc_offset;
@@ -14786,14 +26283,23 @@ int i;
    }
 
    // convert filter output to DAC volatge
-   if(osc_gain) dac_ctrl = (osc_PID_val*MAX_PID_HZ) / (double) osc_gain;
-   else dac_ctrl = 0.0;
-   dac_ctrl += (double) osc_pid_initial_voltage;
-   set_dac_voltage((float) dac_ctrl, 4);
+   if(rcvr_type == X72_RCVR) {
+      if(osc_gain) dac_ctrl = (osc_PID_val*0.10) / (double) osc_gain;  // 4.0E-8 = MAX_DDS_STEP
+      else dac_ctrl = 0.0;
+      dac_ctrl += (double) osc_pid_initial_voltage;
+      set_x72_dds(dac_ctrl);
+sprintf(debug_text5, "set dds: %g  opv:%g  avg_osc:%g  avg_pps:%g  pps_tweak:%g", dac_ctrl,osc_PID_val, avg_osc,avg_pps,pps_tweak);
+   }
+   else {
+      if(osc_gain) dac_ctrl = (osc_PID_val*MAX_PID_HZ) / (double) osc_gain;
+      else dac_ctrl = 0.0;
+      dac_ctrl += (double) osc_pid_initial_voltage;
+      set_dac_voltage((float) dac_ctrl, 4);
+   }
 
    #ifdef DEBUG_OSC_CONTROL
       if(osc_pid_debug) {
-         sprintf(debug_text,  " PID(%.5f)  post(%.5f,%d)  last_out(%.5f)  err(%.5f)  last_err(%.5f)  int=%.5f  ramp=%.1f",
+         sprintf(debug_text,  " PID(%g)  post(%g,%d)  last_out(%g)  err(%g)  last_err(%g)  int=%g  ramp=%g",
             osc_PID_out, osc_PID_val,post_q_count,  last_osc_PID_out, osc_PID_error*(-1.0F),  last_osc_PID_error, osc_integrator, osc_rampup);
          last_osc_PID_display =  osc_PID_out;
       }
@@ -14803,9 +26309,16 @@ int i;
 void enable_osc_control()
 {
    osc_discipline = 0;
-   set_discipline_mode(4);
-   set_dac_voltage(dac_voltage, 5);
-   osc_pid_initial_voltage = dac_voltage;
+   set_discipline_mode(SET_DIS_MODE_DISABLE);
+
+   if(rcvr_type == X72_RCVR) {
+      set_x72_dds(last_x72_dds);
+      osc_pid_initial_voltage = (DATA_SIZE) last_x72_dds;
+   }
+   else {
+      set_dac_voltage(dac_voltage, 5);
+      osc_pid_initial_voltage = dac_voltage;
+   }
 
    osc_control_on = 1;
    osc_rampup = 1.0;
@@ -14816,7 +26329,11 @@ void disable_osc_control()
    if(osc_control_on == 0) return;
 
    osc_discipline = 1;
-   set_discipline_mode(5);
+   if(rcvr_type == X72_RCVR) {
+   }
+   else {
+      set_discipline_mode(SET_DIS_MODE_ENABLE);
+   }
 
    osc_control_on = 0;
 }
@@ -14863,11 +26380,9 @@ double true_pps;
 
 #ifdef FFT_STUFF
 
-#define MAX(x, y) ((x > y)? x:y)
-
 /* function prototypes for dft and inverse dft functions */
-void fft(COMPLEX BIGUN *,int);
-void rfft(float BIGUN *,COMPLEX BIGUN *,int);
+void fft(COMPLEX *,int);
+void rfft(float *,COMPLEX *,int);
 int  logg2(long);
 
 
@@ -14882,13 +26397,13 @@ void fft(COMPLEX *x, int m)
 
 *************************************************************************/
 
-void fft(COMPLEX BIGUN *x, int m)
+void fft(COMPLEX *x, int m)
 {
 static int mstore = 0;       /* stores m for future reference */
 static int n = 1;            /* length of fft stored for future */
 
 COMPLEX u,temp,tm;
-COMPLEX BIGUN *xi, BIGUN *xip, BIGUN *xj, BIGUN *wptr;
+COMPLEX *xi, *xip, *xj, *wptr;
 
 int i,j,k,l,le,windex;
 
@@ -14988,19 +26503,19 @@ void rfft(float *x, COMPLEX *y, int m)
 
 ***************************************************************/
 
-void rfft(float BIGUN *x, COMPLEX BIGUN *y, int m)
+void rfft(float *x, COMPLEX *y, int m)
 {
 static    int      mstore = 0;
 int       p,num,k;
 float     Realsum, Realdif, Imagsum, Imagdif;
 double    factor, arg;
-COMPLEX   BIGUN *ck, BIGUN *xk, BIGUN *xnk, BIGUN *cx;
+COMPLEX   *ck, *xk, *xnk, *cx;
 
    /* First call the fft routine using the x array but with
       half the size of the real fft */
 
     p = m - 1;
-    cx = (COMPLEX BIGUN *) x;
+    cx = (COMPLEX *) x;
     fft(cx, p);
 
     /* Next create the coefficients for recombination, if required */
@@ -15068,6 +26583,7 @@ int logg2(long x)
 
 
 
+float fft_max, fft_min;
 
 long process_signal(long length, int id)
 {
@@ -15076,10 +26592,11 @@ long last_i;
 long j;
 int k;
 struct PLOT_Q q;
-float show_time;
+DATA_SIZE show_time;
 float a;
 float tempflt;
-float fft_max, fft_min;
+float max_db, min_db;
+int color;
 
    last_i = 0;
    plot_column = 0;
@@ -15091,12 +26608,13 @@ float fft_max, fft_min;
       if(filter_count) q = filter_plot_q(i);
       else             q = get_plot_q(i);
 
-      tsignal[j] = q.data[id];  // * window[j];
+      tsignal[j] = (float) q.data[id];  // * window[j];
+      if(queue_interval) tsignal[j] /= queue_interval;
       if(++j >= length) {
          break;  // buffer is full
       }
 
-      i = next_q_point(i, 0);
+      i = next_q_point(i, STOP_AT_Q_END);
       if(i < 0) {
          break;
       }
@@ -15117,11 +26635,11 @@ float fft_max, fft_min;
    else               fft_scale = ((view_interval * (long)SCREEN_WIDTH) / (fft_length/2L));
    if(fft_scale < 1)  fft_scale = 1;
 
-   show_time = ((float) (fft_length)) * ((float) view_interval);  // seconds per screen
-   show_time /= (float) plot_mag;
+   show_time = ((DATA_SIZE) (fft_length)) * ((DATA_SIZE) view_interval);  // seconds per screen
+   show_time /= (DATA_SIZE) plot_mag;
    show_time /= nav_rate;
-   if(show_time < (2.0F*3600.0F)) sprintf(out, "%.1f min", show_time/60.0F);
-   else                           sprintf(out, "%.1f hrs", show_time/3600.0F);
+   if(show_time < (DATA_SIZE) (2.0*60.0*60.0)) sprintf(out, "%.1f min", show_time/(DATA_SIZE) 60.0);
+   else                                        sprintf(out, "%.1f hrs", show_time/(DATA_SIZE) (60.0*60.0));
    if(title_type != USER) {
       sprintf(plot_title, "%ld point FFT of %s of%s%s data.", 
           fft_length, out, show_live_fft?" live ":" ", plot[id].plot_id);
@@ -15131,8 +26649,8 @@ float fft_max, fft_min;
    a = (float) fft_length * (float) fft_length;
    rfft(&tsignal[0], fft_out, logg2(fft_length));
 
-   fft_max = (-1.0E30F);
-   fft_min = (1.0E30F);
+   fft_max = (float) (-BIG_NUM);
+   fft_min = (float) (BIG_NUM);
    for(j=1; j<fft_length/2; j++) {
       tempflt  = fft_out[j].real * fft_out[j].real;
       tempflt += fft_out[j].imag * fft_out[j].imag;
@@ -15140,6 +26658,39 @@ float fft_max, fft_min;
       if(tempflt < fft_min) fft_min = tempflt;
    }
    if(fft_max == 0.0F) fft_max = 1.0F;
+   max_db = (float) (10.0 * log10(MAX(fft_max/a, 1.e-16))) ;
+   min_db = (float) (10.0 * log10(MAX(fft_min/a, 1.e-16))) ;
+
+   if((zoom_screen == 'F') && (fft_col < (SCREEN_WIDTH-TEXT_HEIGHT-2))) {  // FFT waterfall
+      for(j=1; j<fft_length/2; j++) {
+         tempflt  = fft_out[j].real * fft_out[j].real;
+         tempflt += fft_out[j].imag * fft_out[j].imag;
+
+         if(fft_db && (max_db != min_db)) {  // calc FFT in dB
+           tempflt /= a;
+           tempflt = (float) (10.0 * log10(MAX(tempflt, 1.e-16))) ;
+           tempflt -= min_db;
+           tempflt /= (max_db-min_db);  // 0..1
+         }
+         else if(fft_max != fft_min) {
+            tempflt -= fft_min;
+            tempflt /= (fft_max-fft_min);  // 0..1
+         }
+         else tempflt = 0.0F;
+         tempflt *= 15.0F;    // 15 - number of colors used
+         if(tempflt < 0.0F) tempflt = 0.0F-tempflt;
+         color = ((int) tempflt) % 15;
+         if(color < 0) color = 0;
+         else if(color > 14) color = 14;
+         dot(fft_col++, fft_row, color+1);
+      }
+
+      line(fft_col,fft_row, SCREEN_WIDTH-1, fft_row, BLACK);
+      ++fft_row;
+      line(0,fft_row, SCREEN_WIDTH-1, fft_row, RED);
+      fft_col = 0;
+      if(fft_row >= (SCREEN_HEIGHT-TEXT_HEIGHT*2)) fft_row = 0;
+   }
 
    plot_column = 0;
    j = 0;
@@ -15150,8 +26701,8 @@ float fft_max, fft_min;
       for(k=0; k<fft_scale; k++) { // expand plot horizontally so that it is easier to read
          q = get_plot_q(i);
 
-         if(j >= fft_length/2) q.data[FFT] = 0.0F;  // fill out queue with 0's
-         else if(j == 0)       q.data[FFT] = 0.0F;  // drop the DC value because it messes up scaling
+         if(j >= fft_length/2) q.data[FFT] = (DATA_SIZE) 0.0;  // fill out queue with 0's
+         else if(j == 0)       q.data[FFT] = (DATA_SIZE) 0.0;  // drop the DC value because it messes up scaling
          else {   // insert FFT results into plot queue data
             tempflt  = fft_out[j].real * fft_out[j].real;
             tempflt += fft_out[j].imag * fft_out[j].imag;
@@ -15162,7 +26713,7 @@ float fft_max, fft_min;
             else {
                tempflt /= fft_max;
             }
-            q.data[FFT] = tempflt;
+            q.data[FFT] = (DATA_SIZE) tempflt;
             last_i = i;
          }
          if(j == 1) mark_q_entry[1] = i;
@@ -15172,7 +26723,7 @@ float fft_max, fft_min;
          while(i >= plot_q_size) i -= plot_q_size;
       }
       j++;
-if((j >= fft_length/2) && (j >= SCREEN_WIDTH*2)) break;
+      if((j >= fft_length/2) && (j >= SCREEN_WIDTH*2)) break;
    }
 
    done:
@@ -15182,18 +26733,87 @@ if((j >= fft_length/2) && (j >= SCREEN_WIDTH*2)) break;
 
 void set_fft_scale()
 {
-   if(fft_db) {
+   // configure FFT/histogram plot
+
+   if(fft_type == HIST_TYPE) {     // doing histogram instead of FFT
+      plot[FFT].plot_id = "HIST";
+      if(fft_db) plot[FFT].units = "dB";
+      else       plot[FFT].units = "cnt";
+
+      plot[FFT].user_scale = 0;
+      plot[FFT].scale_factor = 1.0F;
+      plot[FFT].plot_center = 0.0F;
+      plot[FFT].float_center = 1;
+
+      fft_scale = 1;
+   }
+   else if(fft_db) {
+      plot[FFT].plot_id = "FFT";          // assume we are doing an FFT
+      plot[FFT].units = "dB";
+
       plot[FFT].user_scale = 0;
       plot[FFT].scale_factor = 1.0F;
       plot[FFT].plot_center = 0.0F;
       plot[FFT].float_center = 1;
    }
    else {
-      plot[FFT].scale_factor = 1.0F / ((float) PLOT_HEIGHT/(float)(VERT_MAJOR*2));
+      plot[FFT].plot_id = "FFT";          // assume we are doing an FFT
+      plot[FFT].units = "x ";
+
       plot[FFT].user_scale = 1;
+      plot[FFT].scale_factor = 1.0F / ((float) PLOT_HEIGHT/(float)(VERT_MAJOR*2));
       plot[FFT].plot_center = 0.0F;
       plot[FFT].float_center = 0;
    }
+}
+
+
+
+
+void dump_fft_plot()
+{
+int j;
+float tempflt;
+float a;
+float val;
+
+   // dump the plot FFT data to the debug_file
+
+   if(debug_file == 0) return;
+   if(plot[FFT].show_plot == 0) return;
+   if(fft_type != FFT_TYPE) return;
+   if(fft_length == 0.0) return;
+
+   if(show_live_fft) {
+      fprintf(debug_file, "\nLive %s plot FFT:\n", plot[fft_id].plot_id);
+   }
+   else {
+      fprintf(debug_file, "\nSingle %s plot FFT:\n", plot[fft_id].plot_id);
+   }
+
+   tempflt = 0.0F;
+   a = (float) fft_length * (float) fft_length;
+
+   for(j=1; j<fft_length/2; j++) {
+      if(fps) val = (1.0F/ fps) / ((float) j); 
+      else val = 0.0;
+//sprintf(debug_text2, "fft_scale:%ld  fps:%.9f", fft_scale, fps);
+
+      tempflt  = fft_out[j].real * fft_out[j].real;
+      tempflt += fft_out[j].imag * fft_out[j].imag;
+      if(fft_db) {  // calc FFT in dB
+         tempflt /= a;
+         tempflt = (float) (10.0 * log10(MAX(tempflt, 1.e-16))) ;
+         fprintf(debug_file, "bin:%d  %.3f s   val:%.9f dB\n", j, val, tempflt);
+      }
+      else if(tempflt) {
+         tempflt /= fft_max;
+         fprintf(debug_file, "bin:%d  %.3f s   val:%.9f\n", j, val, tempflt);
+      }
+   }
+
+   fprintf(debug_file, "\n");
+   fflush(debug_file);
 }
 
 long calc_fft(int id)
@@ -15201,36 +26821,219 @@ long calc_fft(int id)
 long length, m;
 long points;
 
-   if(id == FFT) {
-     edit_error("Cannot calculate the FFT of the FFT plot!");
-     return 0;
-   }
    fft_id = id;
+   set_fft_scale();
 
-   length = max_fft_len;
-   if(length < 2) {  /* Check for power of 2 input size */
-     edit_error("FFT size must be a power of 2 greater than 1");
-     return 0;
+   if(fft_type == HIST_TYPE) {  // do histogram instead of an FFT
+      if(id == FFT) {
+//      edit_error("Cannot calculate the histogram of the histogram plot!");
+//      return 0;
+id = pre_fft_plot;
+      }
+      points = calc_plot_hist(id);
    }
+   else {  // do FFT instead of histogram
+      if(id == FFT) {
+        edit_error("Cannot calculate the FFT of the FFT plot!");
+        return 0;
+      }
 
+      length = max_fft_len;
+      if(length < 2) {  /* Check for power of 2 input size */
+        edit_error("FFT size must be a power of 2 greater than 1");
+        return 0;
+      }
 
-   m = logg2(length);
-   if((1<<m) != length) {  /* Check for power of 2 input size */
-     edit_error("FFT size must be a power of 2.");
-     return 0;
+      m = logg2(length);
+      if((1<<m) != length) {  /* Check for power of 2 input size */
+        edit_error("FFT size must be a power of 2.");
+        return 0;
+      }
+
+      fps = ((1.0F/view_interval)/2.0F) / (float) (length/2);
+      points = process_signal(length, id);
    }
-
-   fps = ((1.0F/view_interval)/2.0F) / (float) (length/2);
-   points = process_signal(length, id);
 
    // set scale factors and enable the FFT plot
    if(show_live_fft == 0) {
-      set_fft_scale();
       plot[FFT].show_stat = 1;
       if(plot[FFT].show_plot == 0) toggle_plot(FFT);
    }
 
    return points;
+}
+
+
+
+void dump_hist_plot()
+{
+int i;
+DATA_SIZE val;
+
+   // dump the plot histogram data to the debug_file
+
+   if(debug_file == 0) return;
+   if(plot[FFT].show_plot == 0) return;
+   if(fft_type != HIST_TYPE) return;
+
+   if(show_live_fft) {
+      fprintf(debug_file, "\nLive %s plot histogram:\n", plot[fft_id].plot_id);
+   }
+   else {
+      fprintf(debug_file, "\nSingle %s plot histogram:\n", plot[fft_id].plot_id);
+   }
+
+   for(i=0; i<hist_size; i++) {
+      if(plot_hist[i] == 0) continue;  // empty bin
+      val = hist_minv + (hist_bin_width*((DATA_SIZE) i));
+      fprintf(debug_file, "bin:%d  val:%.9f  count:%ld\n", i, val, plot_hist[i]);
+   }
+
+   fprintf(debug_file, "\n");
+   fflush(debug_file);
+}
+
+
+
+DATA_SIZE scale_hist_val(int id, DATA_SIZE val)
+{
+   // convert a raw plot queue data value to it's displayed value
+
+//!!!!!! we need to handle more cases... see label_cursor_val()
+   if(tie_plot(id)) {  // it's a time interval error plot
+      if(plot[id].show_freq) {  // frequency mode
+         val = (DATA_SIZE) tie_to_freq(id, (double) val);
+      } 
+   }
+   else if(id == TEMP) {
+////  val /= 1000.0;
+   }
+
+   return val;
+}
+
+
+long calc_plot_hist(int id)
+{
+long i, j, k;
+long last_i;
+long count;
+int col;
+struct PLOT_Q q;
+DATA_SIZE val, aval;
+int bin;
+int max_bin;
+long max_count;
+
+   // calculate a histogram of a plot queue value
+
+   if(queue_interval == 0) return 0;
+   if(stat_count == 0) return 0;
+   if(id < 0) return 0;
+   if(id > (NUM_PLOTS+DERIVED_PLOTS)) return 0;
+
+   last_i = 0;
+   plot_column = 0;
+   hist_size = plot_q_count;
+   if(hist_size > PLOT_WIDTH) hist_size = PLOT_WIDTH;
+   if(hist_size >= MAX_HIST) hist_size = MAX_HIST;
+
+   fft_id = id;
+   set_fft_scale();
+
+   hist_minv = plot[id].min_disp_val;
+   hist_maxv = plot[id].max_disp_val;
+   aval = DATA_SIZE (fabs(hist_maxv-hist_minv) * 0.01);
+   hist_minv -= aval;   // expand value range by 1% of the span
+   hist_maxv += aval;
+
+   hist_bin_width = (hist_maxv - hist_minv) / (DATA_SIZE) hist_size; 
+
+   for(i=0; i<hist_size; i++) plot_hist[i] = 0;
+
+   max_bin = 0;
+   max_count = 0;
+   count = 0;
+   col = 0;
+   i = plot_q_col0;   // hist displayed points
+   fft_queue_0 = i;
+////i = 0;            // hist all queue points
+   while(i != plot_q_in) {  // scan the data that is in the plot queue
+      q = get_plot_q(i);    // get next point to histogram
+      val = (DATA_SIZE) q.data[id] / (DATA_SIZE) queue_interval;
+      val = scale_hist_val(id, val);
+      bin = (int) ((val - hist_minv) / hist_bin_width);
+      if((bin >= 0) && (bin < hist_size)) {
+         ++plot_hist[bin];
+//       if(plot_hist[bin] > max_count) {   // find first peak bin
+         if(plot_hist[bin] >= max_count) {  // find last peak bin
+            max_count = plot_hist[bin];
+            max_bin = bin;
+         }
+      }
+
+      ++i;
+      if(i >= plot_q_size) i = 0;
+      if(++count > plot_q_count) break; // all points in the queue have been processed
+
+      col += plot_mag; // end histogram at end of displayed data
+      if(col >= (PLOT_WIDTH*view_interval)) break;
+   }
+
+   plot_column = 0;
+   j = 0;
+   i = last_i = plot_q_col0;
+
+   fft_scale = view_interval;
+   if(fft_scale < 1) fft_scale = 1;
+
+   // place hist results into the plot queue FFT plot data
+   while(i != plot_q_in) {  
+      for(k=0; k<fft_scale; k++) { // expand plot horizontally so that it is easier to read
+         q = get_plot_q(i);
+         val = (DATA_SIZE) plot_hist[j];
+         if(fft_db && (val > 0)) {
+            val = (float) (10.0 * log10(MAX((double) val, 0.0))) ;
+         }
+         q.data[FFT] = val;
+         last_i = i;
+         if(j == 1) mark_q_entry[1] = i;
+
+         put_plot_q(i, q);
+         if(++i == plot_q_in) break;
+         while(i >= plot_q_size) i -= plot_q_size;
+      }
+
+      ++j;
+      if(j >= hist_size) break;
+   }
+   mark_q_entry[2] = last_i;
+
+// dump_hist_plot();
+
+   if(1 && (title_type != USER)) {
+      if((max_bin >= 0) && (max_bin < hist_size)) {
+         val = hist_minv + hist_bin_width*(DATA_SIZE) max_bin;
+//sprintf(debug_text4, "bin:%d  step:%.9f  count:%ld   min:%.9f max:%.9f  val:%.9f", mouse_x, hist_bin_width, plot_hist[mouse_x], hist_minv, hist_maxv, val);
+      }
+      else val = 0;
+
+      if(show_live_fft) {
+         sprintf(plot_title, "%ld bin live %s plot histogram.  Max count:%ld  bin:%d  val:%f", hist_size, plot[fft_id].plot_id, max_count, max_bin, val);
+      }
+      else {
+         sprintf(plot_title, "%ld bin single %s plot histogram.  Max count:%ld  bin:%d  val:%f", hist_size, plot[fft_id].plot_id, max_count, max_bin, val);
+      }
+//sprintf(debug_text3, "hist point count:%ld  scale:%ld", count, fft_scale);
+
+      if(mouse_plot_valid && (mouse_x >= 0) && (mouse_x < hist_size)) {
+         val = hist_minv + hist_bin_width*(DATA_SIZE) mouse_x;
+//sprintf(debug_text, "bin:%d  step:%.9f  count:%ld   min:%.9f max:%.9f  val:%.9f", mouse_x, hist_bin_width, plot_hist[mouse_x], hist_minv, hist_maxv, val);
+      }
+      title_type = OTHER;
+   }
+
+   return hist_size;
 }
 
 #endif // FFT_STUFF

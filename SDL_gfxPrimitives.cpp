@@ -2282,6 +2282,8 @@ int lineColor(SDL_Surface * dst, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uin
 	Uint8 *pixel;
 	Uint8 *colorptr;
 
+    if(!dst) return 0;
+
 	/*
 	* Clip line and test if we have to draw
 	*/

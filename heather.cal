@@ -26,7 +26,12 @@
 #             This allows for doing days like Friday the 13th (0, -13, 5)
 #
 #
-#     text  - The text to display when the event occurs.
+#     text   - The text to display when the event occurs.  If the text begins
+#              with "@hh:mm:ss" this will set the alarm to sound at the
+#              specified time on the day of the alarm. For example a calendar
+#              file enrty of:
+#                 0 1 1 @00:00:00 Happy New Year
+#              will sound the alarm at midnight on New Year's Day
 #
 #  Comment lines can start with # * / or ; in column 1
 #
@@ -56,7 +61,7 @@
 109 0  3  It's Palm Sunday... 
 110 0  3  It's Good Friday... 
 111 0  3  Happy Easter! 
-112 0  9  It's Grandparent's day... 
+112 0  9  It's Grandparent's Day... 
 113 0  9  Rosh Hashanha starts tonight... 
 114 0  9  Yom Kippur starts tonight... 
 115 0  3  Passover starts tonight... 
@@ -72,7 +77,7 @@
 125 0  1  Happy Aztec New Year!  Sacrifice your enemies!  Eat their hearts! 
 126 0  1  Tomorrow is the Mayan Doomday!  The world ends... wear clean underwear! 
 127 0  1  Sukkot starts tonight...
-128 0  1  Shavout starts tonight...
+128 0  1  Shavuot starts tonight...
 133 0  1  Tomorrow is UNIX doomstime...  wear a clean pocket protector
 
  0  1  1  Happy New Year! 
@@ -82,17 +87,22 @@
  0 14  2  Happy Valentine's Day! 
  3  1  2  Greetings Mr. Presidents!  Happy Family Day! 
  0 18  2  Happy birthday Pluto!  You're still our favorite planet.  IAU sucks!
- 0 14  3  Happy pi day!
+ 0 14  3  Happy PI day!
  0 15  3  Beware the Ides of March! 
  0 17  3  Happy Saint Patrick's Day! 
+ 1  0  4  May your Kanamara Matsuri day have a happy ending!
  0  1  4  April Fools! 
 -1  5  4  It's Arbor Day... go hug a tree! 
  0 22  4  Happy Earth Day... 
+ 0  4  5  May the fourth be with you!
+ 0 25  5  Happy Towel Day! All you hoopy froods remember to wear your towel!
  0  5  5  Happy Cinco de Mayo! 
  2  0  5  Happy Mother's Day, Mom! 
  3  6  5  It's Armed Forces Day! 
 -1  1  5  Happy Memorial Day! 
  1  1  6  Happy Birthday, Queenie! 
+ 1  5  6  It's National Donut Day!  Mmmmmm... forbidden donut!
+ 0, 8, 6, It's World Oceans Day!
  0 14  6  Happy Flag Day! 
  3  0  6  Happy Father's Day, Dad! 
  0  1  7  Canada, Oh Canada... 
@@ -104,6 +114,7 @@
  0 11  9  Another day that will live in infamy... 
  0 17  9  We the People of the United Sates of America... 
  0 19  9  Yarrr matey... it be talk like a pirate day! 
+ 0 26  9  It's Stanislav Petrov Day!  He saved your sorry ass.
  0 28  9  It's National Drink Beer Day!
  0  2 10  Happy Birthday, Mr. Ghandi... 
  0  9 10  Way to go, Leif! 
@@ -121,5 +132,7 @@
  0 24 12  Hey kids,  he's checking his list! 
  0 25 12  Merry Christmas! 
  0 26 12  Happy Boxing Day! 
+ 0 28 12  Farewell Lars Walineus, you are mourned by all.
  0 31 12  Stay home tonight, there are too many crazy people out there... 
  0 -13 5  Today is Friday the 13th...  stay home!
+# 0  9  2  @21:14greeting alarm test

@@ -40,6 +40,7 @@ u32 get_sdl_color(u08 color)
 
 void dot(int x, int y, u08 color)
 {
+    if(!display) return;
     int bpp = display->format->BytesPerPixel;
     Uint8 * p = (Uint8 *)display->pixels + y * display->pitch + x * bpp;
 
@@ -92,7 +93,7 @@ int sdl_kbhit(void)
 
 static bool sdl_initialized = 0;
 
-void init_screen(void)
+void init_screen(int why)
 {
     unsigned char * vfx_font;
     int font_height;
@@ -219,7 +220,7 @@ void init_screen(void)
     memset(palette, 0xff, sizeof(palette));
     setup_palette();
 
-    config_screen(4); // re-initialize screen rendering variables
+    config_screen(why); // re-initialize screen rendering variables
                       // to reflect any changes due to font size
 
     printf("screen configured\n");
@@ -252,6 +253,8 @@ void kill_screen(void)
 
 void refresh_page(void)
 {
+    if(!display) return;
+    
     SDL_UpdateTexture(ne_texture, NULL, display->pixels, display->pitch);
     SDL_RenderClear(ne_renderer);
     SDL_RenderCopy(ne_renderer, ne_texture, NULL, NULL);
@@ -370,4 +373,9 @@ int get_sdl_event()
     }
 
     return 0;
+}
+
+int screen_active()
+{
+    return display != 0;
 }

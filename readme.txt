@@ -1,14 +1,30 @@
-Lady Heather Version 5.0 (with Linux and macOS (OS/X) support)
+Lady Heather Version 6.14.1 (with Linux and macOS OS/Xsupport)
 
-To use this program on Linux and macOS:
+This version, 6.14.1, is unofficial and all modifications were done
+by Jason Kingan, jasonk@toast442.org, jkingan on HitHub,
+https://kg7nux.org or https://toast442.org
+
+The 6.14 source code was downloaded from:
+
+   http://gotroot.ca/misc/heatherx11_beta_6.14.zip
+
+on Nov 2, 2023. The above URL was posted to the EEVBlog forums
+by VE7XEN:
+
+https://www.eevblog.com/forum/metrology/lady-heather-v6-beta-for-windows-exe/200/
+
+To use this program on Linux, macOS, and FreeBSD:
 
 1) Create a directory to install it in and switch to that directory.
 
 2) Unzip the zip file into the directory
 
    In the X11 distribution .ZIP file is a file "heathosx".  This is a
-   pre-compiled executable for macOS (aka OS/X) (tested under El Capitan).
+   pre-compiled executable for macOS (tested under El Capitan).
    If you are using macOS install the XQuartz package from xquartz.org.
+   Note that you need to logout/login or restart your system after installing
+   XQuartz for it to work.
+
    Then, from a terminal window:
        unzip -q heatherx11.zip
        cd heatherx11
@@ -29,22 +45,31 @@ To use this program on Linux and macOS:
       sudo apt-get install g++
       sudo apt-get install libx11-dev
 
-   For Fedora Linux edit the makefile and change "OS = g++" to "OS = gpp".
-   Also the X11 development package is called libX11-devel (with a capital 'X')
+   For some Fedora Linux distros your may need to edit the makefile and
+   change "OS = g++" to "OS = gpp".  Also the X11 development package is
+   called libX11-devel (with a capital 'X')
 
    For macOS you will need to install the XQuartz package from XQuartz.org)
    (note: their installer time remaining message is rather optimistic)
    You will also need to install XCode from Apple (WARNING: it's HUGE).
 
-4) Compile the code (the make file auto-detects Linux or macOS):
-    
-    For X11:
+   If you use the "N" keyboard command to open the NANO text editor from
+   within Heather, you will need make sure that xterm is installed (Raspberry
+   Pi's don't have it installed by default).
+      sudo apt-get install xterm
+
+
+4) Compile the code (the make file auto-detects Linux, macOS, and FreeBSD):
+
+   For X11:
+
       make clean
       make
 
-    For SDL:
+   For SDL:
+
       make clean
-      USE_SDL=1 make 
+      USE_SDL=1 make
 
 5) Edit the heather.cfg file to suit your needs.  It sets the values of the
    initial command line options to use.  Place one command line option per
@@ -56,6 +81,7 @@ To use this program on Linux and macOS:
 
 6) Run it:
    ./heather -1u             (for ttyUSB0 serial input)
+   ./heather -1a             (for ttyACM0 serial input)
    ./heather -1              (for ttyS0 serial input)
    ./heather -id=device_name (for using a non-standard serial device name)
    ./heather -ip=addr:port   (for internet connected server)
@@ -117,6 +143,14 @@ Known issues:
    Linux when using the drivers shipped with the Linux distro.
 
 
+   To use the TAPR TICC Arduino based time interval counter, your system will
+   need to have support for CDC ACM devices enabled.  If your system does not
+   recognize the TAPR TICC USB port try:
+      sudo modprobe cdc_acm
+   to enable the CDC ACM driver.  Also you will probably have to specify the
+   device id for Heather use.  On my system I use the command line option:
+      /id=/dev/ttyACM0   -or-
+      /1a
 
 
 
