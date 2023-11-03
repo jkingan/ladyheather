@@ -87,7 +87,7 @@ int sdl_getch(void)
 int sdl_kbhit(void)
 {
     // return true if a keystoke is available
-
+    reset_kbd_timer();
     return (kbd_in != kbd_out); // return true if anything is in the keyboard queue
 }
 

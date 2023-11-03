@@ -16,7 +16,7 @@ CC = g++
 ifeq ($(USE_SDL),1)
 SDL_OBJS=SDL_gfxPrimitives.o heather_sdl.o
 SDL_INC=-I$(shell sdl2-config --prefix)/include -DUSE_SDL=1
-SDL_LIBS=$(shell sdl2-config --libs)
+SDL_LIBS=$(shell sdl2-config --static-libs)
 else
 SDL_OBJS=
 SDL_INC=
